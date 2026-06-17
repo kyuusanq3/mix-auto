@@ -33,6 +33,7 @@ import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.key
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -50,6 +51,7 @@ private const val TAG = "ShortcutDock"
 private const val LAUNCHER_SETTINGS_KEY = "launcher_settings"
 
 data class AppShortcut(
+    val id: String,
     val label: String,
     val icon: ImageBitmap?,
     val fallbackIcon: ImageVector,
@@ -57,6 +59,7 @@ data class AppShortcut(
 )
 
 private data class ShortcutTarget(
+    val id: String,
     val label: String,
     val packages: List<String>,
     val fallbackIcon: ImageVector,
@@ -66,11 +69,13 @@ private data class ShortcutTarget(
 
 private val shortcutTargets = listOf(
     ShortcutTarget(
+        id = "system_settings",
         label = "Settings",
         packages = listOf("com.android.settings"),
         fallbackIcon = Icons.Filled.Settings,
     ),
     ShortcutTarget(
+        id = "radio",
         label = "Radio",
         packages = listOf(
             "com.android.fmradio",
@@ -81,6 +86,7 @@ private val shortcutTargets = listOf(
         forceFallbackIcon = true,
     ),
     ShortcutTarget(
+        id = "bluetooth",
         label = "Bluetooth",
         packages = listOf("com.android.settings"),
         fallbackIntent = Intent(Settings.ACTION_BLUETOOTH_SETTINGS),
@@ -116,56 +122,58 @@ fun ShortcutDock(
             containerColor = DeepCharcoal,
         ),
     ) {
-        if (isHorizontal) {
-            LazyRow(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(CarDimensions.MinTapTarget)
-                    .padding(horizontal = CarDimensions.PaneGap),
-                horizontalArrangement = Arrangement.spacedBy(CarDimensions.DockItemSpacing),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                items(shortcuts, key = { it.label }) { shortcut ->
-                    MinimizedShortcutItem(
-                        shortcut = shortcut,
-                        onClick = { launchShortcut(context, shortcut) },
-                    )
-                }
-                item(key = LAUNCHER_SETTINGS_KEY) {
-                    SettingsDockItem(
-                        horizontal = true,
-                        onClick = onOpenSettings,
-                    )
-                }
-            }
-        } else {
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(CarDimensions.PaneGap),
-            ) {
-                CarLabelText(
-                    text = "Shortcuts",
-                    modifier = Modifier.padding(bottom = CarDimensions.DockItemSpacing),
-                    style = MaterialTheme.typography.titleMedium,
-                )
-
-                LazyColumn(
-                    modifier = Modifier.fillMaxSize(),
-                    contentPadding = PaddingValues(vertical = CarDimensions.DockItemSpacing),
-                    verticalArrangement = Arrangement.spacedBy(CarDimensions.DockItemSpacing),
+        key(isHorizontal) {
+            if (isHorizontal) {
+                LazyRow(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(CarDimensions.MinTapTarget)
+                        .padding(horizontal = CarDimensions.PaneGap),
+                    horizontalArrangement = Arrangement.spacedBy(CarDimensions.DockItemSpacing),
+                    verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    items(shortcuts, key = { it.label }) { shortcut ->
-                        ShortcutItem(
+                    items(shortcuts, key = { it.id }) { shortcut ->
+                        MinimizedShortcutItem(
                             shortcut = shortcut,
                             onClick = { launchShortcut(context, shortcut) },
                         )
                     }
                     item(key = LAUNCHER_SETTINGS_KEY) {
                         SettingsDockItem(
-                            horizontal = false,
+                            horizontal = true,
                             onClick = onOpenSettings,
                         )
+                    }
+                }
+            } else {
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(CarDimensions.PaneGap),
+                ) {
+                    CarLabelText(
+                        text = "Shortcuts",
+                        modifier = Modifier.padding(bottom = CarDimensions.DockItemSpacing),
+                        style = MaterialTheme.typography.titleMedium,
+                    )
+
+                    LazyColumn(
+                        modifier = Modifier.fillMaxSize(),
+                        contentPadding = PaddingValues(vertical = CarDimensions.DockItemSpacing),
+                        verticalArrangement = Arrangement.spacedBy(CarDimensions.DockItemSpacing),
+                    ) {
+                        items(shortcuts, key = { it.id }) { shortcut ->
+                            ShortcutItem(
+                                shortcut = shortcut,
+                                onClick = { launchShortcut(context, shortcut) },
+                            )
+                        }
+                        item(key = LAUNCHER_SETTINGS_KEY) {
+                            SettingsDockItem(
+                                horizontal = false,
+                                onClick = onOpenSettings,
+                            )
+                        }
                     }
                 }
             }
@@ -322,6 +330,7 @@ private fun resolveShortcut(
             }
 
             return AppShortcut(
+                id = target.id,
                 label = target.label,
                 icon = icon,
                 fallbackIcon = target.fallbackIcon,
@@ -339,6 +348,7 @@ private fun resolveShortcut(
     }
 
     return AppShortcut(
+        id = target.id,
         label = target.label,
         icon = null,
         fallbackIcon = target.fallbackIcon,

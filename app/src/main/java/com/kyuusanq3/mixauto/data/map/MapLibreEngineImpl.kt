@@ -9,6 +9,7 @@ import android.location.LocationManager
 import android.os.Looper
 import android.util.Log
 import android.view.View
+import android.view.ViewGroup
 import androidx.core.content.ContextCompat
 import com.kyuusanq3.mixauto.domain.map.CarMapEngine
 import com.kyuusanq3.mixauto.domain.map.MapUiState
@@ -24,6 +25,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -35,12 +37,12 @@ import org.maplibre.android.camera.CameraUpdateFactory
 import org.maplibre.android.geometry.LatLng
 import org.maplibre.android.geometry.LatLngBounds
 import org.maplibre.android.location.LocationComponentActivationOptions
-import org.maplibre.android.location.engine.AndroidLocationEngineImpl
 import org.maplibre.android.location.engine.LocationEngine
 import org.maplibre.android.location.engine.LocationEngineCallback
 import org.maplibre.android.location.engine.LocationEngineProxy
 import org.maplibre.android.location.engine.LocationEngineRequest
 import org.maplibre.android.location.engine.LocationEngineResult
+import org.maplibre.android.location.engine.MapLibreFusedLocationEngineImpl
 import org.maplibre.android.location.modes.CameraMode
 import org.maplibre.android.location.modes.RenderMode
 import org.maplibre.android.maps.MapView
@@ -79,9 +81,17 @@ class MapLibreEngineImpl : CarMapEngine {
     private var locationEngine: LocationEngine? = null
     private var locationEngineCallback: LocationEngineCallback<LocationEngineResult>? = null
     private var freshLocationListener: LocationListener? = null
+    private var listenersRegistered = false
+    private var pendingLocationActivation = false
+    private var pendingLocationFix: Location? = null
+    private var locationPollJob: Job? = null
+    private var locationRetryJob: Job? = null
 
     override fun createMapView(context: Context): View {
-        mapView?.let { return it }
+        mapView?.let { existing ->
+            (existing.parent as? ViewGroup)?.removeView(existing)
+            return existing
+        }
 
         if (!mapLibreInitialized) {
             MapLibre.getInstance(context.applicationContext)
@@ -111,6 +121,10 @@ class MapLibreEngineImpl : CarMapEngine {
                         state.copy(streetName = "Map ready")
                     }
                     activateLocationTracking(map, style)
+                    if (pendingLocationActivation && hasLocationPermission(context)) {
+                        beginLocationAcquisition(context)
+                        pendingLocationActivation = false
+                    }
                 }
             }
             mapView = view
@@ -125,8 +139,7 @@ class MapLibreEngineImpl : CarMapEngine {
         mapView?.onResume()
         appContext?.let { context ->
             if (hasLocationPermission(context)) {
-                refreshLocationFromSystem(context)
-                requestFreshLocationUpdate(context)
+                refreshLocationOnly(context)
             }
         }
     }
@@ -140,8 +153,14 @@ class MapLibreEngineImpl : CarMapEngine {
     }
 
     override fun onDestroy() {
+        locationPollJob?.cancel()
+        locationPollJob = null
+        locationRetryJob?.cancel()
+        locationRetryJob = null
+        pendingLocationFix = null
         engineScope.cancel()
         removeFreshLocationListener()
+        listenersRegistered = false
         locationEngineCallback?.let { callback ->
             locationEngine?.removeLocationUpdates(callback)
         }
@@ -194,15 +213,28 @@ class MapLibreEngineImpl : CarMapEngine {
     }
 
     override fun retryLocationActivation() {
+        if (appContext == null) {
+            pendingLocationActivation = true
+            return
+        }
         val ctx = appContext ?: return
         if (!hasLocationPermission(ctx)) return
 
-        refreshLocationFromSystem(ctx)
-        requestFreshLocationUpdate(ctx)
+        refreshLocationOnly(ctx)
 
-        mapView?.getMapAsync { map ->
+        val map = mapLibreMap
+        if (map != null) {
             map.getStyle { style ->
                 activateLocationTracking(map, style)
+                pendingLocationActivation = false
+            }
+        } else {
+            pendingLocationActivation = true
+            mapView?.getMapAsync { loadedMap ->
+                loadedMap.getStyle { style ->
+                    activateLocationTracking(loadedMap, style)
+                    pendingLocationActivation = false
+                }
             }
         }
     }
@@ -238,24 +270,49 @@ class MapLibreEngineImpl : CarMapEngine {
         var origin = lastKnownLocation ?: ctx?.let { readLastKnownLocation(it) }
 
         if (origin == null && ctx != null && hasLocationPermission(ctx)) {
+            resolveMapViewOrigin()?.let { mapOrigin ->
+                Log.i(TAG, "Routing from map view at zoom ${mapLibreMap?.cameraPosition?.zoom}")
+                lastKnownLocation = mapOrigin
+                startNavigation(mapOrigin, lat, lng)
+                return
+            }
+
             _uiState.update { it.copy(streetName = "Acquiring location...") }
-            requestFreshLocationUpdate(ctx)
+            beginLocationAcquisition(ctx)
             engineScope.launch {
-                delay(LOCATION_ACQUIRE_TIMEOUT_MS)
-                val resolvedOrigin = lastKnownLocation ?: readLastKnownLocation(ctx)
-                if (resolvedOrigin == null) {
-                    _uiState.update { it.copy(streetName = "Location unavailable") }
-                    return@launch
+                val deadline = System.currentTimeMillis() + LOCATION_ACQUIRE_TIMEOUT_MS
+                while (System.currentTimeMillis() < deadline) {
+                    val resolvedOrigin = lastKnownLocation ?: readLastKnownLocation(ctx)
+                    if (resolvedOrigin != null) {
+                        lastKnownLocation = resolvedOrigin
+                        startNavigation(resolvedOrigin, lat, lng)
+                        return@launch
+                    }
+                    resolveMapViewOrigin()?.let { mapOrigin ->
+                        Log.i(TAG, "GPS unavailable; routing from map view")
+                        lastKnownLocation = mapOrigin
+                        startNavigation(mapOrigin, lat, lng)
+                        return@launch
+                    }
+                    delay(LOCATION_POLL_INTERVAL_MS)
                 }
-                lastKnownLocation = resolvedOrigin
-                startNavigation(resolvedOrigin, lat, lng)
+                Log.w(TAG, "Navigation aborted: no location after ${LOCATION_ACQUIRE_TIMEOUT_MS}ms")
+                _uiState.update {
+                    it.copy(streetName = "Zoom map to your area, then retry")
+                }
             }
             return
         }
 
         if (origin == null) {
+            resolveMapViewOrigin()?.let { mapOrigin ->
+                Log.i(TAG, "Routing from map view (no permission path)")
+                lastKnownLocation = mapOrigin
+                startNavigation(mapOrigin, lat, lng)
+                return
+            }
             Log.w(TAG, "No known location; cannot route")
-            _uiState.update { it.copy(streetName = "Location unavailable") }
+            _uiState.update { it.copy(streetName = "Zoom map to your area") }
             return
         }
 
@@ -300,10 +357,11 @@ class MapLibreEngineImpl : CarMapEngine {
         latB: Double,
     ): RouteResult? {
         val url = URL(
-            "https://router.project-osrm.org/route/v1/driving/" +
+            "https://routing.openstreetmap.de/routed-car/route/v1/driving/" +
                 "$lngA,$latA;$lngB,$latB?geometries=geojson&steps=true&overview=full",
         )
         val connection = url.openConnection() as HttpURLConnection
+        connection.setRequestProperty("User-Agent", "MixAutoCarLauncher/1.0")
         connection.connectTimeout = 10_000
         connection.readTimeout = 10_000
         return try {
@@ -413,10 +471,7 @@ class MapLibreEngineImpl : CarMapEngine {
         }
 
         runCatching {
-            refreshLocationFromSystem(ctx)
-            requestFreshLocationUpdate(ctx)
-
-            val locationEngine = LocationEngineProxy(AndroidLocationEngineImpl(ctx))
+            val locationEngine = createLocationEngine(ctx)
             this.locationEngine = locationEngine
             val locationComponent = map.locationComponent
             val options = LocationComponentActivationOptions.builder(ctx, style)
@@ -428,12 +483,15 @@ class MapLibreEngineImpl : CarMapEngine {
             locationComponent.isLocationComponentEnabled = true
             locationComponent.cameraMode = CameraMode.TRACKING
             locationComponent.renderMode = RenderMode.COMPASS
+
+            flushPendingLocationFix()
+            beginLocationAcquisition(ctx)
+            scheduleLocationRetries(ctx)
+
             locationEngine.getLastLocation(object : LocationEngineCallback<LocationEngineResult> {
                 override fun onSuccess(result: LocationEngineResult) {
                     result.lastLocation?.let { location ->
-                        snapCameraToGpsIfNeeded(
-                            LatLng(location.latitude, location.longitude),
-                        )
+                        applyAndroidLocation(location, snapCamera = !hasSnappedCameraToGps)
                     }
                 }
 
@@ -447,7 +505,37 @@ class MapLibreEngineImpl : CarMapEngine {
         }
     }
 
+    private fun createLocationEngine(context: Context): LocationEngine {
+        Log.i(TAG, "Using MapLibre fused location engine (no Google Services)")
+        return LocationEngineProxy(MapLibreFusedLocationEngineImpl(context))
+    }
+
+    private fun scheduleLocationRetries(context: Context) {
+        locationRetryJob?.cancel()
+        locationRetryJob = engineScope.launch {
+            for (delayMs in LOCATION_RETRY_DELAYS_MS) {
+                delay(delayMs)
+                if (hasSnappedCameraToGps && lastKnownLocation != null) return@launch
+                Log.i(TAG, "Scheduled location retry after ${delayMs}ms")
+                refreshLocationOnly(context)
+            }
+        }
+    }
+
+    private fun flushPendingLocationFix() {
+        val location = pendingLocationFix ?: return
+        val component = mapLibreMap?.locationComponent ?: return
+        if (!component.isLocationComponentActivated || !component.isLocationComponentEnabled) return
+        component.forceLocationUpdate(location)
+        pendingLocationFix = null
+        Log.i(TAG, "Applied queued location fix to LocationComponent")
+    }
+
     private fun registerSpeedUpdates(engine: LocationEngine) {
+        locationEngineCallback?.let { previous ->
+            locationEngine?.removeLocationUpdates(previous)
+        }
+
         val request = LocationEngineRequest.Builder(LOCATION_INTERVAL_MS)
             .setPriority(LocationEngineRequest.PRIORITY_HIGH_ACCURACY)
             .build()
@@ -455,9 +543,7 @@ class MapLibreEngineImpl : CarMapEngine {
         val callback = object : LocationEngineCallback<LocationEngineResult> {
             override fun onSuccess(result: LocationEngineResult) {
                 val location = result.lastLocation ?: return
-                val latLng = LatLng(location.latitude, location.longitude)
-                lastKnownLocation = latLng
-                snapCameraToGpsIfNeeded(latLng)
+                applyAndroidLocation(location, snapCamera = !hasSnappedCameraToGps)
                 val speedKmh = if (location.hasSpeed()) {
                     (location.speed * 3.6f).toInt().coerceAtLeast(0)
                 } else {
@@ -492,6 +578,25 @@ class MapLibreEngineImpl : CarMapEngine {
         _uiState.update { it.copy(streetName = "Current location") }
     }
 
+    private fun resolveMapViewOrigin(): LatLng? {
+        val map = mapLibreMap ?: return null
+        val position = map.cameraPosition
+        if (position.zoom < ROUTING_MIN_ZOOM) return null
+        return position.target
+    }
+
+    private fun logPermissionState(context: Context) {
+        val fineGranted = ContextCompat.checkSelfPermission(
+            context,
+            Manifest.permission.ACCESS_FINE_LOCATION,
+        ) == PackageManager.PERMISSION_GRANTED
+        val coarseGranted = ContextCompat.checkSelfPermission(
+            context,
+            Manifest.permission.ACCESS_COARSE_LOCATION,
+        ) == PackageManager.PERMISSION_GRANTED
+        Log.i(TAG, "Location permission: fine=$fineGranted coarse=$coarseGranted")
+    }
+
     private fun refreshLocationFromSystem(context: Context): LatLng? {
         val location = readLastKnownLocation(context) ?: return null
         applySystemLocation(location, snapCamera = !hasSnappedCameraToGps)
@@ -499,7 +604,29 @@ class MapLibreEngineImpl : CarMapEngine {
     }
 
     private fun applySystemLocation(latLng: LatLng, snapCamera: Boolean) {
+        val location = Location("mixauto").apply {
+            latitude = latLng.latitude
+            longitude = latLng.longitude
+            time = System.currentTimeMillis()
+        }
+        applyAndroidLocation(location, snapCamera)
+    }
+
+    private fun applyAndroidLocation(location: Location, snapCamera: Boolean) {
+        val latLng = LatLng(location.latitude, location.longitude)
         lastKnownLocation = latLng
+        val component = mapLibreMap?.locationComponent
+        if (component != null && component.isLocationComponentActivated && component.isLocationComponentEnabled) {
+            component.forceLocationUpdate(location)
+            pendingLocationFix = null
+        } else {
+            pendingLocationFix = location
+        }
+        Log.i(
+            TAG,
+            "Location fix ${location.latitude}, ${location.longitude} " +
+                "(provider=${location.provider}, snapped=$snapCamera)",
+        )
         if (snapCamera) {
             snapCameraToGpsIfNeeded(latLng)
         } else {
@@ -507,42 +634,101 @@ class MapLibreEngineImpl : CarMapEngine {
         }
     }
 
-    private fun requestFreshLocationUpdate(context: Context) {
+    private fun beginLocationAcquisition(context: Context) {
+        if (!hasLocationPermission(context)) {
+            Log.w(TAG, "beginLocationAcquisition skipped: permission not granted")
+            return
+        }
+
+        val locationManager = context.getSystemService(Context.LOCATION_SERVICE) as? LocationManager
+        Log.i(
+            TAG,
+            "beginLocationAcquisition: providers=${locationManager?.allProviders}, " +
+                "enabled=${isLocationEnabled(context)}, " +
+                "listenersRegistered=$listenersRegistered",
+        )
+        logPermissionState(context)
+
+        refreshLocationFromSystem(context)
+        ensureLocationListeners(context)
+        startLocationPolling(context)
+    }
+
+    private fun refreshLocationOnly(context: Context) {
         if (!hasLocationPermission(context)) return
+        refreshLocationFromSystem(context)
+        flushPendingLocationFix()
+    }
+
+    private fun ensureLocationListeners(context: Context) {
+        if (listenersRegistered) {
+            Log.i(TAG, "Location listeners already active; skipping re-register")
+            return
+        }
+        ensureGpsLocationListener(context)
+        listenersRegistered = true
+    }
+
+    private fun ensureGpsLocationListener(context: Context) {
+        if (freshLocationListener != null) return
         val locationManager = context.getSystemService(Context.LOCATION_SERVICE) as? LocationManager
             ?: return
 
-        removeFreshLocationListener()
-
         val listener = LocationListener { location ->
-            removeFreshLocationListener()
-            applySystemLocation(
-                LatLng(location.latitude, location.longitude),
-                snapCamera = !hasSnappedCameraToGps,
+            Log.i(
+                TAG,
+                "GPS update: ${location.latitude}, ${location.longitude} from ${location.provider}",
             )
+            applyAndroidLocation(location, snapCamera = !hasSnappedCameraToGps)
         }
         freshLocationListener = listener
 
-        val providers = listOf(
-            LocationManager.GPS_PROVIDER,
-            LocationManager.NETWORK_PROVIDER,
-        )
-        for (provider in providers) {
-            val started = runCatching {
-                locationManager.requestLocationUpdates(
-                    provider,
-                    0L,
-                    0f,
-                    listener,
-                    Looper.getMainLooper(),
-                )
-            }.isSuccess
-            if (started) {
-                Log.d(TAG, "Requested fresh location from $provider")
-                return
+        runCatching {
+            locationManager.requestLocationUpdates(
+                LocationManager.GPS_PROVIDER,
+                FRESH_LOCATION_MIN_TIME_MS,
+                0f,
+                listener,
+                Looper.getMainLooper(),
+            )
+            Log.i(TAG, "GPS location listener registered")
+        }.onFailure { error ->
+            Log.w(TAG, "Failed to register GPS listener: ${error.message}")
+            freshLocationListener = null
+        }
+    }
+
+    private fun startLocationPolling(context: Context) {
+        if (locationPollJob?.isActive == true) return
+        locationPollJob?.cancel()
+        locationPollJob = engineScope.launch {
+            repeat(LOCATION_POLL_ATTEMPTS) {
+                readLastKnownLocation(context)?.let { latLng ->
+                    applySystemLocation(latLng, snapCamera = !hasSnappedCameraToGps)
+                    if (hasSnappedCameraToGps) return@launch
+                }
+                delay(LOCATION_POLL_INTERVAL_MS)
+            }
+            if (lastKnownLocation == null) {
+                Log.w(TAG, "Location polling timed out with no fix")
+                _uiState.update { state ->
+                    if (state.streetName == "Map ready" || state.streetName == "Locating..." ||
+                        state.streetName == "Scanning Road..."
+                    ) {
+                        state.copy(streetName = "Zoom map to your area (no GPS fix)")
+                    } else {
+                        state
+                    }
+                }
             }
         }
-        Log.w(TAG, "Could not request fresh location from any provider")
+    }
+
+    private fun isLocationEnabled(context: Context): Boolean {
+        val locationManager = context.getSystemService(Context.LOCATION_SERVICE) as? LocationManager
+            ?: return false
+        return locationManager.isProviderEnabled(LocationManager.GPS_PROVIDER) ||
+            locationManager.isProviderEnabled(LocationManager.NETWORK_PROVIDER)
     }
 
     private fun removeFreshLocationListener() {
@@ -603,18 +789,19 @@ class MapLibreEngineImpl : CarMapEngine {
         val locationManager = context.getSystemService(Context.LOCATION_SERVICE) as? LocationManager
             ?: return null
 
-        val providers = listOf(
-            LocationManager.GPS_PROVIDER,
-            LocationManager.NETWORK_PROVIDER,
-            LocationManager.PASSIVE_PROVIDER,
-        )
-
-        val bestLocation = providers
+        val bestLocation = locationManager.allProviders
             .mapNotNull { provider ->
                 runCatching { locationManager.getLastKnownLocation(provider) }.getOrNull()
             }
             .maxByOrNull(Location::getTime)
 
+        if (bestLocation != null) {
+            Log.i(
+                TAG,
+                "readLastKnownLocation: ${bestLocation.latitude}, ${bestLocation.longitude} " +
+                    "from ${bestLocation.provider}",
+            )
+        }
         return bestLocation?.let { LatLng(it.latitude, it.longitude) }
     }
 
@@ -623,8 +810,13 @@ class MapLibreEngineImpl : CarMapEngine {
         private const val DEFAULT_TILT = 30.0
         private const val DEFAULT_ZOOM = 15.0
         private const val DEFAULT_ZOOM_FALLBACK = 6.0
+        private const val ROUTING_MIN_ZOOM = 10.0
         private const val LOCATION_INTERVAL_MS = 1000L
-        private const val LOCATION_ACQUIRE_TIMEOUT_MS = 3000L
+        private const val FRESH_LOCATION_MIN_TIME_MS = 500L
+        private const val LOCATION_POLL_INTERVAL_MS = 1000L
+        private const val LOCATION_POLL_ATTEMPTS = 15
+        private const val LOCATION_ACQUIRE_TIMEOUT_MS = 8000L
+        private val LOCATION_RETRY_DELAYS_MS = longArrayOf(1_000L, 3_000L, 8_000L)
         private const val ROUTE_SOURCE_ID = "mix-route-source"
         private const val ROUTE_LAYER_ID = "mix-route-layer"
         private const val ROUTE_COLOR = "#00CBD6"

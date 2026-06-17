@@ -48,13 +48,13 @@ fun CarMapViewContainer(
                 Lifecycle.Event.ON_RESUME -> engine.onResume()
                 Lifecycle.Event.ON_PAUSE -> engine.onPause()
                 Lifecycle.Event.ON_STOP -> engine.onStop()
+                Lifecycle.Event.ON_DESTROY -> engine.onDestroy()
                 else -> Unit
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose {
             lifecycleOwner.lifecycle.removeObserver(observer)
-            engine.onDestroy()
         }
     }
 

@@ -43,7 +43,8 @@ MainActivity (mapEngine = MapLibreEngineImpl())
 - Style: inline OSM raster JSON (`tile.openstreetmap.org`) — not `demotiles.maplibre.org` (no PH coverage)
 - Routing: OSRM public API; route line via GeoJsonSource + LineLayer `#00CBD6`
 - Search: Nominatim with `User-Agent: MixAutoCarLauncher/1.0`
-- Location: `AndroidLocationEngineImpl` (not fused); runtime `ACCESS_FINE_LOCATION` required
+- Location: `MapLibreFusedLocationEngineImpl` (AOSP, no Google Services dep); runtime `ACCESS_FINE_LOCATION` + `ACCESS_COARSE_LOCATION` both requested
+- No `play-services-location` dependency — app must work on Eonon/AOSP devices without Google Play Services
 
 ## Shortcut packages (Eonon / AOSP)
 
@@ -73,3 +74,11 @@ Set `JAVA_HOME` to Android Studio `jbr` before `.\gradlew.bat assembleDebug`.
 - Emulator mock GPS: `getLastKnownLocation` often null until `requestLocationUpdates(GPS_PROVIDER, …)` fires; refresh on `onResume` after Extended Controls changes
 - `CarMapViewContainer` needs `lifecycle-runtime-compose` for `LocalLifecycleOwner`
 - After OSRM route draw, use `LatLngBounds` fit — not `CameraMode.TRACKING` immediately (snaps back to user dot)
+- `ShortcutDock` lazy list keys must use stable `AppShortcut.id` (not display `label`); wrap horizontal/vertical branches in `key(isHorizontal)` — toggling layout settings crashed with duplicate key `"Settings"`
+- Cached `MapView` in `MapLibreEngineImpl.createMapView()`: detach from parent via `(parent as? ViewGroup)?.removeView()` before returning to a new `AndroidView`
+- Do not call `engine.onDestroy()` in `CarMapViewContainer` composable `onDispose` — only forward `ON_DESTROY` from activity lifecycle; layout changes remove/re-add the composable but must keep the map engine alive
+- Emulator GPS (`adb emu geo fix`, Extended Controls) delivers 0 location reports on some AVDs — this is an AVD-level failure, not an app bug; test location on a physical device
+- `MapLibreEngineImpl` registers GPS location listener ONCE via `listenersRegistered` flag — do not tear down and re-register on every `onResume`; rapid re-registration causes AppOps `op=GPS: Operation not started` errors and no fixes are delivered
+- `forceLocationUpdate(location)` on `locationComponent` is required to push fixes into MapLibre's blue dot; store fix in `pendingLocationFix` if component not yet activated, flush in `activateLocationTracking()`
+- `navigateToCoordinates()` falls back to map camera center (`resolveMapViewOrigin()`) when GPS is null and camera zoom ≥ 10 — allows routing on emulator without GPS fix
+- Do NOT add `play-services-location` or any `com.google.android.gms` dependency — app targets AOSP head units with no Google Services

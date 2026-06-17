@@ -124,9 +124,14 @@ After install on the head unit, select **MixAuto** when prompted for the default
 | Compose compiler version mismatch | Align `kotlin` and `composeCompiler` in `libs.versions.toml` |
 | App not offered as home launcher | Verify HOME + DEFAULT categories in manifest; reinstall APK |
 | Map shows green/blank (no streets) | OSM tiles loading — ensure INTERNET; demotiles style has no PH coverage (use OSM raster in engine) |
-| "Location unavailable" on emulator | Grant location permission; click SET LOCATION in Extended Controls; relaunch app or resume activity |
+| "Location unavailable" on emulator | Grant **Precise** location permission; Extended Controls → Location → Set Location while app is open (after `GPS location listener registered` appears in Logcat) |
+| Emulator GPS never fires despite Set Location | AVD-level failure — `adb emu geo fix` returns OK but `dumpsys location` shows `Number of location reports: 0`; cold boot AVD or test on physical device |
+| AppOps `op=GPS: Operation not started` in Logcat | Location listener being torn down and re-registered too rapidly; `MapLibreEngineImpl` uses `listenersRegistered` flag — do not reset it on resume |
+| Navigation shows "Zoom map to your area" | GPS unavailable — pan/zoom map to location (zoom ≥ 10), then search destination; routing uses map center as origin |
 | Map frozen at US/Philippines overview | Wait for GPS snap or set mock location; engine snaps on first `requestLocationUpdates` fix |
 | `Unresolved reference: LocalLifecycleOwner` | Add `androidx.lifecycle:lifecycle-runtime-compose` dependency |
+| Crash: `Key "Settings" was already used` on settings toggle | `ShortcutDock.kt`: use `key = { it.id }` not `it.label`; wrap dock in `key(isHorizontal)` |
+| Crash: `child already has a parent` on settings toggle | `MapLibreEngineImpl`: detach cached MapView before reuse; `CarMapViewContainer`: `onDestroy` only on activity `ON_DESTROY` |
 
 ## Related agent resources
 
