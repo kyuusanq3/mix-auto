@@ -1,0 +1,75 @@
+---
+description: MixAuto Android car launcher — Compose, theme, and Eonon head unit conventions
+alwaysApply: true
+---
+
+# MixAuto Android Car Launcher
+
+Custom HOME launcher for Eonon head units. Jetpack Compose + Material 3, landscape-only, automotive-grade dark UI.
+
+## Stack
+
+- Package: `com.kyuusanq3.mixauto`
+- Compose BOM `2024.06.00`, Kotlin `1.9.24`, Compose Compiler `1.5.14`
+- Entry: `MainActivity` → `MixAutoTheme` → `DashboardScreen`
+- See `AGENTS.md` at repo root for full layout and build instructions
+
+## UI rules
+
+- Use `MixAutoTheme`; never light mode — head unit is always dark
+- Colors: `OledBlack`, `DeepCharcoal`, `DarkSurface`, `ElectricCyan` from `ui/theme/Color.kt`
+- Sizes: `CarDimensions` object — min tap target 64dp, primary 84dp
+- Text: prefer `CarHeadlineText`, `CarBodyText`, `CarLabelText` from `ui/theme/Type.kt` (ellipsis + maxLines enforced)
+- Import theme text composables explicitly when used in dashboard files
+
+## Layout structure
+
+- `DashboardScreen.kt`: horizontal or vertical shortcut dock; map via `CarMapViewContainer` | media + shortcuts
+- Map: `CarMapEngine` interface in `domain/map/`; swap `MapLibreEngineImpl()` in `MainActivity` only
+- `CarMapViewContainer.kt`: `AndroidView` + lifecycle forwarding + HUD + search overlay trigger
+- `ShortcutDock.kt`: PackageManager resolution, `LazyColumn`, `Drawable.toImageBitmap()`
+
+## Map engine architecture
+
+```
+MainActivity (mapEngine = MapLibreEngineImpl())
+  └── DashboardScreen(mapEngine)
+        └── CarMapViewContainer(engine)
+              ├── AndroidView → MapLibreEngineImpl.createMapView()
+              ├── HUD from engine.uiState.collectAsState()
+              └── NavigationSearchOverlay → searchDestination() / navigateToCoordinates()
+```
+
+- Style: inline OSM raster JSON (`tile.openstreetmap.org`) — not `demotiles.maplibre.org` (no PH coverage)
+- Routing: OSRM public API; route line via GeoJsonSource + LineLayer `#00CBD6`
+- Search: Nominatim with `User-Agent: MixAutoCarLauncher/1.0`
+- Location: `AndroidLocationEngineImpl` (not fused); runtime `ACCESS_FINE_LOCATION` required
+
+## Shortcut packages (Eonon / AOSP)
+
+- Settings: `com.android.settings`
+- Radio: try `com.android.fmradio`, `com.caf.fmradio`, `com.eonon.radio`
+- Bluetooth: settings package or `Settings.ACTION_BLUETOOTH_SETTINGS` fallback
+
+## Manifest
+
+- HOME + DEFAULT + LAUNCHER intent-filters on `MainActivity`
+- `launchMode="singleTask"`, `screenOrientation="landscape"`
+
+## Build (Windows CLI)
+
+Set `JAVA_HOME` to Android Studio `jbr` before `.\gradlew.bat assembleDebug`.
+
+## Lessons learned
+
+- Missing import for `CarLabelText` in `DashboardScreen.kt` caused compile failure — always import all `Car*Text` composables used in a file
+- Kotlin and Compose Compiler versions must stay paired in `gradle/libs.versions.toml`
+- Removed `activity_main.xml`; dashboard is 100% Compose — do not recreate XML main layout
+- Gradle in Cursor terminal may fail without `JAVA_HOME`; Android Studio build works with embedded JDK
+- MapView lifecycle race: `DisposableEffect` calls `onStart`/`onResume` before `AndroidView` factory runs — call `view.onStart()`/`view.onResume()` in `createMapView()` after `onCreate(null)`
+- MapLibre 11.x removed `LocationEngineProvider` — use `LocationEngineProxy(AndroidLocationEngineImpl(ctx))` for emulator compatibility
+- `demotiles.maplibre.org` has limited regional coverage; use OSM raster tiles for Philippines/global
+- Map loads before location permission dialog — `MainActivity` must call `retryLocationActivation()` when permission already granted, not only after dialog
+- Emulator mock GPS: `getLastKnownLocation` often null until `requestLocationUpdates(GPS_PROVIDER, …)` fires; refresh on `onResume` after Extended Controls changes
+- `CarMapViewContainer` needs `lifecycle-runtime-compose` for `LocalLifecycleOwner`
+- After OSRM route draw, use `LatLngBounds` fit — not `CameraMode.TRACKING` immediately (snaps back to user dot)
