@@ -85,6 +85,15 @@ Set `JAVA_HOME` to Android Studio `jbr` before `.\gradlew.bat assembleDebug`.
 - `router.project-osrm.org` returns 403 for third-party apps — use `routing.openstreetmap.de/routed-car` in `fetchOsrmRoute()`; set `User-Agent: MixAutoCarLauncher/1.0` on OSRM requests (same as Nominatim)
 - Turn-by-turn navigation: `fullRouteSteps` / `currentStepIndex` in `MapLibreEngineImpl`; `evaluateStepAdvancement()` runs on GPS fixes when `isNavigating` — do not overwrite `streetName` with "Current location" during navigation
 - Step advance threshold 25 m; arrival at 15 m from destination or when step index exhausts; `navigationArrivalTriggered` prevents duplicate arrival coroutines
-- `startFreeDrive()` removes `mix-route-layer` and `mix-route-source`; resets camera to `FREE_DRIVE_TILT` (0°) / `FREE_DRIVE_ZOOM` (14.5) with `CameraMode.TRACKING`
+- `startFreeDrive()` removes route layer/source, resets `MapUiState`, snaps once via `snapCameraToGpsIfNeeded()` — do not re-snap on every GPS fix (causes camera twitching)
+- Free drive camera: `FREE_DRIVE_ZOOM` 16 / `FREE_DRIVE_TILT` 45° / `CameraMode.TRACKING_GPS` (heading-up, Android Auto-like); full nav uses zoom 17.5 / tilt 55°
+- One-time snap: `hasSnappedCameraToGps` gates `snapCameraToGpsIfNeeded()`; use `moveCamera` then `TRACKING_GPS` — do not loop animated `setCameraMode` or stale-target checks on GPS updates
+- Style-load callback calls `startFreeDrive()` after `activateLocationTracking()`; `retryLocationActivation()` must NOT call `startFreeDrive()` again (duplicate snap/twitch)
+- Enabling `CameraMode.TRACKING` at wide fallback zoom (6) locks the visual view zoomed out even when `cameraPosition.zoom` reports 14–16 — snap after location component is active
 - End navigation button in `CarMapViewContainer` (Close icon, red tint) calls `engine.startFreeDrive()` when `isNavigating`
 - 3D nav camera: `showRouteThenDive()` → 2 s overview → `enterNavigationCamera()` after `NAV_DIVE_DELAY_MS` (2200 ms); guard with `_uiState.value.isNavigating` so dive is skipped if user exits during overview
+- `enterNavigationCamera()` must NOT call `map.animateCamera()` — it cancels `TRACKING_GPS`; use `component.zoomWhileTracking(NAV_ZOOM)` + `tiltWhileTracking(NAV_TILT)` instead (zoom 17.5 / tilt 55° preserved)
+- Use `RenderMode.GPS` (not `COMPASS`) for heading-up driving view; set on `activateLocationTracking()` and before nav/free-drive camera modes
+- Manual pan/zoom sets `isCameraDetached` via `MapLibreMap.OnCameraMoveStartedListener.REASON_API_GESTURE`; recenter button in `CarMapViewContainer` calls `engine.recenterCamera()`
+- `MainActivity` uses `WindowCompat.setDecorFitsSystemWindows(window, false)` — root `DashboardScreen` must apply `systemBarsPadding()` so phones fit between status/nav bars; head units with no bars get zero inset padding
+- `values-night/themes.xml` must include `windowFullscreen` and `windowContentOverlay` (day theme already had them; night theme loads at runtime)

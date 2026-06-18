@@ -6,4 +6,5 @@ data class MapUiState(
     val isNavigating: Boolean = false,
     val distanceToNextTurn: String? = null,
     val turnInstruction: String? = null,
+    val isCameraDetached: Boolean = false,
 )

@@ -121,6 +121,11 @@ class MapLibreEngineImpl : CarMapEngine {
             view.onResume()
             view.getMapAsync { map ->
                 mapLibreMap = map
+                map.addOnCameraMoveStartedListener { reason ->
+                    if (reason == MapLibreMap.OnCameraMoveStartedListener.REASON_API_GESTURE) {
+                        _uiState.update { it.copy(isCameraDetached = true) }
+                    }
+                }
                 map.setStyle(Style.Builder().fromJson(OSM_STYLE_JSON)) { style ->
                     activateLocationTracking(map, style)
                     if (pendingLocationActivation && hasLocationPermission(context)) {
@@ -242,6 +247,22 @@ class MapLibreEngineImpl : CarMapEngine {
         }
     }
 
+    override fun recenterCamera() {
+        val map = mapLibreMap ?: return
+        if (_uiState.value.isNavigating) {
+            enterNavigationCamera()
+        } else {
+            hasSnappedCameraToGps = false
+            val target = lastKnownLocation ?: resolveFreeDriveTarget(map)
+            if (target != null) {
+                snapCameraToGpsIfNeeded(target)
+            } else {
+                activateFreeDriveTrackingMode(map)
+                _uiState.update { it.copy(isCameraDetached = false) }
+            }
+        }
+    }
+
     override fun startFreeDrive() {
         fullRouteSteps = emptyList()
         currentStepIndex = 0
@@ -302,8 +323,13 @@ class MapLibreEngineImpl : CarMapEngine {
 
         val component = map.locationComponent
         if (!component.isLocationComponentActivated || !component.isLocationComponentEnabled) return
-        if (component.cameraMode == CameraMode.TRACKING_GPS) return
+        if (component.cameraMode == CameraMode.TRACKING_GPS &&
+            component.renderMode == RenderMode.GPS
+        ) {
+            return
+        }
 
+        component.renderMode = RenderMode.GPS
         component.cameraMode = CameraMode.TRACKING_GPS
     }
 
@@ -331,6 +357,7 @@ class MapLibreEngineImpl : CarMapEngine {
         )
 
         if (componentReady) {
+            component.renderMode = RenderMode.GPS
             component.cameraMode = CameraMode.NONE
         }
 
@@ -350,7 +377,7 @@ class MapLibreEngineImpl : CarMapEngine {
         }
 
         hasSnappedCameraToGps = true
-        _uiState.update { it.copy(streetName = "Free Drive") }
+        _uiState.update { it.copy(streetName = "Free Drive", isCameraDetached = false) }
     }
 
     override fun navigateToCoordinates(lat: Double, lng: Double) {
@@ -554,24 +581,14 @@ class MapLibreEngineImpl : CarMapEngine {
 
     private fun enterNavigationCamera() {
         val map = mapLibreMap ?: return
-        val origin = lastKnownLocation ?: return
         val component = map.locationComponent
         if (!component.isLocationComponentActivated || !component.isLocationComponentEnabled) return
 
+        component.renderMode = RenderMode.GPS
         component.cameraMode = CameraMode.TRACKING_GPS
-
-        val bearing = component.lastKnownLocation?.bearing?.toDouble() ?: 0.0
-        map.animateCamera(
-            CameraUpdateFactory.newCameraPosition(
-                CameraPosition.Builder()
-                    .target(origin)
-                    .zoom(NAV_ZOOM)
-                    .tilt(NAV_TILT)
-                    .bearing(bearing)
-                    .build(),
-            ),
-            NAV_CAMERA_DURATION_MS,
-        )
+        component.zoomWhileTracking(NAV_ZOOM, NAV_CAMERA_DURATION_MS.toLong())
+        component.tiltWhileTracking(NAV_TILT, NAV_CAMERA_DURATION_MS.toLong())
+        _uiState.update { it.copy(isCameraDetached = false) }
     }
 
     private fun drawRoute(geometryJson: String) {
@@ -617,7 +634,7 @@ class MapLibreEngineImpl : CarMapEngine {
                 locationComponent.activateLocationComponent(options)
             }
             locationComponent.isLocationComponentEnabled = true
-            locationComponent.renderMode = RenderMode.COMPASS
+            locationComponent.renderMode = RenderMode.GPS
 
             flushPendingLocationFix()
             beginLocationAcquisition(ctx)

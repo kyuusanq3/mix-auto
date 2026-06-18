@@ -16,6 +16,7 @@ interface CarMapEngine {
     fun onDestroy()
 
     fun startFreeDrive()
+    fun recenterCamera()
     fun navigateToCoordinates(lat: Double, lng: Double)
     fun retryLocationActivation()
     suspend fun searchDestination(query: String): List<PlaceResult>

@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.GpsFixed
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -137,6 +138,22 @@ fun CarMapViewContainer(
                         imageVector = Icons.Filled.Close,
                         contentDescription = "End navigation",
                         tint = Color.White,
+                    )
+                }
+            }
+
+            if (mapUiState.isCameraDetached) {
+                Spacer(modifier = Modifier.height(CarDimensions.PaneGap))
+                IconButton(
+                    onClick = { engine.recenterCamera() },
+                    modifier = Modifier
+                        .size(CarDimensions.MinTapTarget)
+                        .background(OledBlack.copy(alpha = 0.72f), MaterialTheme.shapes.small),
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.GpsFixed,
+                        contentDescription = "Recenter map",
+                        tint = MaterialTheme.colorScheme.primary,
                     )
                 }
             }
