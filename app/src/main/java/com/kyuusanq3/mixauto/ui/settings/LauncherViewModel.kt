@@ -15,6 +15,12 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     var isShortcutsHorizontal by mutableStateOf(preferences.isShortcutsHorizontal)
         private set
 
+    var mapMediaRatio by mutableStateOf(preferences.mapMediaRatio)
+        private set
+
+    var limitSearchDistance by mutableStateOf(preferences.limitSearchDistance)
+        private set
+
     fun toggleLeftHandDrive() {
         isLeftHandDrive = !isLeftHandDrive
         preferences.isLeftHandDrive = isLeftHandDrive
@@ -23,5 +29,15 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     fun toggleShortcutsHorizontal() {
         isShortcutsHorizontal = !isShortcutsHorizontal
         preferences.isShortcutsHorizontal = isShortcutsHorizontal
+    }
+
+    fun updateMapMediaRatio(value: Float) {
+        mapMediaRatio = value
+        preferences.mapMediaRatio = value
+    }
+
+    fun toggleLimitSearchDistance() {
+        limitSearchDistance = !limitSearchDistance
+        preferences.limitSearchDistance = limitSearchDistance
     }
 }

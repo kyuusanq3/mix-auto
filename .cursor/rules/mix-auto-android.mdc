@@ -5,7 +5,7 @@ alwaysApply: true
 
 # MixAuto Android Car Launcher
 
-Custom HOME launcher for Eonon head units. Jetpack Compose + Material 3, landscape-only, automotive-grade dark UI.
+Custom HOME launcher for Eonon head units. Jetpack Compose + Material 3, sensor orientation (portrait + landscape), automotive-grade dark UI.
 
 ## Stack
 
@@ -24,7 +24,7 @@ Custom HOME launcher for Eonon head units. Jetpack Compose + Material 3, landsca
 
 ## Layout structure
 
-- `DashboardScreen.kt`: horizontal or vertical shortcut dock; map via `CarMapViewContainer` | media + shortcuts
+- `DashboardScreen.kt`: portrait Column (map → media → horizontal dock) or landscape Row/Column; map via `CarMapViewContainer` | media + shortcuts; `mapMediaRatio` slider in settings (default 0.6)
 - Map: `CarMapEngine` interface in `domain/map/`; swap `MapLibreEngineImpl()` in `MainActivity` only
 - `CarMapViewContainer.kt`: `AndroidView` + lifecycle forwarding + HUD + search overlay trigger
 - `ShortcutDock.kt`: PackageManager resolution, `LazyColumn`, `Drawable.toImageBitmap()`
@@ -55,7 +55,7 @@ MainActivity (mapEngine = MapLibreEngineImpl())
 ## Manifest
 
 - HOME + DEFAULT + LAUNCHER intent-filters on `MainActivity`
-- `launchMode="singleTask"`, `screenOrientation="landscape"`
+- `launchMode="singleTask"`, `screenOrientation="sensor"`
 
 ## Build (Windows CLI)
 
@@ -97,3 +97,20 @@ Set `JAVA_HOME` to Android Studio `jbr` before `.\gradlew.bat assembleDebug`.
 - Manual pan/zoom sets `isCameraDetached` via `MapLibreMap.OnCameraMoveStartedListener.REASON_API_GESTURE`; recenter button in `CarMapViewContainer` calls `engine.recenterCamera()`
 - `MainActivity` uses `WindowCompat.setDecorFitsSystemWindows(window, false)` — root `DashboardScreen` must apply `systemBarsPadding()` so phones fit between status/nav bars; head units with no bars get zero inset padding
 - `values-night/themes.xml` must include `windowFullscreen` and `windowContentOverlay` (day theme already had them; night theme loads at runtime)
+- Portrait: map `weight(mapMediaRatio)`, media `weight(1 - ratio)`, horizontal `ShortcutDock` at bottom with wrap-content height
+- Landscape horizontal shortcuts: map/media split by `mapMediaRatio`; vertical shortcuts: dock fixed 18%, map/media share remaining 82% by ratio
+- Horizontal dock compact sizes: `DockHorizontalTapTarget` 48dp, `DockHorizontalIconSize` 40dp — do not reuse `MinTapTarget`/`AppIconSize` for horizontal bar
+- `LauncherViewModel.updateMapMediaRatio()` not `setMapMediaRatio()` — JVM signature clash with `mapMediaRatio` property setter
+- Media controls in `MediaPlayerPane.kt`: each button in `Row` needs `Modifier.weight(1f)` + `requiredSize(MinTapTarget)` or last button shrinks when pane is narrow
+- Now playing: `MediaSessionRepository` + `MixAutoNotificationListenerService`; user must enable Notification access — `MediaSessionManager.getActiveSessions()` requires enabled listener component
+- Shared overlay dismiss: `OverlayCloseButton` in `ui/components/` — use for full-screen dialogs (settings, search), not text Close buttons
+- `MainActivity.onResume()` calls `MediaSessionRepository.refreshSessions()` after returning from notification-access settings or media apps
+- Offline Overture POI build/publish tools live in sibling repo **`mix-auto-overture-maps/tools/`** — not `mix-auto/tools/`; `mix-auto/tools/README.md` is a pointer only
+- App catalog: `MapDataViewModel` fetches `countries.json` from `kyuusanq3/mix-auto-overture-maps/releases/latest/download/`; per-country URL is `{RELEASE_BASE}/{asset}` from manifest — no app update needed when publishing new release tags marked Latest
+- GitHub release must **attach** `countries.json` + `{iso}_places.db.gz` as release assets; a release with zero assets returns 404 on `/latest/download/` even if the tag exists
+- Philippines pack sizes: ~137 MB compressed (`ph_places.db.gz`), ~263 MB installed SQLite; manifest `size_compressed_mb` / `size_db_mb` drives UI labels
+- `LocalPlacesRepository.downloadDatabaseFromUrl()` decompresses `.gz`; manual `importDatabaseFromUri()` does NOT — sideload uncompressed `.db` only
+- `MapDataOverlay` header copy still says "~50 MB compressed" — per-row sizes from catalog are correct (~137 MB for PH)
+- Destination search distance: default **500 km** cap via `MAX_SEARCH_RADIUS_M` in `MapLibreEngineImpl`; filter runs after `mergeAndDeduplicate()` when `limitDistance` is true — local SQLite bbox (±0.5°) unchanged
+- Launcher Settings toggle **"Nearby results only (within 500 km)"** (`LauncherPreferences.limitSearchDistance`, default ON) flows DashboardScreen → CarMapViewContainer → NavigationSearchOverlay → `searchDestination(limitDistance)`; include `limitSearchDistance` in search `LaunchedEffect` keys so toggling re-queries
+- Photon returns global results (lat/lon is bias only); public OSRM demo server cannot reliably route intercontinental or 5000+ km trips — distance limit protects search UX, not routing capability

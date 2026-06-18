@@ -10,7 +10,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.material3.Button
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -18,6 +17,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -27,35 +27,58 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.kyuusanq3.mixauto.domain.map.CarMapEngine
-import com.kyuusanq3.mixauto.domain.map.PlaceResult
+import com.kyuusanq3.mixauto.domain.map.SearchResultPlace
 import com.kyuusanq3.mixauto.ui.theme.CarBodyText
 import com.kyuusanq3.mixauto.ui.theme.CarDimensions
 import com.kyuusanq3.mixauto.ui.theme.CarHeadlineText
 import com.kyuusanq3.mixauto.ui.theme.CarLabelText
+import com.kyuusanq3.mixauto.ui.theme.ElectricCyan
 import com.kyuusanq3.mixauto.ui.theme.OledBlack
 import kotlinx.coroutines.delay
+import kotlin.math.roundToInt
+
+private fun Float.formatDistance(): String {
+    return if (this < 1000f) {
+        "${roundToInt()} m"
+    } else {
+        val km = this / 1000f
+        val rounded = (km * 10f).roundToInt() / 10f
+        if (rounded == rounded.toLong().toFloat()) {
+            "${rounded.toLong()} km"
+        } else {
+            "$rounded km"
+        }
+    }
+}
 
 @Composable
 fun NavigationSearchOverlay(
     engine: CarMapEngine,
+    limitSearchDistance: Boolean,
     onDismiss: () -> Unit,
 ) {
+    val uiState by engine.uiState.collectAsState()
     var query by remember { mutableStateOf("") }
-    var results by remember { mutableStateOf<List<PlaceResult>>(emptyList()) }
+    var results by remember { mutableStateOf<List<SearchResultPlace>>(emptyList()) }
     var isLoading by remember { mutableStateOf(false) }
     var hasSearched by remember { mutableStateOf(false) }
 
-    LaunchedEffect(query) {
+    LaunchedEffect(query, uiState.currentLat, uiState.currentLng, limitSearchDistance) {
         if (query.length < 2) {
             results = emptyList()
             hasSearched = false
             isLoading = false
             return@LaunchedEffect
         }
-        delay(400)
+        delay(300)
         isLoading = true
         hasSearched = true
-        results = engine.searchDestination(query)
+        results = engine.searchDestination(
+            query = query,
+            currentLat = uiState.currentLat ?: 0.0,
+            currentLng = uiState.currentLng ?: 0.0,
+            limitDistance = limitSearchDistance,
+        )
         isLoading = false
     }
 
@@ -81,16 +104,12 @@ fun NavigationSearchOverlay(
                     CarHeadlineText(
                         text = "Navigate To",
                         style = MaterialTheme.typography.headlineMedium,
+                        modifier = Modifier.weight(1f),
                     )
-                    Button(
+                    OverlayCloseButton(
                         onClick = onDismiss,
-                        modifier = Modifier.height(CarDimensions.MinTapTarget),
-                    ) {
-                        CarLabelText(
-                            text = "Close",
-                            style = MaterialTheme.typography.labelLarge,
-                        )
-                    }
+                        contentDescription = "Close search",
+                    )
                 }
 
                 CarBodyText(
@@ -145,22 +164,46 @@ fun NavigationSearchOverlay(
                             modifier = Modifier.weight(1f),
                             verticalArrangement = Arrangement.spacedBy(CarDimensions.PaneGap / 2),
                         ) {
-                            items(results, key = { "${it.lat},${it.lng},${it.displayName}" }) { place ->
+                            items(
+                                results,
+                                key = { "${it.latitude},${it.longitude},${it.name}" },
+                            ) { place ->
                                 Row(
                                     modifier = Modifier
                                         .fillMaxWidth()
                                         .height(CarDimensions.MinTapTarget)
                                         .clickable {
-                                            engine.navigateToCoordinates(place.lat, place.lng)
+                                            engine.navigateToCoordinates(
+                                                place.latitude,
+                                                place.longitude,
+                                            )
                                             onDismiss()
                                         }
                                         .padding(horizontal = CarDimensions.PaneGap),
                                     verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(CarDimensions.PaneGap),
                                 ) {
-                                    CarBodyText(
-                                        text = place.displayName,
-                                        style = MaterialTheme.typography.bodyLarge,
-                                        maxLines = 2,
+                                    Column(
+                                        modifier = Modifier.weight(1f),
+                                        verticalArrangement = Arrangement.spacedBy(CarDimensions.PaneGap / 4),
+                                    ) {
+                                        CarBodyText(
+                                            text = place.name,
+                                            style = MaterialTheme.typography.bodyLarge,
+                                            maxLines = 1,
+                                        )
+                                        if (place.subTitle.isNotBlank()) {
+                                            CarLabelText(
+                                                text = place.subTitle,
+                                                style = MaterialTheme.typography.labelMedium,
+                                            )
+                                        }
+                                    }
+                                    CarLabelText(
+                                        text = place.distanceInMeters.formatDistance(),
+                                        style = MaterialTheme.typography.labelMedium.copy(
+                                            color = ElectricCyan,
+                                        ),
                                     )
                                 }
                             }

@@ -20,11 +20,13 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Bluetooth
+import androidx.compose.material.icons.filled.Map
 import androidx.compose.material.icons.filled.Radio
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Tune
@@ -41,6 +43,7 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.kyuusanq3.mixauto.ui.theme.CarBodyText
 import com.kyuusanq3.mixauto.ui.theme.CarDimensions
@@ -49,6 +52,7 @@ import com.kyuusanq3.mixauto.ui.theme.DeepCharcoal
 
 private const val TAG = "ShortcutDock"
 private const val LAUNCHER_SETTINGS_KEY = "launcher_settings"
+private const val MAP_DATA_KEY = "map_data"
 
 data class AppShortcut(
     val id: String,
@@ -99,6 +103,7 @@ private val shortcutTargets = listOf(
 fun ShortcutDock(
     isHorizontal: Boolean,
     onOpenSettings: () -> Unit,
+    onOpenMapData: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
@@ -109,11 +114,8 @@ fun ShortcutDock(
     ElevatedCard(
         modifier = if (isHorizontal) {
             modifier
-                .padding(
-                    start = CarDimensions.PaneGap,
-                    end = CarDimensions.PaneGap,
-                    top = CarDimensions.PaneGap,
-                )
+                .padding(horizontal = CarDimensions.PaneGap)
+                .wrapContentHeight()
         } else {
             modifier.padding(CarDimensions.PaneGap)
         },
@@ -127,7 +129,7 @@ fun ShortcutDock(
                 LazyRow(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(CarDimensions.MinTapTarget)
+                        .height(CarDimensions.DockHorizontalTapTarget)
                         .padding(horizontal = CarDimensions.PaneGap),
                     horizontalArrangement = Arrangement.spacedBy(CarDimensions.DockItemSpacing),
                     verticalAlignment = Alignment.CenterVertically,
@@ -136,6 +138,12 @@ fun ShortcutDock(
                         MinimizedShortcutItem(
                             shortcut = shortcut,
                             onClick = { launchShortcut(context, shortcut) },
+                        )
+                    }
+                    item(key = MAP_DATA_KEY) {
+                        MapDataDockItem(
+                            horizontal = true,
+                            onClick = onOpenMapData,
                         )
                     }
                     item(key = LAUNCHER_SETTINGS_KEY) {
@@ -168,6 +176,12 @@ fun ShortcutDock(
                                 onClick = { launchShortcut(context, shortcut) },
                             )
                         }
+                        item(key = MAP_DATA_KEY) {
+                            MapDataDockItem(
+                                horizontal = false,
+                                onClick = onOpenMapData,
+                            )
+                        }
                         item(key = LAUNCHER_SETTINGS_KEY) {
                             SettingsDockItem(
                                 horizontal = false,
@@ -182,6 +196,60 @@ fun ShortcutDock(
 }
 
 @Composable
+private fun MapDataDockItem(
+    horizontal: Boolean,
+    onClick: () -> Unit,
+) {
+    if (horizontal) {
+        Box(
+            modifier = Modifier
+                .size(CarDimensions.DockHorizontalTapTarget)
+                .clickable(onClick = onClick),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                imageVector = Icons.Filled.Map,
+                contentDescription = "Map Data",
+                modifier = Modifier.size(CarDimensions.DockHorizontalIconSize),
+                tint = MaterialTheme.colorScheme.primary,
+            )
+        }
+    } else {
+        ElevatedCard(
+            modifier = Modifier
+                .fillMaxWidth()
+                .defaultMinSize(minHeight = CarDimensions.MinTapTarget)
+                .clickable(onClick = onClick),
+            elevation = CardDefaults.elevatedCardElevation(defaultElevation = CarDimensions.CardElevation),
+            colors = CardDefaults.elevatedCardColors(
+                containerColor = MaterialTheme.colorScheme.surfaceVariant,
+            ),
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(CarDimensions.PaneGap),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center,
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.Map,
+                    contentDescription = "Map Data",
+                    modifier = Modifier.size(CarDimensions.AppIconSize),
+                    tint = MaterialTheme.colorScheme.primary,
+                )
+                CarBodyText(
+                    text = "Map Data",
+                    modifier = Modifier.padding(top = 4.dp),
+                    style = MaterialTheme.typography.labelLarge,
+                    maxLines = 1,
+                )
+            }
+        }
+    }
+}
+
+@Composable
 private fun SettingsDockItem(
     horizontal: Boolean,
     onClick: () -> Unit,
@@ -189,14 +257,14 @@ private fun SettingsDockItem(
     if (horizontal) {
         Box(
             modifier = Modifier
-                .size(CarDimensions.MinTapTarget)
+                .size(CarDimensions.DockHorizontalTapTarget)
                 .clickable(onClick = onClick),
             contentAlignment = Alignment.Center,
         ) {
             Icon(
                 imageVector = Icons.Filled.Tune,
                 contentDescription = "Launcher",
-                modifier = Modifier.size(CarDimensions.AppIconSize),
+                modifier = Modifier.size(CarDimensions.DockHorizontalIconSize),
                 tint = MaterialTheme.colorScheme.primary,
             )
         }
@@ -242,11 +310,14 @@ private fun MinimizedShortcutItem(
 ) {
     Box(
         modifier = Modifier
-            .size(CarDimensions.MinTapTarget)
+            .size(CarDimensions.DockHorizontalTapTarget)
             .clickable(enabled = shortcut.intent != null, onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
-        ShortcutIcon(shortcut = shortcut)
+        ShortcutIcon(
+            shortcut = shortcut,
+            iconSize = CarDimensions.DockHorizontalIconSize,
+        )
     }
 }
 
@@ -285,18 +356,21 @@ private fun ShortcutItem(
 }
 
 @Composable
-private fun ShortcutIcon(shortcut: AppShortcut) {
+private fun ShortcutIcon(
+    shortcut: AppShortcut,
+    iconSize: Dp = CarDimensions.AppIconSize,
+) {
     if (shortcut.icon != null) {
         Image(
             bitmap = shortcut.icon,
             contentDescription = shortcut.label,
-            modifier = Modifier.size(CarDimensions.AppIconSize),
+            modifier = Modifier.size(iconSize),
         )
     } else {
         Icon(
             imageVector = shortcut.fallbackIcon,
             contentDescription = shortcut.label,
-            modifier = Modifier.size(CarDimensions.AppIconSize),
+            modifier = Modifier.size(iconSize),
             tint = MaterialTheme.colorScheme.primary,
         )
     }

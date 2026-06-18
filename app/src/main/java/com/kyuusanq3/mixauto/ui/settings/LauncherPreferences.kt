@@ -17,9 +17,24 @@ class LauncherPreferences(context: Context) {
             prefs.edit().putBoolean(KEY_SHORTCUTS_HORIZONTAL, value).apply()
         }
 
+    var mapMediaRatio: Float
+        get() = prefs.getFloat(KEY_MAP_MEDIA_RATIO, DEFAULT_MAP_MEDIA_RATIO)
+        set(value) {
+            prefs.edit().putFloat(KEY_MAP_MEDIA_RATIO, value).apply()
+        }
+
+    var limitSearchDistance: Boolean
+        get() = prefs.getBoolean(KEY_LIMIT_SEARCH_DISTANCE, true)
+        set(value) {
+            prefs.edit().putBoolean(KEY_LIMIT_SEARCH_DISTANCE, value).apply()
+        }
+
     companion object {
         private const val PREFS_NAME = "launcher_prefs"
         private const val KEY_LEFT_HAND_DRIVE = "lhd"
         private const val KEY_SHORTCUTS_HORIZONTAL = "shortcuts_horizontal"
+        private const val KEY_MAP_MEDIA_RATIO = "map_media_ratio"
+        private const val KEY_LIMIT_SEARCH_DISTANCE = "limit_search_distance"
+        const val DEFAULT_MAP_MEDIA_RATIO = 0.6f
     }
 }

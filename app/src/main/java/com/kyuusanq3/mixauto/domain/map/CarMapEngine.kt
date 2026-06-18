@@ -19,5 +19,10 @@ interface CarMapEngine {
     fun recenterCamera()
     fun navigateToCoordinates(lat: Double, lng: Double)
     fun retryLocationActivation()
-    suspend fun searchDestination(query: String): List<PlaceResult>
+    suspend fun searchDestination(
+        query: String,
+        currentLat: Double,
+        currentLng: Double,
+        limitDistance: Boolean = true,
+    ): List<SearchResultPlace>
 }

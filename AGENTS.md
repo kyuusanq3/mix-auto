@@ -1,6 +1,6 @@
 # MixAuto — Agent Guide
 
-Custom Android **Car Launcher** for an **Eonon head unit**. This app replaces the default home screen with a landscape dashboard: map placeholder, media player placeholder, and system app shortcuts.
+Custom Android **Car Launcher** for an **Eonon head unit**. This app replaces the default home screen with a dashboard that adapts to portrait (stacked) or landscape (split) orientation: map, media player, and system app shortcuts.
 
 ## Quick facts
 
@@ -13,7 +13,7 @@ Custom Android **Car Launcher** for an **Eonon head unit**. This app replaces th
 | Kotlin | 1.9.24 |
 | Compose Compiler | 1.5.14 (must match Kotlin version) |
 | Compose BOM | 2024.06.00 |
-| Orientation | Landscape only (`AndroidManifest.xml`) |
+| Orientation | Portrait + landscape (`android:screenOrientation="sensor"`) |
 | Launcher role | HOME + DEFAULT + LAUNCHER intent-filters |
 
 ## Build
@@ -43,27 +43,33 @@ app/src/main/java/com/kyuusanq3/mixauto/
 ├── domain/map/
 │   ├── CarMapEngine.kt          # Swappable map contract
 │   ├── MapUiState.kt            # Speed, street, navigation HUD state
-│   └── PlaceResult.kt           # Nominatim search result
+│   └── SearchResultPlace.kt     # Destination search result
 ├── data/map/
-│   └── MapLibreEngineImpl.kt    # MapLibre + OSRM + Nominatim adapter
+│   └── MapLibreEngineImpl.kt    # MapLibre + OSRM + Photon adapter
+├── data/places/
+│   ├── LocalPlacesRepository.kt # Offline Overture POI SQLite search + HTTP download
+│   └── LocalDbMeta.kt           # Installed database metadata
 └── ui/
     ├── components/
     │   ├── CarMapViewContainer.kt       # AndroidView bridge + HUD + search button
-    │   └── NavigationSearchOverlay.kt   # Destination search dialog
+    │   ├── NavigationSearchOverlay.kt   # Destination search dialog
+    │   └── MapDataOverlay.kt            # Offline Overture POI download UI
     ├── theme/                   # Color, CarDimensions, Type, Theme
     └── dashboard/
-        ├── DashboardScreen.kt   # Map + media + shortcut dock layouts
+        ├── DashboardScreen.kt   # Map + media + shortcut dock layouts; settings overlay
+        ├── MediaPlayerPane.kt   # Now playing UI (media session driven)
         └── ShortcutDock.kt      # System app shortcuts
 ```
 
 ## Architecture
 
 ```
-MainActivity (private val mapEngine: CarMapEngine = MapLibreEngineImpl())
+MainActivity (localPlacesRepo + mapEngine = MapLibreEngineImpl(localPlacesRepo))
   └── MixAutoTheme
-        └── DashboardScreen(mapEngine)
+        └── DashboardScreen(mapEngine, mapDataViewModel)
               ├── CarMapViewContainer — map pane (60% or CarDimensions.MapWeight)
-              └── MediaPlayerPane + ShortcutDock
+              ├── MediaPlayerPane + ShortcutDock (Map Data + Launcher settings)
+              └── MapDataOverlay — offline POI country download
 ```
 
 Swap map provider: change one line in `MainActivity.kt` to a new `CarMapEngine` implementation.
@@ -88,6 +94,62 @@ Swap map provider: change one line in `MainActivity.kt` to a new `CarMapEngine` 
 
 Icons: `Drawable.toImageBitmap()` extension (BitmapDrawable fast path + canvas fallback for adaptive icons). Launch: `getLaunchIntentForPackage()` wrapped in try/catch.
 
+Dock also includes **Map Data** (offline Overture POI download) and **Launcher** (layout settings) shortcuts.
+
+## Offline Overture POI data
+
+Country POI databases live in a separate GitHub repo **`mix-auto-overture-maps`**. The app fetches `countries.json` from the latest release and lists every country for download. Assets are **gzip-compressed** SQLite files (`ph_places.db.gz`, ~137 MB download → ~263 MB installed). Build scripts live in that repo under `tools/`.
+
+### Catalog URL (hardcoded in app)
+
+```
+https://github.com/kyuusanq3/mix-auto-overture-maps/releases/latest/download/countries.json
+```
+
+Per-country download: `{RELEASE_BASE}/{asset}` e.g. `ph_places.db.gz`. Uses GitHub `/releases/latest/download/` — no tag update needed in the app when you publish a new release.
+
+### Build and publish (dev machine)
+
+Clone **`mix-auto-overture-maps`** as a sibling of this repo (`../mix-auto-overture-maps`). See its README and run:
+
+```powershell
+cd ..\mix-auto-overture-maps
+pip install overturemaps
+.\publish_philippines.ps1
+```
+
+Output: `places-dist/ph_places.db.gz` + `countries.json`. Upload both to a GitHub release.
+
+Bundled sample asset: `python tools/build_sample_places_db.py` (writes to `mix-auto/app/src/main/assets/places/ph_sample.db`).
+
+### countries.json schema
+
+```json
+[
+  {
+    "iso": "PH",
+    "name": "Philippines",
+    "asset": "ph_places.db.gz",
+    "size_compressed_mb": 137,
+    "size_db_mb": 263
+  }
+]
+```
+
+### On-device install
+
+- **Map Data** opens → `MapDataViewModel.loadCatalog()` fetches manifest → country list with **Installed** badge or download button.
+- Download uses `GZIPInputStream` when URL ends with `.gz`.
+- **Import** / **Sample** remain as fallbacks for Philippines.
+
+**On-device schema** (`filesDir/places/{iso}.db`):
+
+- `places` table: id, name, category, address, city, lat, lng, confidence
+- `places_fts` FTS5 virtual table (external content) for fast text search
+- `meta` table: country_iso, country_name, record_count, generated_date
+
+**Search integration:** `MapLibreEngineImpl.searchDestination()` fans out to local SQLite (FTS5 + bbox) and Photon in parallel, deduplicates within 50 m, sorts by distance. Optional 500 km cap (default ON) via Launcher Settings **"Nearby results only (within 500 km)"** — persisted in `LauncherPreferences.limitSearchDistance`, passed as `limitDistance` to the engine.
+
 ## Manifest / launcher setup
 
 `MainActivity` is registered as a system home launcher:
@@ -110,7 +172,6 @@ After install on the head unit, select **MixAuto** when prompted for the default
 ## Planned / not yet implemented
 
 - Route re-routing when driver deviates from the drawn path
-- Real media session / album art in `MediaPlayerPane`
 - Dynamic discovery of all launchable apps (currently fixed shortcut list)
 - Release signing / Play Store config
 - Vector map style for sharper 3D driving perspective (OSM raster limits tilt quality)
@@ -143,6 +204,14 @@ After install on the head unit, select **MixAuto** when prompted for the default
 | Map doesn't rotate to direction of travel | Use `RenderMode.GPS` not `COMPASS` in `activateLocationTracking()` and camera entry |
 | UI cut off by status/nav bars on phone | `MainActivity` is edge-to-edge (`setDecorFitsSystemWindows(false)`); add `systemBarsPadding()` on `DashboardScreen` root `Box` |
 | Night theme missing fullscreen flags | Add `windowFullscreen` + `windowContentOverlay` to `res/values-night/themes.xml` |
+| Media pane shows "Enable notification access" | Settings → Special app access → Notification access → enable MixAuto; start playback in YT Music/Spotify then return to launcher |
+| Now playing not updating | `MainActivity.onResume()` refreshes sessions; ensure `MixAutoNotificationListenerService` is enabled |
+| Skip-next media button shrinks in narrow pane | `MediaPlayerPane.kt`: use `weight(1f)` slots + `requiredSize(MinTapTarget)` on all three controls |
+| `setMapMediaRatio` JVM signature clash | Use `updateMapMediaRatio()` in `LauncherViewModel` — property already generates `setMapMediaRatio` setter |
+| Philippines download returns HTTP 404 | Attach `ph_places.db.gz` + `countries.json` as **release assets** on `mix-auto-overture-maps` (committing to repo is not enough); verify `/releases/latest/download/countries.json` returns 200 |
+| Catalog loads but download 404 | Release exists but assets array empty — edit release and upload both files from `places-dist/` |
+| Manual import of `.gz` fails | Import path expects uncompressed `.db`; use in-app Download or decompress first |
+| Search shows overseas / 5000 km destinations | Default 500 km cap is ON — disable **Nearby results only (within 500 km)** in Launcher Settings to include farther Photon results; routing still may fail for long/cross-water trips |
 
 ## Related agent resources
 

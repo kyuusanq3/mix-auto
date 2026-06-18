@@ -1,5 +1,6 @@
 package com.kyuusanq3.mixauto.ui.dashboard
 
+import android.content.res.Configuration
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -11,16 +12,9 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBarsPadding
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.SkipNext
-import androidx.compose.material.icons.filled.SkipPrevious
-import androidx.compose.material3.Button
-import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.ElevatedCard
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
+import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.runtime.Composable
@@ -30,28 +24,49 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.kyuusanq3.mixauto.domain.map.CarMapEngine
+import com.kyuusanq3.mixauto.domain.media.MediaPlaybackState
 import com.kyuusanq3.mixauto.ui.components.CarMapViewContainer
+import com.kyuusanq3.mixauto.ui.components.MapDataOverlay
+import com.kyuusanq3.mixauto.ui.components.OverlayCloseButton
+import com.kyuusanq3.mixauto.ui.settings.MapDataViewModel
 import com.kyuusanq3.mixauto.ui.theme.CarBodyText
 import com.kyuusanq3.mixauto.ui.theme.CarDimensions
 import com.kyuusanq3.mixauto.ui.theme.CarHeadlineText
 import com.kyuusanq3.mixauto.ui.theme.CarLabelText
-import com.kyuusanq3.mixauto.ui.theme.DarkSurface
 import com.kyuusanq3.mixauto.ui.theme.OledBlack
+import kotlin.math.roundToInt
 
 @Composable
 fun DashboardScreen(
     mapEngine: CarMapEngine,
+    mapDataViewModel: MapDataViewModel,
+    mediaState: MediaPlaybackState,
+    onMediaPlayPause: () -> Unit,
+    onMediaSkipPrevious: () -> Unit,
+    onMediaSkipNext: () -> Unit,
     isLeftHandDrive: Boolean,
     isShortcutsHorizontal: Boolean,
+    mapMediaRatio: Float,
+    limitSearchDistance: Boolean,
     onToggleLhd: () -> Unit,
     onToggleShortcutsHorizontal: () -> Unit,
+    onMapMediaRatioChange: (Float) -> Unit,
+    onToggleLimitSearchDistance: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     var settingsOpen by remember { mutableStateOf(false) }
+    var mapDataOpen by remember { mutableStateOf(false) }
+    val configuration = LocalConfiguration.current
+    val isPortrait = configuration.orientation == Configuration.ORIENTATION_PORTRAIT
+    val mediaWeight = 1f - mapMediaRatio
+    val dockContentWeight = 1f - CarDimensions.DockVerticalWeight
+    val landscapeMapWeight = mapMediaRatio * dockContentWeight
+    val landscapeMediaWeight = mediaWeight * dockContentWeight
 
     Box(
         modifier = modifier
@@ -59,99 +74,166 @@ fun DashboardScreen(
             .background(OledBlack)
             .systemBarsPadding(),
     ) {
-        if (isShortcutsHorizontal) {
-            Column(
-                modifier = Modifier.fillMaxSize(),
-            ) {
-                Row(
-                    modifier = Modifier
-                        .weight(1f)
-                        .fillMaxWidth(),
+        when {
+            isPortrait -> {
+                Column(modifier = Modifier.fillMaxSize()) {
+                    CarMapViewContainer(
+                        engine = mapEngine,
+                        limitSearchDistance = limitSearchDistance,
+                        modifier = Modifier
+                            .weight(mapMediaRatio)
+                            .fillMaxWidth(),
+                    )
+                    MediaPlayerPane(
+                        mediaState = mediaState,
+                        onPlayPause = onMediaPlayPause,
+                        onSkipPrevious = onMediaSkipPrevious,
+                        onSkipNext = onMediaSkipNext,
+                        modifier = Modifier
+                            .weight(mediaWeight)
+                            .fillMaxWidth(),
+                    )
+                    ShortcutDock(
+                        isHorizontal = true,
+                        onOpenSettings = { settingsOpen = true },
+                        onOpenMapData = { mapDataOpen = true },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(bottom = CarDimensions.PaneGap)
+                            .wrapContentHeight(),
+                    )
+                }
+            }
+            isShortcutsHorizontal -> {
+                Column(
+                    modifier = Modifier.fillMaxSize(),
                 ) {
+                    Row(
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxWidth(),
+                    ) {
+                        if (isLeftHandDrive) {
+                            CarMapViewContainer(
+                                engine = mapEngine,
+                                limitSearchDistance = limitSearchDistance,
+                                modifier = Modifier
+                                    .weight(mapMediaRatio)
+                                    .fillMaxSize(),
+                            )
+                            MediaPlayerPane(
+                                mediaState = mediaState,
+                                onPlayPause = onMediaPlayPause,
+                                onSkipPrevious = onMediaSkipPrevious,
+                                onSkipNext = onMediaSkipNext,
+                                modifier = Modifier
+                                    .weight(mediaWeight)
+                                    .fillMaxSize(),
+                            )
+                        } else {
+                            MediaPlayerPane(
+                                mediaState = mediaState,
+                                onPlayPause = onMediaPlayPause,
+                                onSkipPrevious = onMediaSkipPrevious,
+                                onSkipNext = onMediaSkipNext,
+                                modifier = Modifier
+                                    .weight(mediaWeight)
+                                    .fillMaxSize(),
+                            )
+                            CarMapViewContainer(
+                                engine = mapEngine,
+                                limitSearchDistance = limitSearchDistance,
+                                modifier = Modifier
+                                    .weight(mapMediaRatio)
+                                    .fillMaxSize(),
+                            )
+                        }
+                    }
+                    ShortcutDock(
+                        isHorizontal = true,
+                        onOpenSettings = { settingsOpen = true },
+                        onOpenMapData = { mapDataOpen = true },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(bottom = CarDimensions.PaneGap)
+                            .wrapContentHeight(),
+                    )
+                }
+            }
+            else -> {
+                Row(modifier = Modifier.fillMaxSize()) {
                     if (isLeftHandDrive) {
                         CarMapViewContainer(
                             engine = mapEngine,
+                            limitSearchDistance = limitSearchDistance,
                             modifier = Modifier
-                                .weight(0.6f)
+                                .weight(landscapeMapWeight)
                                 .fillMaxSize(),
                         )
                         MediaPlayerPane(
+                            mediaState = mediaState,
+                            onPlayPause = onMediaPlayPause,
+                            onSkipPrevious = onMediaSkipPrevious,
+                            onSkipNext = onMediaSkipNext,
                             modifier = Modifier
-                                .weight(0.4f)
+                                .weight(landscapeMediaWeight)
+                                .fillMaxSize(),
+                        )
+                        ShortcutDock(
+                            isHorizontal = false,
+                            onOpenSettings = { settingsOpen = true },
+                            onOpenMapData = { mapDataOpen = true },
+                            modifier = Modifier
+                                .weight(CarDimensions.DockVerticalWeight)
                                 .fillMaxSize(),
                         )
                     } else {
-                        MediaPlayerPane(
+                        ShortcutDock(
+                            isHorizontal = false,
+                            onOpenSettings = { settingsOpen = true },
+                            onOpenMapData = { mapDataOpen = true },
                             modifier = Modifier
-                                .weight(0.4f)
+                                .weight(CarDimensions.DockVerticalWeight)
                                 .fillMaxSize(),
                         )
                         CarMapViewContainer(
                             engine = mapEngine,
+                            limitSearchDistance = limitSearchDistance,
                             modifier = Modifier
-                                .weight(0.6f)
+                                .weight(landscapeMapWeight)
+                                .fillMaxSize(),
+                        )
+                        MediaPlayerPane(
+                            mediaState = mediaState,
+                            onPlayPause = onMediaPlayPause,
+                            onSkipPrevious = onMediaSkipPrevious,
+                            onSkipNext = onMediaSkipNext,
+                            modifier = Modifier
+                                .weight(landscapeMediaWeight)
                                 .fillMaxSize(),
                         )
                     }
                 }
-                ShortcutDock(
-                    isHorizontal = true,
-                    onOpenSettings = { settingsOpen = true },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(CarDimensions.DockHorizontalHeightDp + CarDimensions.PaneGap),
-                )
             }
-        } else {
-            Row(modifier = Modifier.fillMaxSize()) {
-                if (isLeftHandDrive) {
-                    CarMapViewContainer(
-                        engine = mapEngine,
-                        modifier = Modifier
-                            .weight(CarDimensions.MapWeight)
-                            .fillMaxSize(),
-                    )
-                    MediaPlayerPane(
-                        modifier = Modifier
-                            .weight(CarDimensions.MediaWeight)
-                            .fillMaxSize(),
-                    )
-                    ShortcutDock(
-                        isHorizontal = false,
-                        onOpenSettings = { settingsOpen = true },
-                        modifier = Modifier
-                            .weight(CarDimensions.DockVerticalWeight)
-                            .fillMaxSize(),
-                    )
-                } else {
-                    ShortcutDock(
-                        isHorizontal = false,
-                        onOpenSettings = { settingsOpen = true },
-                        modifier = Modifier
-                            .weight(CarDimensions.DockVerticalWeight)
-                            .fillMaxSize(),
-                    )
-                    CarMapViewContainer(
-                        engine = mapEngine,
-                        modifier = Modifier
-                            .weight(CarDimensions.MapWeight)
-                            .fillMaxSize(),
-                    )
-                    MediaPlayerPane(
-                        modifier = Modifier
-                            .weight(CarDimensions.MediaWeight)
-                            .fillMaxSize(),
-                    )
-                }
-            }
+        }
+
+        if (mapDataOpen) {
+            MapDataOverlay(
+                viewModel = mapDataViewModel,
+                onDismiss = { mapDataOpen = false },
+            )
         }
 
         if (settingsOpen) {
             SettingsOverlay(
                 isLeftHandDrive = isLeftHandDrive,
                 isShortcutsHorizontal = isShortcutsHorizontal,
+                mapMediaRatio = mapMediaRatio,
+                limitSearchDistance = limitSearchDistance,
                 onToggleLhd = onToggleLhd,
                 onToggleShortcutsHorizontal = onToggleShortcutsHorizontal,
+                onMapMediaRatioChange = onMapMediaRatioChange,
+                onToggleLimitSearchDistance = onToggleLimitSearchDistance,
                 onDismiss = { settingsOpen = false },
             )
         }
@@ -162,8 +244,12 @@ fun DashboardScreen(
 private fun SettingsOverlay(
     isLeftHandDrive: Boolean,
     isShortcutsHorizontal: Boolean,
+    mapMediaRatio: Float,
+    limitSearchDistance: Boolean,
     onToggleLhd: () -> Unit,
     onToggleShortcutsHorizontal: () -> Unit,
+    onMapMediaRatioChange: (Float) -> Unit,
+    onToggleLimitSearchDistance: () -> Unit,
     onDismiss: () -> Unit,
 ) {
     Dialog(
@@ -180,10 +266,21 @@ private fun SettingsOverlay(
                     .padding(CarDimensions.PaneGap * 2),
                 verticalArrangement = Arrangement.spacedBy(CarDimensions.DockItemSpacing),
             ) {
-                CarHeadlineText(
-                    text = "Launcher Settings",
-                    style = MaterialTheme.typography.headlineMedium,
-                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    CarHeadlineText(
+                        text = "Launcher Settings",
+                        style = MaterialTheme.typography.headlineMedium,
+                        modifier = Modifier.weight(1f),
+                    )
+                    OverlayCloseButton(
+                        onClick = onDismiss,
+                        contentDescription = "Close settings",
+                    )
+                }
 
                 SettingsSwitchRow(
                     label = "Left-Hand Drive Layout",
@@ -205,18 +302,35 @@ private fun SettingsOverlay(
                     },
                 )
 
-                Button(
-                    onClick = onDismiss,
-                    modifier = Modifier
-                        .padding(top = CarDimensions.PaneGap)
-                        .size(
-                            width = CarDimensions.PrimaryTapTarget * 2,
-                            height = CarDimensions.PrimaryTapTarget,
-                        ),
+                SettingsSwitchRow(
+                    label = "Nearby results only (within 500 km)",
+                    checked = limitSearchDistance,
+                    onCheckedChange = { checked ->
+                        if (checked != limitSearchDistance) {
+                            onToggleLimitSearchDistance()
+                        }
+                    },
+                )
+
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
                 ) {
+                    CarBodyText(
+                        text = "Map / Media Split",
+                        style = MaterialTheme.typography.bodyLarge,
+                    )
+                    Slider(
+                        value = mapMediaRatio,
+                        onValueChange = onMapMediaRatioChange,
+                        valueRange = 0.3f..0.8f,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(CarDimensions.MinTapTarget),
+                    )
                     CarLabelText(
-                        text = "Close",
-                        style = MaterialTheme.typography.labelLarge,
+                        text = "Map ${(mapMediaRatio * 100).roundToInt()}% / Media ${((1f - mapMediaRatio) * 100).roundToInt()}%",
+                        style = MaterialTheme.typography.labelMedium,
                     )
                 }
             }
@@ -248,93 +362,5 @@ private fun SettingsSwitchRow(
             onCheckedChange = onCheckedChange,
             modifier = Modifier.size(CarDimensions.MinTapTarget),
         )
-    }
-}
-
-@Composable
-private fun MediaPlayerPane(modifier: Modifier = Modifier) {
-    ElevatedCard(
-        modifier = modifier.padding(CarDimensions.PaneGap),
-        elevation = CardDefaults.elevatedCardElevation(defaultElevation = CarDimensions.CardElevation),
-        colors = CardDefaults.elevatedCardColors(
-            containerColor = DarkSurface,
-        ),
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(CarDimensions.PaneGap),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center,
-        ) {
-            CarHeadlineText(
-                text = "Media Player",
-                style = MaterialTheme.typography.headlineMedium,
-            )
-
-            Box(
-                modifier = Modifier
-                    .padding(top = CarDimensions.PaneGap)
-                    .size(CarDimensions.PrimaryTapTarget)
-                    .background(
-                        color = MaterialTheme.colorScheme.surfaceVariant,
-                        shape = MaterialTheme.shapes.medium,
-                    ),
-                contentAlignment = Alignment.Center,
-            ) {
-                CarLabelText(
-                    text = "Album Art",
-                    style = MaterialTheme.typography.labelMedium,
-                )
-            }
-
-            CarBodyText(
-                text = "No track playing",
-                modifier = Modifier.padding(top = CarDimensions.PaneGap),
-                style = MaterialTheme.typography.bodyLarge,
-            )
-
-            Row(
-                modifier = Modifier
-                    .padding(top = CarDimensions.PaneGap)
-                    .fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceEvenly,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                IconButton(
-                    onClick = {},
-                    modifier = Modifier.size(CarDimensions.MinTapTarget),
-                ) {
-                    Icon(
-                        imageVector = Icons.Filled.SkipPrevious,
-                        contentDescription = "Previous",
-                        modifier = Modifier.size(CarDimensions.AppIconSize),
-                        tint = MaterialTheme.colorScheme.primary,
-                    )
-                }
-                IconButton(
-                    onClick = {},
-                    modifier = Modifier.size(CarDimensions.PrimaryTapTarget),
-                ) {
-                    Icon(
-                        imageVector = Icons.Filled.PlayArrow,
-                        contentDescription = "Play",
-                        modifier = Modifier.size(CarDimensions.PrimaryTapTarget - 8.dp),
-                        tint = MaterialTheme.colorScheme.primary,
-                    )
-                }
-                IconButton(
-                    onClick = {},
-                    modifier = Modifier.size(CarDimensions.MinTapTarget),
-                ) {
-                    Icon(
-                        imageVector = Icons.Filled.SkipNext,
-                        contentDescription = "Next",
-                        modifier = Modifier.size(CarDimensions.AppIconSize),
-                        tint = MaterialTheme.colorScheme.primary,
-                    )
-                }
-            }
-        }
     }
 }

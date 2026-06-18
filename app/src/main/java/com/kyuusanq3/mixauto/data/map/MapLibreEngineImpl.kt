@@ -11,12 +11,16 @@ import android.util.Log
 import android.view.View
 import android.view.ViewGroup
 import androidx.core.content.ContextCompat
+import com.kyuusanq3.mixauto.data.places.LocalPlacesRepository
 import com.kyuusanq3.mixauto.domain.map.CarMapEngine
 import com.kyuusanq3.mixauto.domain.map.MapUiState
-import com.kyuusanq3.mixauto.domain.map.PlaceResult
+import com.kyuusanq3.mixauto.domain.map.SearchResultPlace
 import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -75,7 +79,9 @@ private data class ResolvedLocation(
     val fromGps: Boolean,
 )
 
-class MapLibreEngineImpl : CarMapEngine {
+class MapLibreEngineImpl(
+    private val localPlaces: LocalPlacesRepository? = null,
+) : CarMapEngine {
 
     private val _uiState = MutableStateFlow(MapUiState())
     override val uiState: StateFlow<MapUiState> = _uiState.asStateFlow()
@@ -100,6 +106,7 @@ class MapLibreEngineImpl : CarMapEngine {
     private var pendingLocationFix: Location? = null
     private var locationPollJob: Job? = null
     private var locationRetryJob: Job? = null
+    private var routeOverviewJob: Job? = null
 
     override fun createMapView(context: Context): View {
         mapView?.let { existing ->
@@ -181,43 +188,132 @@ class MapLibreEngineImpl : CarMapEngine {
         appContext = null
     }
 
-    override suspend fun searchDestination(query: String): List<PlaceResult> =
-        withContext(Dispatchers.IO) {
-            if (query.isBlank()) return@withContext emptyList()
-            val encoded = URLEncoder.encode(query, "UTF-8")
-            val url = URL(
-                "https://nominatim.openstreetmap.org/search" +
-                    "?q=$encoded&format=json&limit=5&addressdetails=0",
-            )
-            val connection = url.openConnection() as HttpURLConnection
-            connection.setRequestProperty("User-Agent", "MixAutoCarLauncher/1.0")
-            connection.connectTimeout = 8_000
-            connection.readTimeout = 8_000
-            try {
-                if (connection.responseCode !in 200..299) {
-                    Log.w(TAG, "Nominatim HTTP error: ${connection.responseCode}")
-                    return@withContext emptyList()
-                }
-                val body = connection.inputStream.bufferedReader().readText()
-                parseNominatimResponse(body)
-            } catch (e: Exception) {
-                Log.w(TAG, "Nominatim search failed: ${e.message}")
-                emptyList()
-            } finally {
-                connection.disconnect()
+    override suspend fun searchDestination(
+        query: String,
+        currentLat: Double,
+        currentLng: Double,
+        limitDistance: Boolean,
+    ): List<SearchResultPlace> = withContext(Dispatchers.IO) {
+        if (query.isBlank()) return@withContext emptyList()
+        coroutineScope {
+            val localDeferred = async {
+                localPlaces?.searchPlaces(query, currentLat, currentLng) ?: emptyList()
             }
+            val photonDeferred = async {
+                fetchPhoton(query, currentLat, currentLng)
+            }
+            val results = awaitAll(localDeferred, photonDeferred)
+            mergeAndDeduplicate(results[0], results[1])
+                .let { merged ->
+                    if (limitDistance) {
+                        merged.filter { it.distanceInMeters <= MAX_SEARCH_RADIUS_M }
+                    } else {
+                        merged
+                    }
+                }
+        }
+    }
+
+    private suspend fun fetchPhoton(
+        query: String,
+        currentLat: Double,
+        currentLng: Double,
+    ): List<SearchResultPlace> {
+        val encoded = URLEncoder.encode(query, "UTF-8")
+        val url = URL(
+            "https://photon.komoot.io/api/" +
+                "?q=$encoded&lat=$currentLat&lon=$currentLng&limit=10",
+        )
+        val connection = url.openConnection() as HttpURLConnection
+        connection.setRequestProperty("User-Agent", "MixAutoCarLauncher/1.0")
+        connection.connectTimeout = 8_000
+        connection.readTimeout = 8_000
+        return try {
+            if (connection.responseCode !in 200..299) {
+                Log.w(TAG, "Photon HTTP error: ${connection.responseCode}")
+                emptyList()
+            } else {
+                val body = connection.inputStream.bufferedReader().readText()
+                parsePhotonResponse(body, currentLat, currentLng)
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Photon search failed: ${e.message}")
+            emptyList()
+        } finally {
+            connection.disconnect()
+        }
+    }
+
+    private fun mergeAndDeduplicate(
+        local: List<SearchResultPlace>,
+        photon: List<SearchResultPlace>,
+    ): List<SearchResultPlace> {
+        val merged = mutableListOf<SearchResultPlace>()
+        val seen = mutableListOf<Pair<Double, Double>>()
+
+        fun isDuplicate(place: SearchResultPlace): Boolean {
+            for ((lat, lng) in seen) {
+                val distanceResults = FloatArray(1)
+                Location.distanceBetween(
+                    lat,
+                    lng,
+                    place.latitude,
+                    place.longitude,
+                    distanceResults,
+                )
+                if (distanceResults[0] < DEDUP_THRESHOLD_M) return true
+            }
+            return false
         }
 
-    private fun parseNominatimResponse(json: String): List<PlaceResult> {
-        val array = JSONArray(json)
-        return (0 until array.length()).map { index ->
-            val obj = array.getJSONObject(index)
-            PlaceResult(
-                displayName = obj.getString("display_name"),
-                lat = obj.getDouble("lat"),
-                lng = obj.getDouble("lon"),
-            )
+        for (place in local + photon) {
+            if (!isDuplicate(place)) {
+                merged.add(place)
+                seen.add(place.latitude to place.longitude)
+            }
         }
+        return merged.sortedBy { it.distanceInMeters }
+    }
+
+    private fun parsePhotonResponse(
+        json: String,
+        currentLat: Double,
+        currentLng: Double,
+    ): List<SearchResultPlace> {
+        val root = JSONObject(json)
+        val features = root.optJSONArray("features") ?: return emptyList()
+        return (0 until features.length()).mapNotNull { index ->
+            val feature = features.getJSONObject(index)
+            val geometry = feature.optJSONObject("geometry") ?: return@mapNotNull null
+            val coordinates = geometry.optJSONArray("coordinates") ?: return@mapNotNull null
+            if (coordinates.length() < 2) return@mapNotNull null
+
+            val placeLng = coordinates.getDouble(0)
+            val placeLat = coordinates.getDouble(1)
+            val properties = feature.optJSONObject("properties") ?: return@mapNotNull null
+
+            val name = properties.optString("name").takeIf { it.isNotBlank() }
+                ?: properties.optString("street").takeIf { it.isNotBlank() }
+                ?: properties.optString("city").takeIf { it.isNotBlank() }
+                ?: return@mapNotNull null
+
+            val subTitle = listOfNotNull(
+                properties.optString("street").takeIf { it.isNotBlank() && it != name },
+                properties.optString("city").takeIf { it.isNotBlank() },
+                properties.optString("country").takeIf { it.isNotBlank() },
+            ).joinToString(", ")
+
+            val distanceResults = FloatArray(1)
+            Location.distanceBetween(currentLat, currentLng, placeLat, placeLng, distanceResults)
+
+            SearchResultPlace(
+                name = name,
+                subTitle = subTitle,
+                latitude = placeLat,
+                longitude = placeLng,
+                distanceInMeters = distanceResults[0],
+            )
+        }.sortedBy { it.distanceInMeters }
     }
 
     override fun retryLocationActivation() {
@@ -264,6 +360,8 @@ class MapLibreEngineImpl : CarMapEngine {
     }
 
     override fun startFreeDrive() {
+        routeOverviewJob?.cancel()
+        routeOverviewJob = null
         fullRouteSteps = emptyList()
         currentStepIndex = 0
         destinationLatLng = null
@@ -273,6 +371,7 @@ class MapLibreEngineImpl : CarMapEngine {
         _uiState.value = MapUiState(
             isNavigating = false,
             streetName = "Free Drive",
+            routeOverviewProgress = 0f,
         )
 
         val map = mapLibreMap
@@ -563,16 +662,32 @@ class MapLibreEngineImpl : CarMapEngine {
 
     private fun showRouteThenDive(origin: LatLng, destination: LatLng) {
         val map = mapLibreMap ?: return
+        routeOverviewJob?.cancel()
+
+        val component = map.locationComponent
+        if (component.isLocationComponentActivated && component.isLocationComponentEnabled) {
+            component.cameraMode = CameraMode.NONE
+        }
+        map.cancelTransitions()
+
         val bounds = LatLngBounds.Builder()
             .include(origin)
             .include(destination)
             .build()
         map.animateCamera(
             CameraUpdateFactory.newLatLngBounds(bounds, ROUTE_OVERVIEW_PADDING_PX),
-            ROUTE_OVERVIEW_DURATION_MS,
+            ROUTE_OVERVIEW_ANIMATION_MS,
         )
-        engineScope.launch {
-            delay(NAV_DIVE_DELAY_MS)
+        routeOverviewJob = engineScope.launch {
+            val startMs = System.currentTimeMillis()
+            while (true) {
+                val elapsed = System.currentTimeMillis() - startMs
+                val progress = (elapsed / ROUTE_OVERVIEW_HOLD_MS.toFloat()).coerceIn(0f, 1f)
+                _uiState.update { it.copy(routeOverviewProgress = progress) }
+                if (elapsed >= ROUTE_OVERVIEW_HOLD_MS) break
+                delay(50)
+            }
+            _uiState.update { it.copy(routeOverviewProgress = 0f) }
             if (_uiState.value.isNavigating) {
                 enterNavigationCamera()
             }
@@ -582,13 +697,58 @@ class MapLibreEngineImpl : CarMapEngine {
     private fun enterNavigationCamera() {
         val map = mapLibreMap ?: return
         val component = map.locationComponent
-        if (!component.isLocationComponentActivated || !component.isLocationComponentEnabled) return
+        val componentReady = component.isLocationComponentActivated &&
+            component.isLocationComponentEnabled
+        val target = lastKnownLocation ?: map.cameraPosition.target ?: return
 
-        component.renderMode = RenderMode.GPS
-        component.cameraMode = CameraMode.TRACKING_GPS
-        component.zoomWhileTracking(NAV_ZOOM, NAV_CAMERA_DURATION_MS.toLong())
-        component.tiltWhileTracking(NAV_TILT, NAV_CAMERA_DURATION_MS.toLong())
+        val bearing = if (componentReady) {
+            component.lastKnownLocation?.bearing?.toDouble() ?: map.cameraPosition.bearing
+        } else {
+            map.cameraPosition.bearing
+        }
+
+        Log.i(
+            TAG,
+            "Entering navigation camera zoom=$NAV_ZOOM tilt=$NAV_TILT " +
+                "(current=${map.cameraPosition.zoom}, target=${target.latitude},${target.longitude})",
+        )
+
+        map.cancelTransitions()
+        if (componentReady) {
+            component.renderMode = RenderMode.GPS
+            component.cameraMode = CameraMode.NONE
+        }
+
+        map.animateCamera(
+            CameraUpdateFactory.newCameraPosition(
+                CameraPosition.Builder()
+                    .target(target)
+                    .zoom(NAV_ZOOM)
+                    .tilt(NAV_TILT)
+                    .bearing(bearing)
+                    .build(),
+            ),
+            NAV_CAMERA_DURATION_MS,
+            object : MapLibreMap.CancelableCallback {
+                override fun onFinish() {
+                    activateNavigationTracking(componentReady)
+                }
+
+                override fun onCancel() {
+                    activateNavigationTracking(componentReady)
+                }
+            },
+        )
         _uiState.update { it.copy(isCameraDetached = false) }
+    }
+
+    private fun activateNavigationTracking(componentReady: Boolean) {
+        if (!_uiState.value.isNavigating) return
+        val component = mapLibreMap?.locationComponent ?: return
+        if (componentReady && component.isLocationComponentActivated && component.isLocationComponentEnabled) {
+            component.renderMode = RenderMode.GPS
+            component.cameraMode = CameraMode.TRACKING_GPS
+        }
     }
 
     private fun drawRoute(geometryJson: String) {
@@ -750,6 +910,12 @@ class MapLibreEngineImpl : CarMapEngine {
     private fun applyAndroidLocation(location: Location, snapCamera: Boolean) {
         val latLng = LatLng(location.latitude, location.longitude)
         lastKnownLocation = latLng
+        _uiState.update {
+            it.copy(
+                currentLat = location.latitude,
+                currentLng = location.longitude,
+            )
+        }
         val component = mapLibreMap?.locationComponent
         if (component != null && component.isLocationComponentActivated && component.isLocationComponentEnabled) {
             component.forceLocationUpdate(location)
@@ -1006,12 +1172,12 @@ class MapLibreEngineImpl : CarMapEngine {
         private const val ROUTING_MIN_ZOOM = 10.0
         private const val NAV_ZOOM = 17.5
         private const val NAV_TILT = 55.0
-        private const val NAV_CAMERA_DURATION_MS = 1500
+        private const val NAV_CAMERA_DURATION_MS = 2500
         private const val FREE_DRIVE_ZOOM = 16.0
         private const val FREE_DRIVE_TILT = 45.0
         private const val ROUTE_OVERVIEW_PADDING_PX = 120
-        private const val ROUTE_OVERVIEW_DURATION_MS = 2000
-        private const val NAV_DIVE_DELAY_MS = 2200L
+        private const val ROUTE_OVERVIEW_ANIMATION_MS = 2000
+        private const val ROUTE_OVERVIEW_HOLD_MS = 10_000L
         private const val LOCATION_INTERVAL_MS = 1000L
         private const val FRESH_LOCATION_MIN_TIME_MS = 500L
         private const val LOCATION_POLL_INTERVAL_MS = 1000L
@@ -1024,6 +1190,8 @@ class MapLibreEngineImpl : CarMapEngine {
         private const val ROUTE_WIDTH = 6f
         private const val STEP_ADVANCE_THRESHOLD_M = 25f
         private const val ARRIVAL_THRESHOLD_M = 15f
+        private const val DEDUP_THRESHOLD_M = 50f
+        private const val MAX_SEARCH_RADIUS_M = 500_000f
         private const val ARRIVAL_FREE_DRIVE_DELAY_MS = 1_500L
         private val DEFAULT_LOCATION = LatLng(12.8797, 121.7740)
 
