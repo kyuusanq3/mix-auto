@@ -46,17 +46,27 @@ import org.maplibre.android.location.engine.MapLibreFusedLocationEngineImpl
 import org.maplibre.android.location.modes.CameraMode
 import org.maplibre.android.location.modes.RenderMode
 import org.maplibre.android.maps.MapView
+import org.maplibre.android.maps.MapLibreMap
 import org.maplibre.android.maps.Style
 import org.maplibre.android.style.layers.LineLayer
 import org.maplibre.android.style.layers.Property
 import org.maplibre.android.style.layers.PropertyFactory
 import org.maplibre.android.style.sources.GeoJsonSource
 
+private data class LegStep(
+    val maneuverLat: Double,
+    val maneuverLng: Double,
+    val instruction: String,
+    val distanceLabel: String,
+    val streetName: String,
+)
+
 private data class RouteResult(
     val geometryJson: String,
     val streetName: String,
     val instruction: String,
     val distance: String,
+    val steps: List<LegStep> = emptyList(),
 )
 
 private data class ResolvedLocation(
@@ -77,6 +87,10 @@ class MapLibreEngineImpl : CarMapEngine {
     private var appContext: Context? = null
     private var mapLibreInitialized = false
     private var lastKnownLocation: LatLng? = null
+    private var fullRouteSteps: List<LegStep> = emptyList()
+    private var currentStepIndex: Int = 0
+    private var destinationLatLng: LatLng? = null
+    private var navigationArrivalTriggered = false
     private var hasSnappedCameraToGps = false
     private var locationEngine: LocationEngine? = null
     private var locationEngineCallback: LocationEngineCallback<LocationEngineResult>? = null
@@ -99,10 +113,7 @@ class MapLibreEngineImpl : CarMapEngine {
         }
 
         appContext = context.applicationContext
-        val resolved = resolveInitialLocation(context)
-        if (resolved.fromGps) {
-            hasSnappedCameraToGps = true
-        }
+        resolveInitialLocation(context)
 
         return MapView(context).also { view ->
             view.onCreate(null)
@@ -111,20 +122,12 @@ class MapLibreEngineImpl : CarMapEngine {
             view.getMapAsync { map ->
                 mapLibreMap = map
                 map.setStyle(Style.Builder().fromJson(OSM_STYLE_JSON)) { style ->
-                    val cameraPosition = CameraPosition.Builder()
-                        .target(resolved.latLng)
-                        .tilt(DEFAULT_TILT)
-                        .zoom(resolved.zoom)
-                        .build()
-                    map.cameraPosition = cameraPosition
-                    _uiState.update { state ->
-                        state.copy(streetName = "Map ready")
-                    }
                     activateLocationTracking(map, style)
                     if (pendingLocationActivation && hasLocationPermission(context)) {
                         beginLocationAcquisition(context)
                         pendingLocationActivation = false
                     }
+                    startFreeDrive()
                 }
             }
             mapView = view
@@ -240,29 +243,114 @@ class MapLibreEngineImpl : CarMapEngine {
     }
 
     override fun startFreeDrive() {
-        _uiState.update {
-            it.copy(
-                isNavigating = false,
-                streetName = "Free Drive",
-                distanceToNextTurn = null,
-                turnInstruction = null,
-                currentSpeed = 0,
-            )
+        fullRouteSteps = emptyList()
+        currentStepIndex = 0
+        destinationLatLng = null
+        navigationArrivalTriggered = false
+        hasSnappedCameraToGps = false
+
+        _uiState.value = MapUiState(
+            isNavigating = false,
+            streetName = "Free Drive",
+        )
+
+        val map = mapLibreMap
+        if (map != null) {
+            applyFreeDriveToMap(map)
+        } else {
+            mapView?.getMapAsync { loadedMap -> applyFreeDriveToMap(loadedMap) }
         }
-        lastKnownLocation?.let { location ->
-            mapView?.getMapAsync { map ->
-                map.locationComponent.cameraMode = CameraMode.TRACKING
-                map.animateCamera(
-                    CameraUpdateFactory.newCameraPosition(
-                        CameraPosition.Builder()
-                            .target(location)
-                            .tilt(DEFAULT_TILT)
-                            .zoom(DEFAULT_ZOOM)
-                            .build(),
-                    ),
-                )
+    }
+
+    private fun applyFreeDriveToMap(map: MapLibreMap) {
+        map.getStyle { style ->
+            runCatching { style.removeLayer(ROUTE_LAYER_ID) }
+            runCatching { style.removeSource(ROUTE_SOURCE_ID) }
+
+            val target = resolveFreeDriveTarget(map)
+            if (target != null) {
+                snapCameraToGpsIfNeeded(target)
+            } else if (isFreeDriveZoomTooWide(map)) {
+                activateFreeDriveTrackingMode(map)
             }
         }
+    }
+
+    private fun isFreeDriveZoomTooWide(map: MapLibreMap): Boolean =
+        map.cameraPosition.zoom < FREE_DRIVE_ZOOM - 0.5
+
+    private fun needsFreeDriveCameraSnap(map: MapLibreMap): Boolean =
+        !hasSnappedCameraToGps || isFreeDriveZoomTooWide(map)
+
+    private fun formatCameraTarget(map: MapLibreMap): String {
+        val target = map.cameraPosition.target
+        return if (target != null) "${target.latitude},${target.longitude}" else "null"
+    }
+
+    private fun resolveFreeDriveTarget(map: MapLibreMap): LatLng? {
+        lastKnownLocation?.let { return it }
+        val component = map.locationComponent
+        if (component.isLocationComponentActivated) {
+            component.lastKnownLocation?.let { return LatLng(it.latitude, it.longitude) }
+        }
+        appContext?.let { readLastKnownLocation(it) }?.let { return it }
+        return null
+    }
+
+    private fun activateFreeDriveTrackingMode(map: MapLibreMap) {
+        if (_uiState.value.isNavigating) return
+
+        val component = map.locationComponent
+        if (!component.isLocationComponentActivated || !component.isLocationComponentEnabled) return
+        if (component.cameraMode == CameraMode.TRACKING_GPS) return
+
+        component.cameraMode = CameraMode.TRACKING_GPS
+    }
+
+    private fun snapCameraToGpsIfNeeded(latLng: LatLng) {
+        lastKnownLocation = latLng
+        val map = mapLibreMap ?: return
+        if (!needsFreeDriveCameraSnap(map)) {
+            activateFreeDriveTrackingMode(map)
+            return
+        }
+
+        val component = map.locationComponent
+        val componentReady = component.isLocationComponentActivated && component.isLocationComponentEnabled
+        val bearing = if (componentReady) {
+            component.lastKnownLocation?.bearing?.toDouble() ?: map.cameraPosition.bearing
+        } else {
+            map.cameraPosition.bearing
+        }
+
+        Log.i(
+            TAG,
+            "Snapping free-drive camera to ${latLng.latitude}, ${latLng.longitude} " +
+                "zoom=$FREE_DRIVE_ZOOM tilt=$FREE_DRIVE_TILT (current=${map.cameraPosition.zoom}, " +
+                "target=${formatCameraTarget(map)})",
+        )
+
+        if (componentReady) {
+            component.cameraMode = CameraMode.NONE
+        }
+
+        map.moveCamera(
+            CameraUpdateFactory.newCameraPosition(
+                CameraPosition.Builder()
+                    .target(latLng)
+                    .tilt(FREE_DRIVE_TILT)
+                    .zoom(FREE_DRIVE_ZOOM)
+                    .bearing(bearing)
+                    .build(),
+            ),
+        )
+
+        if (componentReady) {
+            component.cameraMode = CameraMode.TRACKING_GPS
+        }
+
+        hasSnappedCameraToGps = true
+        _uiState.update { it.copy(streetName = "Free Drive") }
     }
 
     override fun navigateToCoordinates(lat: Double, lng: Double) {
@@ -331,6 +419,10 @@ class MapLibreEngineImpl : CarMapEngine {
                 }
                 if (route != null) {
                     drawRoute(route.geometryJson)
+                    fullRouteSteps = route.steps
+                    currentStepIndex = 0
+                    destinationLatLng = LatLng(lat, lng)
+                    navigationArrivalTriggered = false
                     _uiState.update {
                         it.copy(
                             isNavigating = true,
@@ -339,7 +431,7 @@ class MapLibreEngineImpl : CarMapEngine {
                             distanceToNextTurn = route.distance,
                         )
                     }
-                    fitCameraToRoute(origin, LatLng(lat, lng))
+                    showRouteThenDive(origin, LatLng(lat, lng))
                 } else {
                     _uiState.update { it.copy(isNavigating = false, streetName = "Route not found") }
                 }
@@ -389,18 +481,34 @@ class MapLibreEngineImpl : CarMapEngine {
         if (legs.length() == 0) return null
         val steps = legs.getJSONObject(0).getJSONArray("steps")
         if (steps.length() == 0) return null
-        val firstStep = steps.getJSONObject(0)
-        val stepName = firstStep.optString("name", "")
-        val stepDistance = firstStep.optDouble("distance", 0.0)
-        val maneuver = firstStep.getJSONObject("maneuver")
-        val type = maneuver.optString("type", "")
-        val modifier = maneuver.optString("modifier", "")
+        val allSteps = buildList {
+            for (i in 0 until steps.length()) {
+                val step = steps.getJSONObject(i)
+                val maneuver = step.getJSONObject("maneuver")
+                val location = maneuver.getJSONArray("location")
+                val type = maneuver.optString("type", "")
+                val modifier = maneuver.optString("modifier", "")
+                val name = step.optString("name", "")
+                add(
+                    LegStep(
+                        maneuverLat = location.getDouble(1),
+                        maneuverLng = location.getDouble(0),
+                        instruction = buildInstruction(type, modifier, name),
+                        distanceLabel = formatDistance(step.optDouble("distance", 0.0)),
+                        streetName = name,
+                    ),
+                )
+            }
+        }
+
+        val firstStep = allSteps.first()
 
         return RouteResult(
             geometryJson = geometryJson,
-            streetName = stepName.ifBlank { "On route" },
-            instruction = buildInstruction(type, modifier, stepName),
-            distance = formatDistance(stepDistance),
+            streetName = firstStep.streetName.ifBlank { "On route" },
+            instruction = firstStep.instruction,
+            distance = firstStep.distanceLabel,
+            steps = allSteps,
         )
     }
 
@@ -426,15 +534,43 @@ class MapLibreEngineImpl : CarMapEngine {
         else -> "${meters.toInt()} m"
     }
 
-    private fun fitCameraToRoute(origin: LatLng, destination: LatLng) {
+    private fun showRouteThenDive(origin: LatLng, destination: LatLng) {
         val map = mapLibreMap ?: return
         val bounds = LatLngBounds.Builder()
             .include(origin)
             .include(destination)
             .build()
         map.animateCamera(
-            CameraUpdateFactory.newLatLngBounds(bounds, ROUTE_PADDING_PX),
-            ROUTE_FIT_DURATION_MS,
+            CameraUpdateFactory.newLatLngBounds(bounds, ROUTE_OVERVIEW_PADDING_PX),
+            ROUTE_OVERVIEW_DURATION_MS,
+        )
+        engineScope.launch {
+            delay(NAV_DIVE_DELAY_MS)
+            if (_uiState.value.isNavigating) {
+                enterNavigationCamera()
+            }
+        }
+    }
+
+    private fun enterNavigationCamera() {
+        val map = mapLibreMap ?: return
+        val origin = lastKnownLocation ?: return
+        val component = map.locationComponent
+        if (!component.isLocationComponentActivated || !component.isLocationComponentEnabled) return
+
+        component.cameraMode = CameraMode.TRACKING_GPS
+
+        val bearing = component.lastKnownLocation?.bearing?.toDouble() ?: 0.0
+        map.animateCamera(
+            CameraUpdateFactory.newCameraPosition(
+                CameraPosition.Builder()
+                    .target(origin)
+                    .zoom(NAV_ZOOM)
+                    .tilt(NAV_TILT)
+                    .bearing(bearing)
+                    .build(),
+            ),
+            NAV_CAMERA_DURATION_MS,
         )
     }
 
@@ -481,7 +617,6 @@ class MapLibreEngineImpl : CarMapEngine {
                 locationComponent.activateLocationComponent(options)
             }
             locationComponent.isLocationComponentEnabled = true
-            locationComponent.cameraMode = CameraMode.TRACKING
             locationComponent.renderMode = RenderMode.COMPASS
 
             flushPendingLocationFix()
@@ -561,23 +696,6 @@ class MapLibreEngineImpl : CarMapEngine {
         locationEngineCallback = callback
     }
 
-    private fun snapCameraToGpsIfNeeded(latLng: LatLng) {
-        lastKnownLocation = latLng
-        if (hasSnappedCameraToGps) return
-        val map = mapLibreMap ?: return
-        hasSnappedCameraToGps = true
-        map.animateCamera(
-            CameraUpdateFactory.newCameraPosition(
-                CameraPosition.Builder()
-                    .target(latLng)
-                    .tilt(DEFAULT_TILT)
-                    .zoom(DEFAULT_ZOOM)
-                    .build(),
-            ),
-        )
-        _uiState.update { it.copy(streetName = "Current location") }
-    }
-
     private fun resolveMapViewOrigin(): LatLng? {
         val map = mapLibreMap ?: return null
         val position = map.cameraPosition
@@ -625,12 +743,71 @@ class MapLibreEngineImpl : CarMapEngine {
         Log.i(
             TAG,
             "Location fix ${location.latitude}, ${location.longitude} " +
-                "(provider=${location.provider}, snapped=$snapCamera)",
+                "(provider=${location.provider}, snapped=$snapCamera, " +
+                "zoom=${mapLibreMap?.cameraPosition?.zoom})",
         )
-        if (snapCamera) {
-            snapCameraToGpsIfNeeded(latLng)
-        } else {
-            _uiState.update { it.copy(streetName = "Current location") }
+        when {
+            _uiState.value.isNavigating -> evaluateStepAdvancement(location)
+            !hasSnappedCameraToGps -> snapCameraToGpsIfNeeded(latLng)
+            else -> _uiState.update { it.copy(streetName = "Free Drive") }
+        }
+    }
+
+    private fun evaluateStepAdvancement(currentLocation: Location) {
+        if (navigationArrivalTriggered) return
+
+        val steps = fullRouteSteps
+        if (steps.isEmpty()) return
+
+        val dest = destinationLatLng
+        if (dest != null) {
+            val destLoc = Location("dest").apply {
+                latitude = dest.latitude
+                longitude = dest.longitude
+            }
+            if (currentLocation.distanceTo(destLoc) < ARRIVAL_THRESHOLD_M) {
+                triggerArrival()
+                return
+            }
+        }
+
+        val nextIdx = currentStepIndex + 1
+        if (nextIdx >= steps.size) {
+            triggerArrival()
+            return
+        }
+
+        val nextStep = steps[nextIdx]
+        val maneuverLoc = Location("maneuver").apply {
+            latitude = nextStep.maneuverLat
+            longitude = nextStep.maneuverLng
+        }
+        val distToManeuver = currentLocation.distanceTo(maneuverLoc)
+
+        _uiState.update {
+            it.copy(distanceToNextTurn = formatDistance(distToManeuver.toDouble()))
+        }
+
+        if (distToManeuver < STEP_ADVANCE_THRESHOLD_M) {
+            currentStepIndex = nextIdx
+            val advanced = steps[currentStepIndex]
+            _uiState.update {
+                it.copy(
+                    turnInstruction = advanced.instruction,
+                    distanceToNextTurn = advanced.distanceLabel,
+                    streetName = advanced.streetName.ifBlank { "On route" },
+                )
+            }
+        }
+    }
+
+    private fun triggerArrival() {
+        if (navigationArrivalTriggered) return
+        navigationArrivalTriggered = true
+        _uiState.update { it.copy(streetName = "Arrived at destination") }
+        engineScope.launch {
+            delay(ARRIVAL_FREE_DRIVE_DELAY_MS)
+            startFreeDrive()
         }
     }
 
@@ -713,7 +890,7 @@ class MapLibreEngineImpl : CarMapEngine {
                 Log.w(TAG, "Location polling timed out with no fix")
                 _uiState.update { state ->
                     if (state.streetName == "Map ready" || state.streetName == "Locating..." ||
-                        state.streetName == "Scanning Road..."
+                        state.streetName == "Scanning Road..." || state.streetName == "Free Drive"
                     ) {
                         state.copy(streetName = "Zoom map to your area (no GPS fix)")
                     } else {
@@ -756,7 +933,7 @@ class MapLibreEngineImpl : CarMapEngine {
             _uiState.update { it.copy(streetName = "Locating...") }
             ResolvedLocation(
                 latLng = location,
-                zoom = DEFAULT_ZOOM,
+                zoom = FREE_DRIVE_ZOOM,
                 fromGps = true,
             )
         } else {
@@ -807,10 +984,17 @@ class MapLibreEngineImpl : CarMapEngine {
 
     companion object {
         private const val TAG = "MapLibreEngineImpl"
-        private const val DEFAULT_TILT = 30.0
         private const val DEFAULT_ZOOM = 15.0
         private const val DEFAULT_ZOOM_FALLBACK = 6.0
         private const val ROUTING_MIN_ZOOM = 10.0
+        private const val NAV_ZOOM = 17.5
+        private const val NAV_TILT = 55.0
+        private const val NAV_CAMERA_DURATION_MS = 1500
+        private const val FREE_DRIVE_ZOOM = 16.0
+        private const val FREE_DRIVE_TILT = 45.0
+        private const val ROUTE_OVERVIEW_PADDING_PX = 120
+        private const val ROUTE_OVERVIEW_DURATION_MS = 2000
+        private const val NAV_DIVE_DELAY_MS = 2200L
         private const val LOCATION_INTERVAL_MS = 1000L
         private const val FRESH_LOCATION_MIN_TIME_MS = 500L
         private const val LOCATION_POLL_INTERVAL_MS = 1000L
@@ -821,8 +1005,9 @@ class MapLibreEngineImpl : CarMapEngine {
         private const val ROUTE_LAYER_ID = "mix-route-layer"
         private const val ROUTE_COLOR = "#00CBD6"
         private const val ROUTE_WIDTH = 6f
-        private const val ROUTE_PADDING_PX = 120
-        private const val ROUTE_FIT_DURATION_MS = 1200
+        private const val STEP_ADVANCE_THRESHOLD_M = 25f
+        private const val ARRIVAL_THRESHOLD_M = 15f
+        private const val ARRIVAL_FREE_DRIVE_DELAY_MS = 1_500L
         private val DEFAULT_LOCATION = LatLng(12.8797, 121.7740)
 
         /**

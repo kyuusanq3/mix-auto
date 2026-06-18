@@ -41,7 +41,7 @@ MainActivity (mapEngine = MapLibreEngineImpl())
 ```
 
 - Style: inline OSM raster JSON (`tile.openstreetmap.org`) — not `demotiles.maplibre.org` (no PH coverage)
-- Routing: OSRM public API; route line via GeoJsonSource + LineLayer `#00CBD6`
+- Routing: `routing.openstreetmap.de/routed-car` OSRM API (not `router.project-osrm.org` — returns 403); `User-Agent: MixAutoCarLauncher/1.0` required; route line via GeoJsonSource + LineLayer `#00CBD6`
 - Search: Nominatim with `User-Agent: MixAutoCarLauncher/1.0`
 - Location: `MapLibreFusedLocationEngineImpl` (AOSP, no Google Services dep); runtime `ACCESS_FINE_LOCATION` + `ACCESS_COARSE_LOCATION` both requested
 - No `play-services-location` dependency — app must work on Eonon/AOSP devices without Google Play Services
@@ -73,7 +73,7 @@ Set `JAVA_HOME` to Android Studio `jbr` before `.\gradlew.bat assembleDebug`.
 - Map loads before location permission dialog — `MainActivity` must call `retryLocationActivation()` when permission already granted, not only after dialog
 - Emulator mock GPS: `getLastKnownLocation` often null until `requestLocationUpdates(GPS_PROVIDER, …)` fires; refresh on `onResume` after Extended Controls changes
 - `CarMapViewContainer` needs `lifecycle-runtime-compose` for `LocalLifecycleOwner`
-- After OSRM route draw, use `LatLngBounds` fit — not `CameraMode.TRACKING` immediately (snaps back to user dot)
+- After OSRM route draw, `showRouteThenDive()` shows a 2 s `LatLngBounds` overview then dives to `CameraMode.TRACKING_GPS` (zoom 17.5, tilt 55°) — do not set `TRACKING` immediately after route draw or it snaps back before the dive
 - `ShortcutDock` lazy list keys must use stable `AppShortcut.id` (not display `label`); wrap horizontal/vertical branches in `key(isHorizontal)` — toggling layout settings crashed with duplicate key `"Settings"`
 - Cached `MapView` in `MapLibreEngineImpl.createMapView()`: detach from parent via `(parent as? ViewGroup)?.removeView()` before returning to a new `AndroidView`
 - Do not call `engine.onDestroy()` in `CarMapViewContainer` composable `onDispose` — only forward `ON_DESTROY` from activity lifecycle; layout changes remove/re-add the composable but must keep the map engine alive
@@ -82,3 +82,9 @@ Set `JAVA_HOME` to Android Studio `jbr` before `.\gradlew.bat assembleDebug`.
 - `forceLocationUpdate(location)` on `locationComponent` is required to push fixes into MapLibre's blue dot; store fix in `pendingLocationFix` if component not yet activated, flush in `activateLocationTracking()`
 - `navigateToCoordinates()` falls back to map camera center (`resolveMapViewOrigin()`) when GPS is null and camera zoom ≥ 10 — allows routing on emulator without GPS fix
 - Do NOT add `play-services-location` or any `com.google.android.gms` dependency — app targets AOSP head units with no Google Services
+- `router.project-osrm.org` returns 403 for third-party apps — use `routing.openstreetmap.de/routed-car` in `fetchOsrmRoute()`; set `User-Agent: MixAutoCarLauncher/1.0` on OSRM requests (same as Nominatim)
+- Turn-by-turn navigation: `fullRouteSteps` / `currentStepIndex` in `MapLibreEngineImpl`; `evaluateStepAdvancement()` runs on GPS fixes when `isNavigating` — do not overwrite `streetName` with "Current location" during navigation
+- Step advance threshold 25 m; arrival at 15 m from destination or when step index exhausts; `navigationArrivalTriggered` prevents duplicate arrival coroutines
+- `startFreeDrive()` removes `mix-route-layer` and `mix-route-source`; resets camera to `FREE_DRIVE_TILT` (0°) / `FREE_DRIVE_ZOOM` (14.5) with `CameraMode.TRACKING`
+- End navigation button in `CarMapViewContainer` (Close icon, red tint) calls `engine.startFreeDrive()` when `isNavigating`
+- 3D nav camera: `showRouteThenDive()` → 2 s overview → `enterNavigationCamera()` after `NAV_DIVE_DELAY_MS` (2200 ms); guard with `_uiState.value.isNavigating` so dive is skipped if user exits during overview

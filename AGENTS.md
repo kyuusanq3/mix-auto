@@ -109,11 +109,11 @@ After install on the head unit, select **MixAuto** when prompted for the default
 
 ## Planned / not yet implemented
 
-- Turn-by-turn step advancement during active navigation (only first OSRM step shown)
-- Clear route overlay on `startFreeDrive()`
+- Route re-routing when driver deviates from the drawn path
 - Real media session / album art in `MediaPlayerPane`
 - Dynamic discovery of all launchable apps (currently fixed shortcut list)
 - Release signing / Play Store config
+- Vector map style for sharper 3D driving perspective (OSM raster limits tilt quality)
 
 ## Troubleshooting
 
@@ -128,10 +128,14 @@ After install on the head unit, select **MixAuto** when prompted for the default
 | Emulator GPS never fires despite Set Location | AVD-level failure — `adb emu geo fix` returns OK but `dumpsys location` shows `Number of location reports: 0`; cold boot AVD or test on physical device |
 | AppOps `op=GPS: Operation not started` in Logcat | Location listener being torn down and re-registered too rapidly; `MapLibreEngineImpl` uses `listenersRegistered` flag — do not reset it on resume |
 | Navigation shows "Zoom map to your area" | GPS unavailable — pan/zoom map to location (zoom ≥ 10), then search destination; routing uses map center as origin |
+| `OSRM HTTP error: 403` in Logcat | `router.project-osrm.org` blocks third-party apps — use `routing.openstreetmap.de/routed-car` in `MapLibreEngineImpl.fetchOsrmRoute()` with `User-Agent: MixAutoCarLauncher/1.0` |
 | Map frozen at US/Philippines overview | Wait for GPS snap or set mock location; engine snaps on first `requestLocationUpdates` fix |
 | `Unresolved reference: LocalLifecycleOwner` | Add `androidx.lifecycle:lifecycle-runtime-compose` dependency |
 | Crash: `Key "Settings" was already used` on settings toggle | `ShortcutDock.kt`: use `key = { it.id }` not `it.label`; wrap dock in `key(isHorizontal)` |
 | Crash: `child already has a parent` on settings toggle | `MapLibreEngineImpl`: detach cached MapView before reuse; `CarMapViewContainer`: `onDestroy` only on activity `ON_DESTROY` |
+| HUD stuck on first turn / street name shows "Current location" while navigating | `applyAndroidLocation()` must call `evaluateStepAdvancement()` when `isNavigating`, not overwrite `streetName` |
+| Cyan route line persists after ending navigation | `startFreeDrive()` must `removeLayer(ROUTE_LAYER_ID)` and `removeSource(ROUTE_SOURCE_ID)` on map style |
+| Camera snaps flat immediately after route draw | Use `showRouteThenDive()` — 2 s bounds overview then `enterNavigationCamera()` with `TRACKING_GPS`; do not set `TRACKING` right after route fetch |
 
 ## Related agent resources
 
