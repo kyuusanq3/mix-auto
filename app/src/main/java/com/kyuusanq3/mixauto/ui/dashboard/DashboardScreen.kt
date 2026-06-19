@@ -54,11 +54,13 @@ fun DashboardScreen(
     mapMediaRatio: Float,
     limitSearchDistance: Boolean,
     useVectorTiles: Boolean,
+    isLauncherMode: Boolean,
     onToggleLhd: () -> Unit,
     onToggleShortcutsHorizontal: () -> Unit,
     onMapMediaRatioChange: (Float) -> Unit,
     onToggleLimitSearchDistance: () -> Unit,
     onToggleVectorTiles: () -> Unit,
+    onToggleLauncherMode: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     var settingsOpen by remember { mutableStateOf(false) }
@@ -233,11 +235,13 @@ fun DashboardScreen(
                 mapMediaRatio = mapMediaRatio,
                 limitSearchDistance = limitSearchDistance,
                 useVectorTiles = useVectorTiles,
+                isLauncherMode = isLauncherMode,
                 onToggleLhd = onToggleLhd,
                 onToggleShortcutsHorizontal = onToggleShortcutsHorizontal,
                 onMapMediaRatioChange = onMapMediaRatioChange,
                 onToggleLimitSearchDistance = onToggleLimitSearchDistance,
                 onToggleVectorTiles = onToggleVectorTiles,
+                onToggleLauncherMode = onToggleLauncherMode,
                 onDismiss = { settingsOpen = false },
             )
         }
@@ -251,11 +255,13 @@ private fun SettingsOverlay(
     mapMediaRatio: Float,
     limitSearchDistance: Boolean,
     useVectorTiles: Boolean,
+    isLauncherMode: Boolean,
     onToggleLhd: () -> Unit,
     onToggleShortcutsHorizontal: () -> Unit,
     onMapMediaRatioChange: (Float) -> Unit,
     onToggleLimitSearchDistance: () -> Unit,
     onToggleVectorTiles: () -> Unit,
+    onToggleLauncherMode: () -> Unit,
     onDismiss: () -> Unit,
 ) {
     Dialog(
@@ -324,6 +330,16 @@ private fun SettingsOverlay(
                     onCheckedChange = { checked ->
                         if (checked != useVectorTiles) {
                             onToggleVectorTiles()
+                        }
+                    },
+                )
+
+                SettingsSwitchRow(
+                    label = "Launcher Mode (replaces home screen)",
+                    checked = isLauncherMode,
+                    onCheckedChange = { checked ->
+                        if (checked != isLauncherMode) {
+                            onToggleLauncherMode()
                         }
                     },
                 )

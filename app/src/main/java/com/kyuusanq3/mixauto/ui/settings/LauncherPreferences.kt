@@ -35,6 +35,12 @@ class LauncherPreferences(context: Context) {
             prefs.edit().putBoolean(KEY_VECTOR_TILES, value).apply()
         }
 
+    var isLauncherMode: Boolean
+        get() = prefs.getBoolean(KEY_LAUNCHER_MODE, false)
+        set(value) {
+            prefs.edit().putBoolean(KEY_LAUNCHER_MODE, value).apply()
+        }
+
     companion object {
         private const val PREFS_NAME = "launcher_prefs"
         private const val KEY_LEFT_HAND_DRIVE = "lhd"
@@ -42,6 +48,7 @@ class LauncherPreferences(context: Context) {
         private const val KEY_MAP_MEDIA_RATIO = "map_media_ratio"
         private const val KEY_LIMIT_SEARCH_DISTANCE = "limit_search_distance"
         private const val KEY_VECTOR_TILES = "vector_tiles"
+        private const val KEY_LAUNCHER_MODE = "launcher_mode"
         const val DEFAULT_MAP_MEDIA_RATIO = 0.6f
     }
 }

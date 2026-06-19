@@ -24,6 +24,9 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     var useVectorTiles by mutableStateOf(preferences.useVectorTiles)
         private set
 
+    var isLauncherMode by mutableStateOf(preferences.isLauncherMode)
+        private set
+
     fun toggleLeftHandDrive() {
         isLeftHandDrive = !isLeftHandDrive
         preferences.isLeftHandDrive = isLeftHandDrive
@@ -47,5 +50,10 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     fun toggleVectorTiles() {
         useVectorTiles = !useVectorTiles
         preferences.useVectorTiles = useVectorTiles
+    }
+
+    fun toggleLauncherMode() {
+        isLauncherMode = !isLauncherMode
+        preferences.isLauncherMode = isLauncherMode
     }
 }

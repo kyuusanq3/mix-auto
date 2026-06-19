@@ -1,6 +1,7 @@
 package com.kyuusanq3.mixauto
 
 import android.Manifest
+import android.content.ComponentName
 import android.content.pm.PackageManager
 import android.os.Bundle
 import androidx.activity.ComponentActivity
@@ -38,10 +39,12 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        val launcherPreferences = LauncherPreferences(this)
+        applyLauncherMode(launcherPreferences.isLauncherMode)
         localPlacesRepository = LocalPlacesRepository(this)
         mapEngine = MapLibreEngineImpl(
             localPlaces = localPlacesRepository,
-            initialUseVectorTiles = LauncherPreferences(this).useVectorTiles,
+            initialUseVectorTiles = launcherPreferences.useVectorTiles,
         )
 
         MediaSessionRepository.getInstance(this)
@@ -70,6 +73,7 @@ class MainActivity : ComponentActivity() {
                     mapMediaRatio = launcherViewModel.mapMediaRatio,
                     limitSearchDistance = launcherViewModel.limitSearchDistance,
                     useVectorTiles = launcherViewModel.useVectorTiles,
+                    isLauncherMode = launcherViewModel.isLauncherMode,
                     onToggleLhd = launcherViewModel::toggleLeftHandDrive,
                     onToggleShortcutsHorizontal = launcherViewModel::toggleShortcutsHorizontal,
                     onMapMediaRatioChange = launcherViewModel::updateMapMediaRatio,
@@ -77,6 +81,10 @@ class MainActivity : ComponentActivity() {
                     onToggleVectorTiles = {
                         launcherViewModel.toggleVectorTiles()
                         mapEngine.setMapStyle(launcherViewModel.useVectorTiles)
+                    },
+                    onToggleLauncherMode = {
+                        launcherViewModel.toggleLauncherMode()
+                        applyLauncherMode(launcherViewModel.isLauncherMode)
                     },
                 )
             }
@@ -112,5 +120,18 @@ class MainActivity : ComponentActivity() {
             Manifest.permission.ACCESS_COARSE_LOCATION,
         ) == PackageManager.PERMISSION_GRANTED
         return fineGranted || coarseGranted
+    }
+
+    private fun applyLauncherMode(enabled: Boolean) {
+        val alias = ComponentName(this, "com.kyuusanq3.mixauto.LauncherModeAlias")
+        packageManager.setComponentEnabledSetting(
+            alias,
+            if (enabled) {
+                PackageManager.COMPONENT_ENABLED_STATE_ENABLED
+            } else {
+                PackageManager.COMPONENT_ENABLED_STATE_DISABLED
+            },
+            PackageManager.DONT_KILL_APP,
+        )
     }
 }
