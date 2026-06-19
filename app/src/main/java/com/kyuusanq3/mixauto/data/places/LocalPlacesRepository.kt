@@ -278,6 +278,45 @@ class LocalPlacesRepository(context: Context) {
             .take(LOCAL_RESULT_LIMIT)
     }
 
+    fun getPlacesInBounds(
+        minLat: Double,
+        maxLat: Double,
+        minLng: Double,
+        maxLng: Double,
+        limit: Int = BBOX_RESULT_LIMIT,
+    ): List<SearchResultPlace> {
+        val db = database ?: return emptyList()
+        val sql = """
+            SELECT name, address, city, lat, lng, category
+            FROM places
+            WHERE lat BETWEEN ? AND ?
+              AND lng BETWEEN ? AND ?
+            LIMIT ?
+        """.trimIndent()
+
+        return runCatching {
+            db.rawQuery(
+                sql,
+                arrayOf(
+                    minLat.toString(),
+                    maxLat.toString(),
+                    minLng.toString(),
+                    maxLng.toString(),
+                    limit.toString(),
+                ),
+            ).use { cursor ->
+                buildList {
+                    while (cursor.moveToNext()) {
+                        add(cursor.toSearchResultPlace())
+                    }
+                }
+            }
+        }.getOrElse { error ->
+            Log.w(TAG, "BBox query failed: ${error.message}")
+            emptyList()
+        }
+    }
+
     private fun searchWithFts5(
         db: SQLiteDatabase,
         query: String,
@@ -288,7 +327,7 @@ class LocalPlacesRepository(context: Context) {
     ): List<SearchResultPlace> {
         val ftsQuery = buildFtsQuery(query) ?: return emptyList()
         val sql = """
-            SELECT p.name, p.address, p.city, p.lat, p.lng
+            SELECT p.name, p.address, p.city, p.lat, p.lng, p.category
             FROM places p
             JOIN places_fts fts ON p.rowid = fts.rowid
             WHERE places_fts MATCH ?
@@ -332,7 +371,7 @@ class LocalPlacesRepository(context: Context) {
     ): List<SearchResultPlace> {
         val likePattern = "%${query.trim()}%"
         val sql = """
-            SELECT name, address, city, lat, lng
+            SELECT name, address, city, lat, lng, category
             FROM places
             WHERE (name LIKE ? OR address LIKE ? OR city LIKE ?)
               AND lat BETWEEN ? AND ?
@@ -397,6 +436,8 @@ class LocalPlacesRepository(context: Context) {
         val city = getString(2).orEmpty()
         val lat = getDouble(3)
         val lng = getDouble(4)
+        val categoryIndex = getColumnIndex("category")
+        val category = if (categoryIndex >= 0) getString(categoryIndex).orEmpty() else ""
         val subTitle = listOf(address, city)
             .filter { it.isNotBlank() && !it.equals(name, ignoreCase = true) }
             .joinToString(", ")
@@ -405,6 +446,7 @@ class LocalPlacesRepository(context: Context) {
             subTitle = subTitle,
             latitude = lat,
             longitude = lng,
+            category = category,
         )
     }
 
@@ -415,6 +457,7 @@ class LocalPlacesRepository(context: Context) {
         private const val KEY_ACTIVE_ISO = "active_iso"
         private const val BBOX_DELTA = 0.5
         private const val LOCAL_RESULT_LIMIT = 15
+        private const val BBOX_RESULT_LIMIT = 100
         private const val DOWNLOAD_USER_AGENT = "MixAutoCarLauncher/1.0"
         private const val DOWNLOAD_CONNECT_TIMEOUT_MS = 30_000
         private const val DOWNLOAD_READ_TIMEOUT_MS = 300_000

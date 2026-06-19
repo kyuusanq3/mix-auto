@@ -10,4 +10,5 @@ data class MapUiState(
     val currentLat: Double? = null,
     val currentLng: Double? = null,
     val routeOverviewProgress: Float = 0f,
+    val selectedPoi: SearchResultPlace? = null,
 )

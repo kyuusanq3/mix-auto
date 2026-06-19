@@ -29,12 +29,19 @@ class LauncherPreferences(context: Context) {
             prefs.edit().putBoolean(KEY_LIMIT_SEARCH_DISTANCE, value).apply()
         }
 
+    var useVectorTiles: Boolean
+        get() = prefs.getBoolean(KEY_VECTOR_TILES, false)
+        set(value) {
+            prefs.edit().putBoolean(KEY_VECTOR_TILES, value).apply()
+        }
+
     companion object {
         private const val PREFS_NAME = "launcher_prefs"
         private const val KEY_LEFT_HAND_DRIVE = "lhd"
         private const val KEY_SHORTCUTS_HORIZONTAL = "shortcuts_horizontal"
         private const val KEY_MAP_MEDIA_RATIO = "map_media_ratio"
         private const val KEY_LIMIT_SEARCH_DISTANCE = "limit_search_distance"
+        private const val KEY_VECTOR_TILES = "vector_tiles"
         const val DEFAULT_MAP_MEDIA_RATIO = 0.6f
     }
 }

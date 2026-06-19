@@ -17,8 +17,10 @@ interface CarMapEngine {
 
     fun startFreeDrive()
     fun recenterCamera()
+    fun dismissSelectedPoi()
     fun navigateToCoordinates(lat: Double, lng: Double)
     fun retryLocationActivation()
+    fun setMapStyle(useVectorTiles: Boolean)
     suspend fun searchDestination(
         query: String,
         currentLat: Double,

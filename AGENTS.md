@@ -196,11 +196,11 @@ After install on the head unit, select **MixAuto** when prompted for the default
 | Crash: `child already has a parent` on settings toggle | `MapLibreEngineImpl`: detach cached MapView before reuse; `CarMapViewContainer`: `onDestroy` only on activity `ON_DESTROY` |
 | HUD stuck on first turn / street name shows "Current location" while navigating | `applyAndroidLocation()` must call `evaluateStepAdvancement()` when `isNavigating`, not overwrite `streetName` |
 | Cyan route line persists after ending navigation | `startFreeDrive()` must `removeLayer(ROUTE_LAYER_ID)` and `removeSource(ROUTE_SOURCE_ID)` on map style |
-| Camera snaps flat immediately after route draw | Use `showRouteThenDive()` — 2 s bounds overview then `enterNavigationCamera()` with `TRACKING_GPS`; do not set `TRACKING` right after route fetch |
+| Camera snaps flat immediately after route draw | `showRouteThenDive()` — 2 s bounds animation (`ROUTE_OVERVIEW_ANIMATION_MS`) then 10 s hold (`ROUTE_OVERVIEW_HOLD_MS`) with timer bar before `enterNavigationCamera()`; set `CameraMode.NONE` before overview |
 | Map zoomed out on startup despite GPS fixes | Style callback must call `startFreeDrive()` after `activateLocationTracking()`; do not enable `TRACKING` before snap — fallback zoom 6 locks wide view |
 | Free drive camera twitching/jitter | Do not re-snap on every GPS fix — `hasSnappedCameraToGps` + one `moveCamera` then `TRACKING_GPS`; no duplicate `startFreeDrive()` from `retryLocationActivation()` |
 | Free drive looks flat (not Android Auto slanted) | Free drive uses `FREE_DRIVE_TILT` 45° and `CameraMode.TRACKING_GPS` with GPS bearing; nav uses tilt 55° / zoom 17.5 |
-| Nav camera frozen while GPS puck moves | `enterNavigationCamera()` must use `zoomWhileTracking`/`tiltWhileTracking`, not `map.animateCamera()` — direct animate cancels `TRACKING_GPS` |
+| Nav camera frozen while GPS puck moves / dive never zooms in | `enterNavigationCamera()`: `CameraMode.NONE` → `map.animateCamera()` to zoom 17.5 / tilt 55° → `TRACKING_GPS` in callback; do NOT use `zoomWhileTracking`/`tiltWhileTracking` immediately after mode change (ignored during transition) |
 | Map doesn't rotate to direction of travel | Use `RenderMode.GPS` not `COMPASS` in `activateLocationTracking()` and camera entry |
 | UI cut off by status/nav bars on phone | `MainActivity` is edge-to-edge (`setDecorFitsSystemWindows(false)`); add `systemBarsPadding()` on `DashboardScreen` root `Box` |
 | Night theme missing fullscreen flags | Add `windowFullscreen` + `windowContentOverlay` to `res/values-night/themes.xml` |

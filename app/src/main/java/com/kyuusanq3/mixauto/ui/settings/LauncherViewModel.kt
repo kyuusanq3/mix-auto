@@ -21,6 +21,9 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     var limitSearchDistance by mutableStateOf(preferences.limitSearchDistance)
         private set
 
+    var useVectorTiles by mutableStateOf(preferences.useVectorTiles)
+        private set
+
     fun toggleLeftHandDrive() {
         isLeftHandDrive = !isLeftHandDrive
         preferences.isLeftHandDrive = isLeftHandDrive
@@ -39,5 +42,10 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     fun toggleLimitSearchDistance() {
         limitSearchDistance = !limitSearchDistance
         preferences.limitSearchDistance = limitSearchDistance
+    }
+
+    fun toggleVectorTiles() {
+        useVectorTiles = !useVectorTiles
+        preferences.useVectorTiles = useVectorTiles
     }
 }

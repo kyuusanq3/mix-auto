@@ -6,4 +6,5 @@ data class SearchResultPlace(
     val latitude: Double,
     val longitude: Double,
     val distanceInMeters: Float = 0f,
+    val category: String = "",
 )

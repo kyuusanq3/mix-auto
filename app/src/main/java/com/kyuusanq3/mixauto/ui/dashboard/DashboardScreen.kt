@@ -53,10 +53,12 @@ fun DashboardScreen(
     isShortcutsHorizontal: Boolean,
     mapMediaRatio: Float,
     limitSearchDistance: Boolean,
+    useVectorTiles: Boolean,
     onToggleLhd: () -> Unit,
     onToggleShortcutsHorizontal: () -> Unit,
     onMapMediaRatioChange: (Float) -> Unit,
     onToggleLimitSearchDistance: () -> Unit,
+    onToggleVectorTiles: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     var settingsOpen by remember { mutableStateOf(false) }
@@ -230,10 +232,12 @@ fun DashboardScreen(
                 isShortcutsHorizontal = isShortcutsHorizontal,
                 mapMediaRatio = mapMediaRatio,
                 limitSearchDistance = limitSearchDistance,
+                useVectorTiles = useVectorTiles,
                 onToggleLhd = onToggleLhd,
                 onToggleShortcutsHorizontal = onToggleShortcutsHorizontal,
                 onMapMediaRatioChange = onMapMediaRatioChange,
                 onToggleLimitSearchDistance = onToggleLimitSearchDistance,
+                onToggleVectorTiles = onToggleVectorTiles,
                 onDismiss = { settingsOpen = false },
             )
         }
@@ -246,10 +250,12 @@ private fun SettingsOverlay(
     isShortcutsHorizontal: Boolean,
     mapMediaRatio: Float,
     limitSearchDistance: Boolean,
+    useVectorTiles: Boolean,
     onToggleLhd: () -> Unit,
     onToggleShortcutsHorizontal: () -> Unit,
     onMapMediaRatioChange: (Float) -> Unit,
     onToggleLimitSearchDistance: () -> Unit,
+    onToggleVectorTiles: () -> Unit,
     onDismiss: () -> Unit,
 ) {
     Dialog(
@@ -308,6 +314,16 @@ private fun SettingsOverlay(
                     onCheckedChange = { checked ->
                         if (checked != limitSearchDistance) {
                             onToggleLimitSearchDistance()
+                        }
+                    },
+                )
+
+                SettingsSwitchRow(
+                    label = "Vector Map Tiles (sharper 3D)",
+                    checked = useVectorTiles,
+                    onCheckedChange = { checked ->
+                        if (checked != useVectorTiles) {
+                            onToggleVectorTiles()
                         }
                     },
                 )

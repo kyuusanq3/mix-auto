@@ -52,9 +52,11 @@ import org.maplibre.android.location.modes.RenderMode
 import org.maplibre.android.maps.MapView
 import org.maplibre.android.maps.MapLibreMap
 import org.maplibre.android.maps.Style
+import org.maplibre.android.style.expressions.Expression
 import org.maplibre.android.style.layers.LineLayer
 import org.maplibre.android.style.layers.Property
 import org.maplibre.android.style.layers.PropertyFactory
+import org.maplibre.android.style.layers.SymbolLayer
 import org.maplibre.android.style.sources.GeoJsonSource
 
 private data class LegStep(
@@ -81,12 +83,15 @@ private data class ResolvedLocation(
 
 class MapLibreEngineImpl(
     private val localPlaces: LocalPlacesRepository? = null,
+    initialUseVectorTiles: Boolean = false,
 ) : CarMapEngine {
 
     private val _uiState = MutableStateFlow(MapUiState())
     override val uiState: StateFlow<MapUiState> = _uiState.asStateFlow()
 
     private val engineScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
+
+    private var useVectorTiles = initialUseVectorTiles
 
     private var mapView: MapView? = null
     private var mapLibreMap: org.maplibre.android.maps.MapLibreMap? = null
@@ -107,6 +112,8 @@ class MapLibreEngineImpl(
     private var locationPollJob: Job? = null
     private var locationRetryJob: Job? = null
     private var routeOverviewJob: Job? = null
+    private var poiRefreshJob: Job? = null
+    private var lastPhotonQueryCenter: LatLng? = null
 
     override fun createMapView(context: Context): View {
         mapView?.let { existing ->
@@ -133,16 +140,59 @@ class MapLibreEngineImpl(
                         _uiState.update { it.copy(isCameraDetached = true) }
                     }
                 }
-                map.setStyle(Style.Builder().fromJson(OSM_STYLE_JSON)) { style ->
-                    activateLocationTracking(map, style)
-                    if (pendingLocationActivation && hasLocationPermission(context)) {
-                        beginLocationAcquisition(context)
-                        pendingLocationActivation = false
-                    }
-                    startFreeDrive()
-                }
+                registerPoiInteractions(map)
+                applyMapStyle(map, context)
             }
             mapView = view
+        }
+    }
+
+    override fun setMapStyle(useVectorTiles: Boolean) {
+        val map = mapLibreMap ?: return
+        val ctx = appContext ?: return
+
+        this.useVectorTiles = useVectorTiles
+
+        poiRefreshJob?.cancel()
+        poiRefreshJob = null
+        routeOverviewJob?.cancel()
+        routeOverviewJob = null
+        fullRouteSteps = emptyList()
+        currentStepIndex = 0
+        destinationLatLng = null
+        navigationArrivalTriggered = false
+
+        _uiState.update {
+            it.copy(
+                isNavigating = false,
+                streetName = "Loading map...",
+                selectedPoi = null,
+                routeOverviewProgress = 0f,
+            )
+        }
+
+        applyMapStyle(map, ctx)
+    }
+
+    private fun applyMapStyle(map: MapLibreMap, context: Context) {
+        val builder = if (useVectorTiles) {
+            Style.Builder().fromUri(VECTOR_STYLE_URL)
+        } else {
+            Style.Builder().fromJson(OSM_STYLE_JSON)
+        }
+
+        map.setStyle(builder) { style ->
+            val density = context.resources.displayMetrics.density
+            PoiIconFactory.createAllIcons(density).forEach { (id, bitmap) ->
+                style.addImage(id, bitmap)
+            }
+            activateLocationTracking(map, style)
+            if (pendingLocationActivation && hasLocationPermission(context)) {
+                beginLocationAcquisition(context)
+                pendingLocationActivation = false
+            }
+            hasSnappedCameraToGps = false
+            startFreeDrive()
         }
     }
 
@@ -172,6 +222,9 @@ class MapLibreEngineImpl(
         locationPollJob = null
         locationRetryJob?.cancel()
         locationRetryJob = null
+        poiRefreshJob?.cancel()
+        poiRefreshJob = null
+        lastPhotonQueryCenter = null
         pendingLocationFix = null
         engineScope.cancel()
         removeFreshLocationListener()
@@ -275,6 +328,44 @@ class MapLibreEngineImpl(
         return merged.sortedBy { it.distanceInMeters }
     }
 
+    /**
+     * Merges local + Photon POIs for map pins. Unlike [mergeAndDeduplicate], keeps local
+     * results first (preserving Overture categories) and does not re-sort by distance —
+     * otherwise closer uncategorized Photon pins evict categorized local pins after phase 2.
+     */
+    private fun mergePoiPins(
+        local: List<SearchResultPlace>,
+        photon: List<SearchResultPlace>,
+    ): List<SearchResultPlace> {
+        val merged = mutableListOf<SearchResultPlace>()
+
+        fun findDuplicateIndex(place: SearchResultPlace): Int? {
+            for (i in merged.indices) {
+                val existing = merged[i]
+                val distanceResults = FloatArray(1)
+                Location.distanceBetween(
+                    existing.latitude,
+                    existing.longitude,
+                    place.latitude,
+                    place.longitude,
+                    distanceResults,
+                )
+                if (distanceResults[0] < DEDUP_THRESHOLD_M) return i
+            }
+            return null
+        }
+
+        for (place in local + photon) {
+            val duplicateIndex = findDuplicateIndex(place)
+            if (duplicateIndex == null) {
+                merged.add(place)
+            } else if (merged[duplicateIndex].category.isBlank() && place.category.isNotBlank()) {
+                merged[duplicateIndex] = merged[duplicateIndex].copy(category = place.category)
+            }
+        }
+        return merged.take(MAX_POI_PINS)
+    }
+
     private fun parsePhotonResponse(
         json: String,
         currentLat: Double,
@@ -306,12 +397,17 @@ class MapLibreEngineImpl(
             val distanceResults = FloatArray(1)
             Location.distanceBetween(currentLat, currentLng, placeLat, placeLng, distanceResults)
 
+            val osmKey = properties.optString("osm_key")
+            val osmValue = properties.optString("osm_value")
+            val category = photonToCategory(osmKey, osmValue)
+
             SearchResultPlace(
                 name = name,
                 subTitle = subTitle,
                 latitude = placeLat,
                 longitude = placeLng,
                 distanceInMeters = distanceResults[0],
+                category = category,
             )
         }.sortedBy { it.distanceInMeters }
     }
@@ -362,6 +458,8 @@ class MapLibreEngineImpl(
     override fun startFreeDrive() {
         routeOverviewJob?.cancel()
         routeOverviewJob = null
+        poiRefreshJob?.cancel()
+        poiRefreshJob = null
         fullRouteSteps = emptyList()
         currentStepIndex = 0
         destinationLatLng = null
@@ -377,9 +475,17 @@ class MapLibreEngineImpl(
         val map = mapLibreMap
         if (map != null) {
             applyFreeDriveToMap(map)
+            clearPoiLayer()
         } else {
-            mapView?.getMapAsync { loadedMap -> applyFreeDriveToMap(loadedMap) }
+            mapView?.getMapAsync { loadedMap ->
+                applyFreeDriveToMap(loadedMap)
+                clearPoiLayer()
+            }
         }
+    }
+
+    override fun dismissSelectedPoi() {
+        _uiState.update { it.copy(selectedPoi = null) }
     }
 
     private fun applyFreeDriveToMap(map: MapLibreMap) {
@@ -536,7 +642,16 @@ class MapLibreEngineImpl(
     }
 
     private fun startNavigation(origin: LatLng, lat: Double, lng: Double) {
-        _uiState.update { it.copy(isNavigating = true, streetName = "Calculating route...") }
+        poiRefreshJob?.cancel()
+        poiRefreshJob = null
+        clearPoiLayer()
+        _uiState.update {
+            it.copy(
+                isNavigating = true,
+                streetName = "Calculating route...",
+                selectedPoi = null,
+            )
+        }
 
         engineScope.launch {
             try {
@@ -771,6 +886,200 @@ class MapLibreEngineImpl(
                 )
             }
         }
+    }
+
+    private fun registerPoiInteractions(map: MapLibreMap) {
+        map.addOnCameraIdleListener {
+            if (_uiState.value.isNavigating) {
+                clearPoiLayer()
+                return@addOnCameraIdleListener
+            }
+
+            val zoom = map.cameraPosition.zoom
+            if (zoom < MIN_POI_ZOOM) {
+                clearPoiLayer()
+                return@addOnCameraIdleListener
+            }
+
+            poiRefreshJob?.cancel()
+            poiRefreshJob = engineScope.launch {
+                delay(POI_DEBOUNCE_MS)
+                val bounds = map.projection.visibleRegion.latLngBounds
+                val center = map.cameraPosition.target ?: return@launch
+
+                val localResults = withContext(Dispatchers.IO) {
+                    (localPlaces?.getPlacesInBounds(
+                        minLat = bounds.southWest.latitude,
+                        maxLat = bounds.northEast.latitude,
+                        minLng = bounds.southWest.longitude,
+                        maxLng = bounds.northEast.longitude,
+                        limit = MAX_POI_PINS,
+                    ) ?: emptyList()).map { place ->
+                        place.copy(category = normalizeOvertureCategory(place.category))
+                    }
+                }
+                if (localResults.isNotEmpty()) {
+                    updatePoiLayer(localResults)
+                }
+
+                val photonResults = withContext(Dispatchers.IO) {
+                    if (shouldQueryPhoton(center)) {
+                        fetchPhotonNearby(center)
+                    } else {
+                        emptyList()
+                    }
+                }
+                val merged = mergePoiPins(localResults, photonResults)
+                updatePoiLayer(merged)
+            }
+        }
+
+        map.addOnMapClickListener { latLng ->
+            val screenPoint = map.projection.toScreenLocation(latLng)
+            val features = map.queryRenderedFeatures(screenPoint, POI_LAYER_ID)
+            val feature = features.firstOrNull() ?: return@addOnMapClickListener false
+
+            val name = feature.getStringProperty("name") ?: return@addOnMapClickListener false
+            val subtitle = feature.getStringProperty("subtitle").orEmpty()
+            val category = feature.getStringProperty("category").orEmpty()
+            val lat = feature.getNumberProperty("lat")?.toDouble() ?: return@addOnMapClickListener false
+            val lng = feature.getNumberProperty("lng")?.toDouble() ?: return@addOnMapClickListener false
+
+            val distanceResults = FloatArray(1)
+            val reference = lastKnownLocation
+            val distanceInMeters = if (reference != null) {
+                Location.distanceBetween(
+                    reference.latitude,
+                    reference.longitude,
+                    lat,
+                    lng,
+                    distanceResults,
+                )
+                distanceResults[0]
+            } else {
+                0f
+            }
+
+            _uiState.update {
+                it.copy(
+                    selectedPoi = SearchResultPlace(
+                        name = name,
+                        subTitle = subtitle,
+                        latitude = lat,
+                        longitude = lng,
+                        distanceInMeters = distanceInMeters,
+                        category = category,
+                    ),
+                )
+            }
+            true
+        }
+    }
+
+    private suspend fun fetchPhotonNearby(center: LatLng): List<SearchResultPlace> {
+        val encodedQuery = URLEncoder.encode("+", "UTF-8")
+        val url = URL(
+            "https://photon.komoot.io/api/" +
+                "?q=$encodedQuery&lat=${center.latitude}&lon=${center.longitude}&limit=50",
+        )
+        val connection = url.openConnection() as HttpURLConnection
+        connection.setRequestProperty("User-Agent", "MixAutoCarLauncher/1.0")
+        connection.connectTimeout = 8_000
+        connection.readTimeout = 8_000
+        return try {
+            if (connection.responseCode !in 200..299) {
+                Log.w(TAG, "Photon nearby HTTP error: ${connection.responseCode}")
+                emptyList()
+            } else {
+                val body = connection.inputStream.bufferedReader().readText()
+                lastPhotonQueryCenter = center
+                parsePhotonResponse(body, center.latitude, center.longitude)
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Photon nearby fetch failed: ${e.message}")
+            emptyList()
+        } finally {
+            connection.disconnect()
+        }
+    }
+
+    private fun shouldQueryPhoton(center: LatLng): Boolean {
+        val lastCenter = lastPhotonQueryCenter ?: return true
+        val distanceResults = FloatArray(1)
+        Location.distanceBetween(
+            lastCenter.latitude,
+            lastCenter.longitude,
+            center.latitude,
+            center.longitude,
+            distanceResults,
+        )
+        return distanceResults[0] > PHOTON_MOVE_THRESHOLD_M
+    }
+
+    private fun updatePoiLayer(places: List<SearchResultPlace>) {
+        val map = mapLibreMap ?: return
+        val geoJson = buildPoiGeoJson(places)
+        map.getStyle { style ->
+            val existing = style.getSource(POI_SOURCE_ID)
+            if (existing is GeoJsonSource) {
+                existing.setGeoJson(geoJson)
+            } else {
+                style.addSource(GeoJsonSource(POI_SOURCE_ID, geoJson))
+                style.addLayer(
+                    SymbolLayer(POI_LAYER_ID, POI_SOURCE_ID).withProperties(
+                        PropertyFactory.iconImage(poiCategoryIconExpression()),
+                        PropertyFactory.iconAllowOverlap(true),
+                        PropertyFactory.iconAnchor(Property.ICON_ANCHOR_BOTTOM),
+                        PropertyFactory.iconSize(1f),
+                    ),
+                )
+            }
+        }
+    }
+
+    private fun clearPoiLayer() {
+        val map = mapLibreMap ?: return
+        map.getStyle { style ->
+            val existing = style.getSource(POI_SOURCE_ID)
+            if (existing is GeoJsonSource) {
+                existing.setGeoJson(EMPTY_POI_GEOJSON)
+            }
+        }
+    }
+
+    private fun buildPoiGeoJson(places: List<SearchResultPlace>): String {
+        val features = places.map { place ->
+            JSONObject().apply {
+                put("type", "Feature")
+                put(
+                    "geometry",
+                    JSONObject().apply {
+                        put("type", "Point")
+                        put(
+                            "coordinates",
+                            JSONArray().apply {
+                                put(place.longitude)
+                                put(place.latitude)
+                            },
+                        )
+                    },
+                )
+                put(
+                    "properties",
+                    JSONObject().apply {
+                        put("name", place.name)
+                        put("subtitle", place.subTitle)
+                        put("lat", place.latitude)
+                        put("lng", place.longitude)
+                        put("category", place.category)
+                    },
+                )
+            }
+        }
+        return JSONObject().apply {
+            put("type", "FeatureCollection")
+            put("features", JSONArray(features))
+        }.toString()
     }
 
     private fun activateLocationTracking(
@@ -1165,6 +1474,56 @@ class MapLibreEngineImpl(
         return bestLocation?.let { LatLng(it.latitude, it.longitude) }
     }
 
+    private fun normalizeOvertureCategory(raw: String): String {
+        if (raw in POI_CATEGORY_GROUPS) return raw
+        return when (raw.lowercase().trim()) {
+            "food_and_beverage" -> "food"
+            "gas_station" -> "fuel"
+            "health_and_medical" -> "health"
+            "accommodation" -> "accommodation"
+            "financial" -> "finance"
+            "retail" -> "shopping"
+            "recreation", "entertainment" -> "recreation"
+            else -> ""
+        }
+    }
+
+    private fun photonToCategory(osmKey: String, osmValue: String): String {
+        val key = osmKey.lowercase().trim()
+        val value = osmValue.lowercase().trim()
+        return when (key) {
+            "amenity" -> when (value) {
+                "restaurant", "cafe", "fast_food", "bar", "pub", "food_court" -> "food"
+                "fuel" -> "fuel"
+                "hospital", "pharmacy", "clinic", "doctors" -> "health"
+                "bank", "atm" -> "finance"
+                else -> ""
+            }
+            "tourism" -> when (value) {
+                "hotel", "hostel", "motel", "guest_house" -> "accommodation"
+                "attraction", "museum", "viewpoint" -> "recreation"
+                else -> ""
+            }
+            "shop" -> "shopping"
+            "leisure" -> "recreation"
+            else -> ""
+        }
+    }
+
+    private fun poiCategoryIconExpression(): Expression {
+        return Expression.match(
+            Expression.get("category"),
+            Expression.literal("poi_icon_default"),
+            Expression.stop("food", Expression.literal("poi_icon_food")),
+            Expression.stop("fuel", Expression.literal("poi_icon_fuel")),
+            Expression.stop("health", Expression.literal("poi_icon_health")),
+            Expression.stop("accommodation", Expression.literal("poi_icon_accommodation")),
+            Expression.stop("finance", Expression.literal("poi_icon_finance")),
+            Expression.stop("shopping", Expression.literal("poi_icon_shopping")),
+            Expression.stop("recreation", Expression.literal("poi_icon_recreation")),
+        )
+    }
+
     companion object {
         private const val TAG = "MapLibreEngineImpl"
         private const val DEFAULT_ZOOM = 15.0
@@ -1186,6 +1545,22 @@ class MapLibreEngineImpl(
         private val LOCATION_RETRY_DELAYS_MS = longArrayOf(1_000L, 3_000L, 8_000L)
         private const val ROUTE_SOURCE_ID = "mix-route-source"
         private const val ROUTE_LAYER_ID = "mix-route-layer"
+        private const val POI_SOURCE_ID = "mix-poi-source"
+        private const val POI_LAYER_ID = "mix-poi-layer"
+        private val POI_CATEGORY_GROUPS = setOf(
+            "food",
+            "fuel",
+            "health",
+            "accommodation",
+            "finance",
+            "shopping",
+            "recreation",
+        )
+        private const val MIN_POI_ZOOM = 13.0
+        private const val MAX_POI_PINS = 100
+        private const val POI_DEBOUNCE_MS = 1500L
+        private const val PHOTON_MOVE_THRESHOLD_M = 300f
+        private const val EMPTY_POI_GEOJSON = """{"type":"FeatureCollection","features":[]}"""
         private const val ROUTE_COLOR = "#00CBD6"
         private const val ROUTE_WIDTH = 6f
         private const val STEP_ADVANCE_THRESHOLD_M = 25f
@@ -1193,6 +1568,7 @@ class MapLibreEngineImpl(
         private const val DEDUP_THRESHOLD_M = 50f
         private const val MAX_SEARCH_RADIUS_M = 500_000f
         private const val ARRIVAL_FREE_DRIVE_DELAY_MS = 1_500L
+        private const val VECTOR_STYLE_URL = "https://tiles.openfreemap.org/styles/liberty"
         private val DEFAULT_LOCATION = LatLng(12.8797, 121.7740)
 
         /**

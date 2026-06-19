@@ -17,6 +17,7 @@ import com.kyuusanq3.mixauto.data.places.LocalPlacesRepository
 import com.kyuusanq3.mixauto.domain.map.CarMapEngine
 import com.kyuusanq3.mixauto.ui.dashboard.DashboardScreen
 import com.kyuusanq3.mixauto.ui.media.MediaPlayerViewModel
+import com.kyuusanq3.mixauto.ui.settings.LauncherPreferences
 import com.kyuusanq3.mixauto.ui.settings.LauncherViewModel
 import com.kyuusanq3.mixauto.ui.settings.MapDataViewModel
 import com.kyuusanq3.mixauto.ui.settings.MapDataViewModelFactory
@@ -38,7 +39,10 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         localPlacesRepository = LocalPlacesRepository(this)
-        mapEngine = MapLibreEngineImpl(localPlacesRepository)
+        mapEngine = MapLibreEngineImpl(
+            localPlaces = localPlacesRepository,
+            initialUseVectorTiles = LauncherPreferences(this).useVectorTiles,
+        )
 
         MediaSessionRepository.getInstance(this)
         WindowCompat.setDecorFitsSystemWindows(window, false)
@@ -65,10 +69,15 @@ class MainActivity : ComponentActivity() {
                     isShortcutsHorizontal = launcherViewModel.isShortcutsHorizontal,
                     mapMediaRatio = launcherViewModel.mapMediaRatio,
                     limitSearchDistance = launcherViewModel.limitSearchDistance,
+                    useVectorTiles = launcherViewModel.useVectorTiles,
                     onToggleLhd = launcherViewModel::toggleLeftHandDrive,
                     onToggleShortcutsHorizontal = launcherViewModel::toggleShortcutsHorizontal,
                     onMapMediaRatioChange = launcherViewModel::updateMapMediaRatio,
                     onToggleLimitSearchDistance = launcherViewModel::toggleLimitSearchDistance,
+                    onToggleVectorTiles = {
+                        launcherViewModel.toggleVectorTiles()
+                        mapEngine.setMapStyle(launcherViewModel.useVectorTiles)
+                    },
                 )
             }
         }
