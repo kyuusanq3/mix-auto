@@ -21,6 +21,7 @@ interface CarMapEngine {
     fun navigateToCoordinates(lat: Double, lng: Double)
     fun retryLocationActivation()
     fun setMapStyle(useVectorTiles: Boolean)
+    fun setDrivingZoom(zoom: Double)
     suspend fun searchDestination(
         query: String,
         currentLat: Double,

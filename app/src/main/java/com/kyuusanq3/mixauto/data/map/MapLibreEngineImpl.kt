@@ -69,6 +69,7 @@ private data class LegStep(
 
 private data class RouteResult(
     val geometryJson: String,
+    val geometryPoints: List<LatLng>,
     val streetName: String,
     val instruction: String,
     val distance: String,
@@ -84,6 +85,7 @@ private data class ResolvedLocation(
 class MapLibreEngineImpl(
     private val localPlaces: LocalPlacesRepository? = null,
     initialUseVectorTiles: Boolean = false,
+    initialDrivingZoom: Double = 17.5,
 ) : CarMapEngine {
 
     private val _uiState = MutableStateFlow(MapUiState())
@@ -92,6 +94,8 @@ class MapLibreEngineImpl(
     private val engineScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
 
     private var useVectorTiles = initialUseVectorTiles
+    private var freeDriveZoom = initialDrivingZoom
+    private var navZoom = initialDrivingZoom + 1.0
 
     private var mapView: MapView? = null
     private var mapLibreMap: org.maplibre.android.maps.MapLibreMap? = null
@@ -114,6 +118,11 @@ class MapLibreEngineImpl(
     private var routeOverviewJob: Job? = null
     private var poiRefreshJob: Job? = null
     private var lastPhotonQueryCenter: LatLng? = null
+    private var routeGeometryPoints: List<LatLng> = emptyList()
+    private var offRouteCount: Int = 0
+    private var rerouteCooldownUntilMs: Long = 0L
+    private var isRerouteInProgress: Boolean = false
+    private var previousLocationFix: Location? = null
 
     override fun createMapView(context: Context): View {
         mapView?.let { existing ->
@@ -133,6 +142,9 @@ class MapLibreEngineImpl(
             view.onCreate(null)
             view.onStart()
             view.onResume()
+            view.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
+                mapLibreMap?.let { map -> applyDrivingTrackingPadding(map) }
+            }
             view.getMapAsync { map ->
                 mapLibreMap = map
                 map.addOnCameraMoveStartedListener { reason ->
@@ -161,6 +173,9 @@ class MapLibreEngineImpl(
         currentStepIndex = 0
         destinationLatLng = null
         navigationArrivalTriggered = false
+        routeGeometryPoints = emptyList()
+        offRouteCount = 0
+        isRerouteInProgress = false
 
         _uiState.update {
             it.copy(
@@ -172,6 +187,16 @@ class MapLibreEngineImpl(
         }
 
         applyMapStyle(map, ctx)
+    }
+
+    override fun setDrivingZoom(zoom: Double) {
+        freeDriveZoom = zoom
+        navZoom = zoom + 1.0
+        mapLibreMap?.animateCamera(
+            CameraUpdateFactory.zoomTo(
+                if (_uiState.value.isNavigating) navZoom else freeDriveZoom,
+            ),
+        )
     }
 
     private fun applyMapStyle(map: MapLibreMap, context: Context) {
@@ -464,6 +489,9 @@ class MapLibreEngineImpl(
         currentStepIndex = 0
         destinationLatLng = null
         navigationArrivalTriggered = false
+        routeGeometryPoints = emptyList()
+        offRouteCount = 0
+        isRerouteInProgress = false
         hasSnappedCameraToGps = false
 
         _uiState.value = MapUiState(
@@ -489,6 +517,7 @@ class MapLibreEngineImpl(
     }
 
     private fun applyFreeDriveToMap(map: MapLibreMap) {
+        applyDrivingViewportPadding(map)
         map.getStyle { style ->
             runCatching { style.removeLayer(ROUTE_LAYER_ID) }
             runCatching { style.removeSource(ROUTE_SOURCE_ID) }
@@ -503,7 +532,7 @@ class MapLibreEngineImpl(
     }
 
     private fun isFreeDriveZoomTooWide(map: MapLibreMap): Boolean =
-        map.cameraPosition.zoom < FREE_DRIVE_ZOOM - 0.5
+        map.cameraPosition.zoom < freeDriveZoom - 0.5
 
     private fun needsFreeDriveCameraSnap(map: MapLibreMap): Boolean =
         !hasSnappedCameraToGps || isFreeDriveZoomTooWide(map)
@@ -528,14 +557,14 @@ class MapLibreEngineImpl(
 
         val component = map.locationComponent
         if (!component.isLocationComponentActivated || !component.isLocationComponentEnabled) return
-        if (component.cameraMode == CameraMode.TRACKING_GPS &&
-            component.renderMode == RenderMode.GPS
-        ) {
-            return
-        }
 
-        component.renderMode = RenderMode.GPS
-        component.cameraMode = CameraMode.TRACKING_GPS
+        val alreadyTracking = component.cameraMode == CameraMode.TRACKING_GPS &&
+            component.renderMode == RenderMode.GPS
+        if (!alreadyTracking) {
+            component.renderMode = RenderMode.GPS
+            component.cameraMode = CameraMode.TRACKING_GPS
+        }
+        applyDrivingTrackingPadding(map)
     }
 
     private fun snapCameraToGpsIfNeeded(latLng: LatLng) {
@@ -557,7 +586,7 @@ class MapLibreEngineImpl(
         Log.i(
             TAG,
             "Snapping free-drive camera to ${latLng.latitude}, ${latLng.longitude} " +
-                "zoom=$FREE_DRIVE_ZOOM tilt=$FREE_DRIVE_TILT (current=${map.cameraPosition.zoom}, " +
+                "zoom=$freeDriveZoom tilt=$FREE_DRIVE_TILT (current=${map.cameraPosition.zoom}, " +
                 "target=${formatCameraTarget(map)})",
         )
 
@@ -571,7 +600,7 @@ class MapLibreEngineImpl(
                 CameraPosition.Builder()
                     .target(latLng)
                     .tilt(FREE_DRIVE_TILT)
-                    .zoom(FREE_DRIVE_ZOOM)
+                    .zoom(freeDriveZoom)
                     .bearing(bearing)
                     .build(),
             ),
@@ -579,6 +608,7 @@ class MapLibreEngineImpl(
 
         if (componentReady) {
             component.cameraMode = CameraMode.TRACKING_GPS
+            applyDrivingTrackingPadding(map)
         }
 
         hasSnappedCameraToGps = true
@@ -641,14 +671,21 @@ class MapLibreEngineImpl(
         startNavigation(resolvedOrigin, lat, lng)
     }
 
-    private fun startNavigation(origin: LatLng, lat: Double, lng: Double) {
-        poiRefreshJob?.cancel()
-        poiRefreshJob = null
-        clearPoiLayer()
+    private fun startNavigation(
+        origin: LatLng,
+        lat: Double,
+        lng: Double,
+        isReroute: Boolean = false,
+    ) {
+        if (!isReroute) {
+            poiRefreshJob?.cancel()
+            poiRefreshJob = null
+            clearPoiLayer()
+        }
         _uiState.update {
             it.copy(
                 isNavigating = true,
-                streetName = "Calculating route...",
+                streetName = if (isReroute) "Re-routing..." else "Calculating route...",
                 selectedPoi = null,
             )
         }
@@ -659,11 +696,13 @@ class MapLibreEngineImpl(
                     fetchOsrmRoute(origin.longitude, origin.latitude, lng, lat)
                 }
                 if (route != null) {
+                    routeGeometryPoints = route.geometryPoints
                     drawRoute(route.geometryJson)
                     fullRouteSteps = route.steps
                     currentStepIndex = 0
                     destinationLatLng = LatLng(lat, lng)
                     navigationArrivalTriggered = false
+                    offRouteCount = 0
                     _uiState.update {
                         it.copy(
                             isNavigating = true,
@@ -672,11 +711,18 @@ class MapLibreEngineImpl(
                             distanceToNextTurn = route.distance,
                         )
                     }
-                    showRouteThenDive(origin, LatLng(lat, lng))
+                    if (isReroute) {
+                        isRerouteInProgress = false
+                        enterNavigationCamera()
+                    } else {
+                        showRouteThenDive(origin, LatLng(lat, lng))
+                    }
                 } else {
+                    isRerouteInProgress = false
                     _uiState.update { it.copy(isNavigating = false, streetName = "Route not found") }
                 }
             } catch (e: Exception) {
+                isRerouteInProgress = false
                 Log.w(TAG, "Route fetch failed: ${e.message}", e)
                 _uiState.update { it.copy(isNavigating = false, streetName = "Routing failed") }
             }
@@ -716,7 +762,9 @@ class MapLibreEngineImpl(
         if (routes.length() == 0) return null
         val route = routes.getJSONObject(0)
 
-        val geometryJson = route.getJSONObject("geometry").toString()
+        val geometry = route.getJSONObject("geometry")
+        val geometryJson = geometry.toString()
+        val geometryPoints = parseRouteGeometryPoints(geometry)
 
         val legs = route.getJSONArray("legs")
         if (legs.length() == 0) return null
@@ -746,11 +794,23 @@ class MapLibreEngineImpl(
 
         return RouteResult(
             geometryJson = geometryJson,
+            geometryPoints = geometryPoints,
             streetName = firstStep.streetName.ifBlank { "On route" },
             instruction = firstStep.instruction,
             distance = firstStep.distanceLabel,
             steps = allSteps,
         )
+    }
+
+    private fun parseRouteGeometryPoints(geometry: JSONObject): List<LatLng> {
+        val coordinates = geometry.optJSONArray("coordinates") ?: return emptyList()
+        return buildList {
+            for (i in 0 until coordinates.length()) {
+                val point = coordinates.optJSONArray(i) ?: continue
+                if (point.length() < 2) continue
+                add(LatLng(point.getDouble(1), point.getDouble(0)))
+            }
+        }
     }
 
     private fun buildInstruction(type: String, modifier: String, name: String): String {
@@ -824,10 +884,11 @@ class MapLibreEngineImpl(
 
         Log.i(
             TAG,
-            "Entering navigation camera zoom=$NAV_ZOOM tilt=$NAV_TILT " +
+            "Entering navigation camera zoom=$navZoom tilt=$NAV_TILT " +
                 "(current=${map.cameraPosition.zoom}, target=${target.latitude},${target.longitude})",
         )
 
+        applyDrivingViewportPadding(map)
         map.cancelTransitions()
         if (componentReady) {
             component.renderMode = RenderMode.GPS
@@ -838,7 +899,7 @@ class MapLibreEngineImpl(
             CameraUpdateFactory.newCameraPosition(
                 CameraPosition.Builder()
                     .target(target)
-                    .zoom(NAV_ZOOM)
+                    .zoom(navZoom)
                     .tilt(NAV_TILT)
                     .bearing(bearing)
                     .build(),
@@ -859,11 +920,58 @@ class MapLibreEngineImpl(
 
     private fun activateNavigationTracking(componentReady: Boolean) {
         if (!_uiState.value.isNavigating) return
-        val component = mapLibreMap?.locationComponent ?: return
+        val map = mapLibreMap ?: return
+        val component = map.locationComponent
         if (componentReady && component.isLocationComponentActivated && component.isLocationComponentEnabled) {
             component.renderMode = RenderMode.GPS
             component.cameraMode = CameraMode.TRACKING_GPS
+            applyDrivingTrackingPadding(map)
         }
+    }
+
+    private data class ViewportPadding(
+        val left: Int,
+        val top: Int,
+        val right: Int = 0,
+        val bottom: Int = 0,
+    )
+
+    private fun computeDrivingViewportPadding(map: MapLibreMap): ViewportPadding {
+        val w = map.width
+        val h = map.height
+        if (w > 0 && h > 0) {
+            return ViewportPadding(
+                left = (w * VIEWPORT_PADDING_LEFT_FRACTION).toInt(),
+                top = (h * VIEWPORT_PADDING_TOP_FRACTION).toInt(),
+            )
+        }
+        val density = appContext?.resources?.displayMetrics?.density ?: 2f
+        return ViewportPadding(
+            left = (48 * density).toInt(),
+            top = (120 * density).toInt(),
+        )
+    }
+
+    private fun applyDrivingViewportPadding(map: MapLibreMap) {
+        val padding = computeDrivingViewportPadding(map)
+        map.setPadding(padding.left, padding.top, padding.right, padding.bottom)
+    }
+
+    /** Map padding alone does not offset the puck during TRACKING_GPS — use paddingWhileTracking too. */
+    private fun applyDrivingTrackingPadding(map: MapLibreMap) {
+        val padding = computeDrivingViewportPadding(map)
+        map.setPadding(padding.left, padding.top, padding.right, padding.bottom)
+        val component = map.locationComponent
+        if (!component.isLocationComponentActivated || !component.isLocationComponentEnabled) return
+        if (component.cameraMode == CameraMode.NONE) return
+        component.paddingWhileTracking(
+            doubleArrayOf(
+                padding.left.toDouble(),
+                padding.top.toDouble(),
+                padding.right.toDouble(),
+                padding.bottom.toDouble(),
+            ),
+        )
     }
 
     private fun drawRoute(geometryJson: String) {
@@ -875,15 +983,18 @@ class MapLibreEngineImpl(
                 existing.setGeoJson(featureJson)
             } else {
                 style.addSource(GeoJsonSource(ROUTE_SOURCE_ID, featureJson))
-                style.addLayer(
-                    LineLayer(ROUTE_LAYER_ID, ROUTE_SOURCE_ID).withProperties(
-                        PropertyFactory.lineColor(ROUTE_COLOR),
-                        PropertyFactory.lineWidth(ROUTE_WIDTH),
-                        PropertyFactory.lineCap(Property.LINE_CAP_ROUND),
-                        PropertyFactory.lineJoin(Property.LINE_JOIN_ROUND),
-                        PropertyFactory.lineOpacity(0.9f),
-                    ),
+                val routeLayer = LineLayer(ROUTE_LAYER_ID, ROUTE_SOURCE_ID).withProperties(
+                    PropertyFactory.lineColor(ROUTE_COLOR),
+                    PropertyFactory.lineWidth(ROUTE_WIDTH),
+                    PropertyFactory.lineCap(Property.LINE_CAP_ROUND),
+                    PropertyFactory.lineJoin(Property.LINE_JOIN_ROUND),
+                    PropertyFactory.lineOpacity(0.9f),
                 )
+                if (style.getLayer(RASTER_BASE_LAYER_ID) != null) {
+                    style.addLayerAbove(routeLayer, RASTER_BASE_LAYER_ID)
+                } else {
+                    style.addLayer(routeLayer)
+                }
             }
         }
     }
@@ -1104,6 +1215,7 @@ class MapLibreEngineImpl(
             }
             locationComponent.isLocationComponentEnabled = true
             locationComponent.renderMode = RenderMode.GPS
+            applyDrivingViewportPadding(map)
 
             flushPendingLocationFix()
             beginLocationAcquisition(ctx)
@@ -1216,30 +1328,46 @@ class MapLibreEngineImpl(
         applyAndroidLocation(location, snapCamera)
     }
 
+    private fun enrichLocationWithBearing(location: Location): Location {
+        val prev = previousLocationFix
+        previousLocationFix = location
+        if (location.hasBearing() && location.bearing != 0f) return location
+        // Speed gate: no synthetic bearing when effectively stopped (< ~5 km/h)
+        if (location.hasSpeed() && location.speed < 1.4f) return location
+        // Distance gate: need >= 10 m of movement for a stable heading (above GPS jitter floor)
+        if (prev != null && prev.distanceTo(location) > 10f) {
+            val enriched = Location(location)
+            enriched.bearing = prev.bearingTo(location)
+            return enriched
+        }
+        return location
+    }
+
     private fun applyAndroidLocation(location: Location, snapCamera: Boolean) {
-        val latLng = LatLng(location.latitude, location.longitude)
+        val locationWithBearing = enrichLocationWithBearing(location)
+        val latLng = LatLng(locationWithBearing.latitude, locationWithBearing.longitude)
         lastKnownLocation = latLng
         _uiState.update {
             it.copy(
-                currentLat = location.latitude,
-                currentLng = location.longitude,
+                currentLat = locationWithBearing.latitude,
+                currentLng = locationWithBearing.longitude,
             )
         }
         val component = mapLibreMap?.locationComponent
         if (component != null && component.isLocationComponentActivated && component.isLocationComponentEnabled) {
-            component.forceLocationUpdate(location)
+            component.forceLocationUpdate(locationWithBearing)
             pendingLocationFix = null
         } else {
-            pendingLocationFix = location
+            pendingLocationFix = locationWithBearing
         }
         Log.i(
             TAG,
-            "Location fix ${location.latitude}, ${location.longitude} " +
-                "(provider=${location.provider}, snapped=$snapCamera, " +
-                "zoom=${mapLibreMap?.cameraPosition?.zoom})",
+            "Location fix ${locationWithBearing.latitude}, ${locationWithBearing.longitude} " +
+                "(provider=${locationWithBearing.provider}, bearing=${locationWithBearing.bearing}, " +
+                "snapped=$snapCamera, zoom=${mapLibreMap?.cameraPosition?.zoom})",
         )
         when {
-            _uiState.value.isNavigating -> evaluateStepAdvancement(location)
+            _uiState.value.isNavigating -> evaluateStepAdvancement(locationWithBearing)
             !hasSnappedCameraToGps -> snapCameraToGpsIfNeeded(latLng)
             else -> _uiState.update { it.copy(streetName = "Free Drive") }
         }
@@ -1291,6 +1419,93 @@ class MapLibreEngineImpl(
                 )
             }
         }
+
+        checkOffRoute(currentLocation)
+    }
+
+    private fun checkOffRoute(currentLocation: Location) {
+        if (navigationArrivalTriggered) return
+        if (routeGeometryPoints.size < 2) return
+        if (System.currentTimeMillis() < rerouteCooldownUntilMs) return
+        if (isRerouteInProgress) return
+
+        val distToRoute = distanceToRouteMeters(currentLocation, routeGeometryPoints)
+        if (distToRoute > REROUTE_THRESHOLD_M) {
+            offRouteCount++
+            Log.i(TAG, "Off route: ${distToRoute.toInt()}m from path (count=$offRouteCount)")
+        } else {
+            offRouteCount = 0
+            return
+        }
+
+        if (offRouteCount < REROUTE_CONFIRM_COUNT) return
+
+        val dest = destinationLatLng ?: return
+        offRouteCount = 0
+        isRerouteInProgress = true
+        rerouteCooldownUntilMs = System.currentTimeMillis() + REROUTE_COOLDOWN_MS
+        Log.i(TAG, "Re-routing from alternate path")
+        val origin = LatLng(currentLocation.latitude, currentLocation.longitude)
+        lastKnownLocation = origin
+        startNavigation(origin, dest.latitude, dest.longitude, isReroute = true)
+    }
+
+    private fun distanceToRouteMeters(location: Location, routePoints: List<LatLng>): Float {
+        if (routePoints.isEmpty()) return Float.MAX_VALUE
+        if (routePoints.size == 1) {
+            val results = FloatArray(1)
+            Location.distanceBetween(
+                location.latitude,
+                location.longitude,
+                routePoints[0].latitude,
+                routePoints[0].longitude,
+                results,
+            )
+            return results[0]
+        }
+
+        var minDist = Float.MAX_VALUE
+        for (i in 0 until routePoints.size - 1) {
+            val segmentDist = distanceToSegmentMeters(
+                location,
+                routePoints[i],
+                routePoints[i + 1],
+            )
+            if (segmentDist < minDist) {
+                minDist = segmentDist
+            }
+        }
+        return minDist
+    }
+
+    private fun distanceToSegmentMeters(
+        point: Location,
+        segStart: LatLng,
+        segEnd: LatLng,
+    ): Float {
+        val px = point.longitude
+        val py = point.latitude
+        val ax = segStart.longitude
+        val ay = segStart.latitude
+        val bx = segEnd.longitude
+        val by = segEnd.latitude
+
+        val dx = bx - ax
+        val dy = by - ay
+        if (dx == 0.0 && dy == 0.0) {
+            val results = FloatArray(1)
+            Location.distanceBetween(py, px, ay, ax, results)
+            return results[0]
+        }
+
+        var t = ((px - ax) * dx + (py - ay) * dy) / (dx * dx + dy * dy)
+        t = t.coerceIn(0.0, 1.0)
+        val closestLat = ay + t * dy
+        val closestLng = ax + t * dx
+
+        val results = FloatArray(1)
+        Location.distanceBetween(py, px, closestLat, closestLng, results)
+        return results[0]
     }
 
     private fun triggerArrival() {
@@ -1425,7 +1640,7 @@ class MapLibreEngineImpl(
             _uiState.update { it.copy(streetName = "Locating...") }
             ResolvedLocation(
                 latLng = location,
-                zoom = FREE_DRIVE_ZOOM,
+                zoom = freeDriveZoom,
                 fromGps = true,
             )
         } else {
@@ -1529,11 +1744,15 @@ class MapLibreEngineImpl(
         private const val DEFAULT_ZOOM = 15.0
         private const val DEFAULT_ZOOM_FALLBACK = 6.0
         private const val ROUTING_MIN_ZOOM = 10.0
-        private const val NAV_ZOOM = 17.5
-        private const val NAV_TILT = 55.0
+        private const val NAV_TILT = 58.0
         private const val NAV_CAMERA_DURATION_MS = 2500
-        private const val FREE_DRIVE_ZOOM = 16.0
-        private const val FREE_DRIVE_TILT = 45.0
+        private const val FREE_DRIVE_TILT = 50.0
+        private const val VIEWPORT_PADDING_TOP_FRACTION = 0.4f
+        private const val VIEWPORT_PADDING_LEFT_FRACTION = 0.3f
+        private const val RASTER_BASE_LAYER_ID = "osm"
+        private const val REROUTE_THRESHOLD_M = 75f
+        private const val REROUTE_CONFIRM_COUNT = 1
+        private const val REROUTE_COOLDOWN_MS = 5_000L
         private const val ROUTE_OVERVIEW_PADDING_PX = 120
         private const val ROUTE_OVERVIEW_ANIMATION_MS = 2000
         private const val ROUTE_OVERVIEW_HOLD_MS = 10_000L

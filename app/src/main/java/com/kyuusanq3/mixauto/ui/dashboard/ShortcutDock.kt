@@ -102,6 +102,7 @@ private val shortcutTargets = listOf(
 @Composable
 fun ShortcutDock(
     isHorizontal: Boolean,
+    isLargeIcons: Boolean = false,
     onOpenSettings: () -> Unit,
     onOpenMapData: () -> Unit,
     modifier: Modifier = Modifier,
@@ -109,6 +110,21 @@ fun ShortcutDock(
     val context = LocalContext.current
     val shortcuts = remember(context) {
         resolveShortcuts(context.packageManager)
+    }
+    val tapTarget = if (isLargeIcons) {
+        CarDimensions.DockHorizontalTapTarget * 2
+    } else {
+        CarDimensions.DockHorizontalTapTarget
+    }
+    val horizontalIconSize = if (isLargeIcons) {
+        CarDimensions.DockHorizontalIconSize * 2
+    } else {
+        CarDimensions.DockHorizontalIconSize
+    }
+    val verticalIconSize = if (isLargeIcons) {
+        CarDimensions.AppIconSize * 2
+    } else {
+        CarDimensions.AppIconSize
     }
 
     ElevatedCard(
@@ -129,7 +145,7 @@ fun ShortcutDock(
                 LazyRow(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(CarDimensions.DockHorizontalTapTarget)
+                        .height(tapTarget)
                         .padding(horizontal = CarDimensions.PaneGap),
                     horizontalArrangement = Arrangement.spacedBy(CarDimensions.DockItemSpacing),
                     verticalAlignment = Alignment.CenterVertically,
@@ -137,18 +153,24 @@ fun ShortcutDock(
                     items(shortcuts, key = { it.id }) { shortcut ->
                         MinimizedShortcutItem(
                             shortcut = shortcut,
+                            tapTarget = tapTarget,
+                            iconSize = horizontalIconSize,
                             onClick = { launchShortcut(context, shortcut) },
                         )
                     }
                     item(key = MAP_DATA_KEY) {
                         MapDataDockItem(
                             horizontal = true,
+                            tapTarget = tapTarget,
+                            iconSize = horizontalIconSize,
                             onClick = onOpenMapData,
                         )
                     }
                     item(key = LAUNCHER_SETTINGS_KEY) {
                         SettingsDockItem(
                             horizontal = true,
+                            tapTarget = tapTarget,
+                            iconSize = horizontalIconSize,
                             onClick = onOpenSettings,
                         )
                     }
@@ -173,18 +195,21 @@ fun ShortcutDock(
                         items(shortcuts, key = { it.id }) { shortcut ->
                             ShortcutItem(
                                 shortcut = shortcut,
+                                iconSize = verticalIconSize,
                                 onClick = { launchShortcut(context, shortcut) },
                             )
                         }
                         item(key = MAP_DATA_KEY) {
                             MapDataDockItem(
                                 horizontal = false,
+                                iconSize = verticalIconSize,
                                 onClick = onOpenMapData,
                             )
                         }
                         item(key = LAUNCHER_SETTINGS_KEY) {
                             SettingsDockItem(
                                 horizontal = false,
+                                iconSize = verticalIconSize,
                                 onClick = onOpenSettings,
                             )
                         }
@@ -198,19 +223,21 @@ fun ShortcutDock(
 @Composable
 private fun MapDataDockItem(
     horizontal: Boolean,
+    iconSize: Dp,
     onClick: () -> Unit,
+    tapTarget: Dp = CarDimensions.DockHorizontalTapTarget,
 ) {
     if (horizontal) {
         Box(
             modifier = Modifier
-                .size(CarDimensions.DockHorizontalTapTarget)
+                .size(tapTarget)
                 .clickable(onClick = onClick),
             contentAlignment = Alignment.Center,
         ) {
             Icon(
                 imageVector = Icons.Filled.Map,
                 contentDescription = "Map Data",
-                modifier = Modifier.size(CarDimensions.DockHorizontalIconSize),
+                modifier = Modifier.size(iconSize),
                 tint = MaterialTheme.colorScheme.primary,
             )
         }
@@ -235,7 +262,7 @@ private fun MapDataDockItem(
                 Icon(
                     imageVector = Icons.Filled.Map,
                     contentDescription = "Map Data",
-                    modifier = Modifier.size(CarDimensions.AppIconSize),
+                    modifier = Modifier.size(iconSize),
                     tint = MaterialTheme.colorScheme.primary,
                 )
                 CarBodyText(
@@ -252,19 +279,21 @@ private fun MapDataDockItem(
 @Composable
 private fun SettingsDockItem(
     horizontal: Boolean,
+    iconSize: Dp,
     onClick: () -> Unit,
+    tapTarget: Dp = CarDimensions.DockHorizontalTapTarget,
 ) {
     if (horizontal) {
         Box(
             modifier = Modifier
-                .size(CarDimensions.DockHorizontalTapTarget)
+                .size(tapTarget)
                 .clickable(onClick = onClick),
             contentAlignment = Alignment.Center,
         ) {
             Icon(
                 imageVector = Icons.Filled.Tune,
                 contentDescription = "Launcher",
-                modifier = Modifier.size(CarDimensions.DockHorizontalIconSize),
+                modifier = Modifier.size(iconSize),
                 tint = MaterialTheme.colorScheme.primary,
             )
         }
@@ -289,7 +318,7 @@ private fun SettingsDockItem(
                 Icon(
                     imageVector = Icons.Filled.Tune,
                     contentDescription = "Launcher",
-                    modifier = Modifier.size(CarDimensions.AppIconSize),
+                    modifier = Modifier.size(iconSize),
                     tint = MaterialTheme.colorScheme.primary,
                 )
                 CarBodyText(
@@ -306,17 +335,19 @@ private fun SettingsDockItem(
 @Composable
 private fun MinimizedShortcutItem(
     shortcut: AppShortcut,
+    tapTarget: Dp,
+    iconSize: Dp,
     onClick: () -> Unit,
 ) {
     Box(
         modifier = Modifier
-            .size(CarDimensions.DockHorizontalTapTarget)
+            .size(tapTarget)
             .clickable(enabled = shortcut.intent != null, onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
         ShortcutIcon(
             shortcut = shortcut,
-            iconSize = CarDimensions.DockHorizontalIconSize,
+            iconSize = iconSize,
         )
     }
 }
@@ -324,6 +355,7 @@ private fun MinimizedShortcutItem(
 @Composable
 private fun ShortcutItem(
     shortcut: AppShortcut,
+    iconSize: Dp,
     onClick: () -> Unit,
 ) {
     ElevatedCard(
@@ -343,7 +375,7 @@ private fun ShortcutItem(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center,
         ) {
-            ShortcutIcon(shortcut = shortcut)
+            ShortcutIcon(shortcut = shortcut, iconSize = iconSize)
 
             CarBodyText(
                 text = shortcut.label,

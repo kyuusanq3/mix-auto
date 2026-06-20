@@ -45,6 +45,7 @@ class MainActivity : ComponentActivity() {
         mapEngine = MapLibreEngineImpl(
             localPlaces = localPlacesRepository,
             initialUseVectorTiles = launcherPreferences.useVectorTiles,
+            initialDrivingZoom = launcherPreferences.drivingZoom.toDouble(),
         )
 
         MediaSessionRepository.getInstance(this)
@@ -74,6 +75,8 @@ class MainActivity : ComponentActivity() {
                     limitSearchDistance = launcherViewModel.limitSearchDistance,
                     useVectorTiles = launcherViewModel.useVectorTiles,
                     isLauncherMode = launcherViewModel.isLauncherMode,
+                    isLargeShortcutIcons = launcherViewModel.isLargeShortcutIcons,
+                    drivingZoom = launcherViewModel.drivingZoom,
                     onToggleLhd = launcherViewModel::toggleLeftHandDrive,
                     onToggleShortcutsHorizontal = launcherViewModel::toggleShortcutsHorizontal,
                     onMapMediaRatioChange = launcherViewModel::updateMapMediaRatio,
@@ -85,6 +88,11 @@ class MainActivity : ComponentActivity() {
                     onToggleLauncherMode = {
                         launcherViewModel.toggleLauncherMode()
                         applyLauncherMode(launcherViewModel.isLauncherMode)
+                    },
+                    onToggleLargeShortcutIcons = launcherViewModel::toggleLargeShortcutIcons,
+                    onDrivingZoomChange = { value ->
+                        launcherViewModel.updateDrivingZoom(value)
+                        mapEngine.setDrivingZoom(value.toDouble())
                     },
                 )
             }

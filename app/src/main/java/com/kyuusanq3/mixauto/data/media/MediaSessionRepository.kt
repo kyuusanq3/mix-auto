@@ -21,6 +21,7 @@ class MediaSessionRepository(context: Context) {
     val state: StateFlow<MediaPlaybackState> = _state.asStateFlow()
 
     private var activeController: MediaController? = null
+    private var hasAutoPlayed = false
     private val controllerCallback = object : MediaController.Callback() {
         override fun onMetadataChanged(metadata: MediaMetadata?) {
             publishControllerState(activeController)
@@ -87,6 +88,20 @@ class MediaSessionRepository(context: Context) {
         activeController = controller
         controller?.registerCallback(controllerCallback)
         publishControllerState(controller)
+        maybeAutoPlay(controller)
+    }
+
+    private fun maybeAutoPlay(controller: MediaController?) {
+        if (hasAutoPlayed || controller == null) return
+        if (controller.metadata == null) return
+        val playbackState = controller.playbackState
+        if (playbackState?.state == PlaybackState.STATE_PLAYING) {
+            hasAutoPlayed = true
+            return
+        }
+        hasAutoPlayed = true
+        Log.i(TAG, "Auto-playing paused media session on launch")
+        controller.transportControls.play()
     }
 
     private fun detachController() {

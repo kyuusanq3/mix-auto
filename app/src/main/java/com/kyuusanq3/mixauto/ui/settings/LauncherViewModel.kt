@@ -27,6 +27,12 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     var isLauncherMode by mutableStateOf(preferences.isLauncherMode)
         private set
 
+    var isLargeShortcutIcons by mutableStateOf(preferences.isLargeShortcutIcons)
+        private set
+
+    var drivingZoom by mutableStateOf(preferences.drivingZoom)
+        private set
+
     fun toggleLeftHandDrive() {
         isLeftHandDrive = !isLeftHandDrive
         preferences.isLeftHandDrive = isLeftHandDrive
@@ -55,5 +61,15 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     fun toggleLauncherMode() {
         isLauncherMode = !isLauncherMode
         preferences.isLauncherMode = isLauncherMode
+    }
+
+    fun toggleLargeShortcutIcons() {
+        isLargeShortcutIcons = !isLargeShortcutIcons
+        preferences.isLargeShortcutIcons = isLargeShortcutIcons
+    }
+
+    fun updateDrivingZoom(value: Float) {
+        drivingZoom = value
+        preferences.drivingZoom = value
     }
 }

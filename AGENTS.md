@@ -14,7 +14,7 @@ Custom Android **Car Launcher** for an **Eonon head unit**. This app replaces th
 | Compose Compiler | 1.5.14 (must match Kotlin version) |
 | Compose BOM | 2024.06.00 |
 | Orientation | Portrait + landscape (`android:screenOrientation="sensor"`) |
-| Launcher role | HOME + DEFAULT + LAUNCHER intent-filters |
+| Launcher role | LAUNCHER by default (Navigation App Mode); optional HOME via `LauncherModeAlias` |
 
 ## Build
 
@@ -34,6 +34,8 @@ cd C:\dev\proj\mix-auto
 ```
 
 APK output: `app/build/outputs/apk/debug/app-debug.apk`
+
+Release sideload copy: `mix-auto-v{version}.apk` at project root (e.g. `mix-auto-v1.0.0.apk`). No release keystore yet — debug APK only.
 
 ## Project layout
 
@@ -152,13 +154,13 @@ Bundled sample asset: `python tools/build_sample_places_db.py` (writes to `mix-a
 
 ## Manifest / launcher setup
 
-`MainActivity` is registered as a system home launcher:
+`MainActivity` is the main entry with `singleTask` and `sensor` orientation:
 
-- `android:launchMode="singleTask"`
-- `android:screenOrientation="landscape"`
-- Categories: `HOME`, `DEFAULT`, `LAUNCHER`
+- **Navigation App Mode (default):** `MainActivity` has `LAUNCHER` only — app appears in the app drawer, does not replace home screen on first install
+- **Launcher Mode (opt-in):** Settings → **Launcher Mode (replaces home screen)** enables `LauncherModeAlias` (`HOME` + `DEFAULT`, targets `MainActivity`) via `PackageManager.setComponentEnabledSetting`
+- `LauncherModeAlias` is `android:enabled="false"` in manifest; preference `LauncherPreferences.isLauncherMode` restored in `onCreate()`
 
-After install on the head unit, select **MixAuto** when prompted for the default home app.
+After enabling Launcher Mode, press Home and select **Mix Auto** as the default home app.
 
 ## Conventions for agents
 
@@ -171,10 +173,10 @@ After install on the head unit, select **MixAuto** when prompted for the default
 
 ## Planned / not yet implemented
 
-- Route re-routing when driver deviates from the drawn path
+- Route re-routing when driver deviates from the drawn path — **implemented** (75 m threshold, OSRM re-fetch)
 - Dynamic discovery of all launchable apps (currently fixed shortcut list)
 - Release signing / Play Store config
-- Vector map style for sharper 3D driving perspective (OSM raster limits tilt quality)
+- Vector map style is optional in Settings (OpenFreeMap); OSM raster remains default
 
 ## Troubleshooting
 
@@ -183,10 +185,11 @@ After install on the head unit, select **MixAuto** when prompted for the default
 | `JAVA_HOME is not set` | Point `JAVA_HOME` at Android Studio `jbr` or JDK 17+ (see Build section) |
 | `Unresolved reference: CarLabelText` | Add `import com.kyuusanq3.mixauto.ui.theme.CarLabelText` |
 | Compose compiler version mismatch | Align `kotlin` and `composeCompiler` in `libs.versions.toml` |
-| App not offered as home launcher | Verify HOME + DEFAULT categories in manifest; reinstall APK |
+| App not offered as home launcher | Enable **Launcher Mode** in Settings first; verify `LauncherModeAlias` HOME+DEFAULT in manifest; reinstall if needed |
 | Map shows green/blank (no streets) | OSM tiles loading — ensure INTERNET; demotiles style has no PH coverage (use OSM raster in engine) |
 | "Location unavailable" on emulator | Grant **Precise** location permission; Extended Controls → Location → Set Location while app is open (after `GPS location listener registered` appears in Logcat) |
-| Emulator GPS never fires despite Set Location | AVD-level failure — `adb emu geo fix` returns OK but `dumpsys location` shows `Number of location reports: 0`; cold boot AVD or test on physical device |
+| Emulator GPS never fires despite Set Location | `adb emu geo fix` is broken on ALL x86_64 AVD images (Google Play and AOSP, Android 11–13) — GNSS HAL delivers zero fixes; use `avd-gps.ps1` at repo root instead (test provider API bypasses GNSS HAL); requires AOSP image for `adb root` |
+| GPS working in Genymotion but not Android Studio AVD | See above — use `.\avd-gps.ps1` after each emulator cold boot; run `.\avd-gps.ps1 -Drive` to simulate road-snapped driving route (Gov Center → SM City Bacolod) |
 | AppOps `op=GPS: Operation not started` in Logcat | Location listener being torn down and re-registered too rapidly; `MapLibreEngineImpl` uses `listenersRegistered` flag — do not reset it on resume |
 | Navigation shows "Zoom map to your area" | GPS unavailable — pan/zoom map to location (zoom ≥ 10), then search destination; routing uses map center as origin |
 | `OSRM HTTP error: 403` in Logcat | `router.project-osrm.org` blocks third-party apps — use `routing.openstreetmap.de/routed-car` in `MapLibreEngineImpl.fetchOsrmRoute()` with `User-Agent: MixAutoCarLauncher/1.0` |
@@ -199,8 +202,8 @@ After install on the head unit, select **MixAuto** when prompted for the default
 | Camera snaps flat immediately after route draw | `showRouteThenDive()` — 2 s bounds animation (`ROUTE_OVERVIEW_ANIMATION_MS`) then 10 s hold (`ROUTE_OVERVIEW_HOLD_MS`) with timer bar before `enterNavigationCamera()`; set `CameraMode.NONE` before overview |
 | Map zoomed out on startup despite GPS fixes | Style callback must call `startFreeDrive()` after `activateLocationTracking()`; do not enable `TRACKING` before snap — fallback zoom 6 locks wide view |
 | Free drive camera twitching/jitter | Do not re-snap on every GPS fix — `hasSnappedCameraToGps` + one `moveCamera` then `TRACKING_GPS`; no duplicate `startFreeDrive()` from `retryLocationActivation()` |
-| Free drive looks flat (not Android Auto slanted) | Free drive uses `FREE_DRIVE_TILT` 45° and `CameraMode.TRACKING_GPS` with GPS bearing; nav uses tilt 55° / zoom 17.5 |
-| Nav camera frozen while GPS puck moves / dive never zooms in | `enterNavigationCamera()`: `CameraMode.NONE` → `map.animateCamera()` to zoom 17.5 / tilt 55° → `TRACKING_GPS` in callback; do NOT use `zoomWhileTracking`/`tiltWhileTracking` immediately after mode change (ignored during transition) |
+| Free drive looks flat (not Android Auto slanted) | Free drive uses `FREE_DRIVE_TILT` 50° and `CameraMode.TRACKING_GPS` with GPS bearing; nav uses tilt 58° / zoom 18.5 |
+| Nav camera frozen while GPS puck moves / dive never zooms in | `enterNavigationCamera()`: `CameraMode.NONE` → `map.animateCamera()` to zoom 18.5 / tilt 58° → `TRACKING_GPS` in callback; do NOT use `zoomWhileTracking`/`tiltWhileTracking` immediately after mode change (ignored during transition) |
 | Map doesn't rotate to direction of travel | Use `RenderMode.GPS` not `COMPASS` in `activateLocationTracking()` and camera entry |
 | UI cut off by status/nav bars on phone | `MainActivity` is edge-to-edge (`setDecorFitsSystemWindows(false)`); add `systemBarsPadding()` on `DashboardScreen` root `Box` |
 | Night theme missing fullscreen flags | Add `windowFullscreen` + `windowContentOverlay` to `res/values-night/themes.xml` |
@@ -212,6 +215,10 @@ After install on the head unit, select **MixAuto** when prompted for the default
 | Catalog loads but download 404 | Release exists but assets array empty — edit release and upload both files from `places-dist/` |
 | Manual import of `.gz` fails | Import path expects uncompressed `.db`; use in-app Download or decompress first |
 | Search shows overseas / 5000 km destinations | Default 500 km cap is ON — disable **Nearby results only (within 500 km)** in Launcher Settings to include farther Photon results; routing still may fail for long/cross-water trips |
+| Route line disappears while navigating | Raster style: route layer must use `addLayerAbove(..., "osm")` in `drawRoute()` — plain `addLayer()` puts line under tiles |
+| Nav doesn't re-route after wrong turn | Off-route reroute needs 2 GPS fixes >75 m from `routeGeometryPoints`; 5 s cooldown between reroutes; check Logcat for `Off route` / `Re-routing` |
+| Music doesn't auto-play on launch | Enable notification access; autoplay runs once in `MediaSessionRepository.attachController()` when paused session has metadata |
+| Shortcut bar too small on head unit | Settings → **Large Shortcut Icons** doubles horizontal bar height and icon sizes |
 
 ## Related agent resources
 

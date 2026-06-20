@@ -55,12 +55,16 @@ fun DashboardScreen(
     limitSearchDistance: Boolean,
     useVectorTiles: Boolean,
     isLauncherMode: Boolean,
+    isLargeShortcutIcons: Boolean,
+    drivingZoom: Float,
     onToggleLhd: () -> Unit,
     onToggleShortcutsHorizontal: () -> Unit,
     onMapMediaRatioChange: (Float) -> Unit,
     onToggleLimitSearchDistance: () -> Unit,
     onToggleVectorTiles: () -> Unit,
     onToggleLauncherMode: () -> Unit,
+    onToggleLargeShortcutIcons: () -> Unit,
+    onDrivingZoomChange: (Float) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     var settingsOpen by remember { mutableStateOf(false) }
@@ -99,6 +103,7 @@ fun DashboardScreen(
                     )
                     ShortcutDock(
                         isHorizontal = true,
+                        isLargeIcons = isLargeShortcutIcons,
                         onOpenSettings = { settingsOpen = true },
                         onOpenMapData = { mapDataOpen = true },
                         modifier = Modifier
@@ -155,6 +160,7 @@ fun DashboardScreen(
                     }
                     ShortcutDock(
                         isHorizontal = true,
+                        isLargeIcons = isLargeShortcutIcons,
                         onOpenSettings = { settingsOpen = true },
                         onOpenMapData = { mapDataOpen = true },
                         modifier = Modifier
@@ -185,6 +191,7 @@ fun DashboardScreen(
                         )
                         ShortcutDock(
                             isHorizontal = false,
+                            isLargeIcons = isLargeShortcutIcons,
                             onOpenSettings = { settingsOpen = true },
                             onOpenMapData = { mapDataOpen = true },
                             modifier = Modifier
@@ -194,6 +201,7 @@ fun DashboardScreen(
                     } else {
                         ShortcutDock(
                             isHorizontal = false,
+                            isLargeIcons = isLargeShortcutIcons,
                             onOpenSettings = { settingsOpen = true },
                             onOpenMapData = { mapDataOpen = true },
                             modifier = Modifier
@@ -236,12 +244,16 @@ fun DashboardScreen(
                 limitSearchDistance = limitSearchDistance,
                 useVectorTiles = useVectorTiles,
                 isLauncherMode = isLauncherMode,
+                isLargeShortcutIcons = isLargeShortcutIcons,
+                drivingZoom = drivingZoom,
                 onToggleLhd = onToggleLhd,
                 onToggleShortcutsHorizontal = onToggleShortcutsHorizontal,
                 onMapMediaRatioChange = onMapMediaRatioChange,
                 onToggleLimitSearchDistance = onToggleLimitSearchDistance,
                 onToggleVectorTiles = onToggleVectorTiles,
                 onToggleLauncherMode = onToggleLauncherMode,
+                onToggleLargeShortcutIcons = onToggleLargeShortcutIcons,
+                onDrivingZoomChange = onDrivingZoomChange,
                 onDismiss = { settingsOpen = false },
             )
         }
@@ -256,12 +268,16 @@ private fun SettingsOverlay(
     limitSearchDistance: Boolean,
     useVectorTiles: Boolean,
     isLauncherMode: Boolean,
+    isLargeShortcutIcons: Boolean,
+    drivingZoom: Float,
     onToggleLhd: () -> Unit,
     onToggleShortcutsHorizontal: () -> Unit,
     onMapMediaRatioChange: (Float) -> Unit,
     onToggleLimitSearchDistance: () -> Unit,
     onToggleVectorTiles: () -> Unit,
     onToggleLauncherMode: () -> Unit,
+    onToggleLargeShortcutIcons: () -> Unit,
+    onDrivingZoomChange: (Float) -> Unit,
     onDismiss: () -> Unit,
 ) {
     Dialog(
@@ -315,6 +331,16 @@ private fun SettingsOverlay(
                 )
 
                 SettingsSwitchRow(
+                    label = "Large Shortcut Icons",
+                    checked = isLargeShortcutIcons,
+                    onCheckedChange = { checked ->
+                        if (checked != isLargeShortcutIcons) {
+                            onToggleLargeShortcutIcons()
+                        }
+                    },
+                )
+
+                SettingsSwitchRow(
                     label = "Nearby results only (within 500 km)",
                     checked = limitSearchDistance,
                     onCheckedChange = { checked ->
@@ -362,6 +388,29 @@ private fun SettingsOverlay(
                     )
                     CarLabelText(
                         text = "Map ${(mapMediaRatio * 100).roundToInt()}% / Media ${((1f - mapMediaRatio) * 100).roundToInt()}%",
+                        style = MaterialTheme.typography.labelMedium,
+                    )
+                }
+
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    CarBodyText(
+                        text = "Driving Zoom",
+                        style = MaterialTheme.typography.bodyLarge,
+                    )
+                    Slider(
+                        value = drivingZoom,
+                        onValueChange = onDrivingZoomChange,
+                        valueRange = 15f..21f,
+                        steps = 12,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(CarDimensions.MinTapTarget),
+                    )
+                    CarLabelText(
+                        text = "Zoom ${"%.1f".format(drivingZoom)}",
                         style = MaterialTheme.typography.labelMedium,
                     )
                 }
