@@ -2,6 +2,7 @@ package com.kyuusanq3.mixauto
 
 import android.Manifest
 import android.content.ComponentName
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Bundle
 import androidx.activity.ComponentActivity
@@ -9,7 +10,9 @@ import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.getValue
 import androidx.core.content.ContextCompat
+import androidx.core.content.FileProvider
 import androidx.core.view.WindowCompat
+import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.kyuusanq3.mixauto.data.map.MapLibreEngineImpl
@@ -18,11 +21,13 @@ import com.kyuusanq3.mixauto.data.places.LocalPlacesRepository
 import com.kyuusanq3.mixauto.domain.map.CarMapEngine
 import com.kyuusanq3.mixauto.ui.dashboard.DashboardScreen
 import com.kyuusanq3.mixauto.ui.media.MediaPlayerViewModel
+import com.kyuusanq3.mixauto.ui.settings.AppUpdateViewModel
 import com.kyuusanq3.mixauto.ui.settings.LauncherPreferences
 import com.kyuusanq3.mixauto.ui.settings.LauncherViewModel
 import com.kyuusanq3.mixauto.ui.settings.MapDataViewModel
 import com.kyuusanq3.mixauto.ui.settings.MapDataViewModelFactory
 import com.kyuusanq3.mixauto.ui.theme.MixAutoTheme
+import java.io.File
 
 class MainActivity : ComponentActivity() {
 
@@ -94,9 +99,11 @@ class MainActivity : ComponentActivity() {
                         launcherViewModel.updateDrivingZoom(value)
                         mapEngine.setDrivingZoom(value.toDouble())
                     },
+                    onInstallApk = ::launchApkInstall,
                 )
             }
         }
+        ViewModelProvider(this)[AppUpdateViewModel::class.java].checkForUpdate()
         requestLocationPermissionIfNeeded()
     }
 
@@ -140,6 +147,21 @@ class MainActivity : ComponentActivity() {
                 PackageManager.COMPONENT_ENABLED_STATE_DISABLED
             },
             PackageManager.DONT_KILL_APP,
+        )
+    }
+
+    private fun launchApkInstall(apkFile: File) {
+        val uri = FileProvider.getUriForFile(
+            this,
+            "${packageName}.fileprovider",
+            apkFile,
+        )
+        startActivity(
+            Intent(Intent.ACTION_VIEW).apply {
+                setDataAndType(uri, "application/vnd.android.package-archive")
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            },
         )
     }
 }

@@ -13,6 +13,12 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.layout.wrapContentHeight
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
@@ -28,17 +34,23 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.viewmodel.compose.viewModel
 import com.kyuusanq3.mixauto.domain.map.CarMapEngine
 import com.kyuusanq3.mixauto.domain.media.MediaPlaybackState
 import com.kyuusanq3.mixauto.ui.components.CarMapViewContainer
 import com.kyuusanq3.mixauto.ui.components.MapDataOverlay
 import com.kyuusanq3.mixauto.ui.components.OverlayCloseButton
+import com.kyuusanq3.mixauto.ui.settings.AppUpdateState
+import com.kyuusanq3.mixauto.ui.settings.AppUpdateViewModel
 import com.kyuusanq3.mixauto.ui.settings.MapDataViewModel
 import com.kyuusanq3.mixauto.ui.theme.CarBodyText
 import com.kyuusanq3.mixauto.ui.theme.CarDimensions
 import com.kyuusanq3.mixauto.ui.theme.CarHeadlineText
 import com.kyuusanq3.mixauto.ui.theme.CarLabelText
+import com.kyuusanq3.mixauto.ui.theme.ElectricCyan
 import com.kyuusanq3.mixauto.ui.theme.OledBlack
+import java.io.File
 import kotlin.math.roundToInt
 
 @Composable
@@ -65,10 +77,13 @@ fun DashboardScreen(
     onToggleLauncherMode: () -> Unit,
     onToggleLargeShortcutIcons: () -> Unit,
     onDrivingZoomChange: (Float) -> Unit,
+    onInstallApk: (File) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     var settingsOpen by remember { mutableStateOf(false) }
     var mapDataOpen by remember { mutableStateOf(false) }
+    val appUpdateViewModel: AppUpdateViewModel = viewModel()
+    val appUpdateState by appUpdateViewModel.uiState.collectAsStateWithLifecycle()
     val configuration = LocalConfiguration.current
     val isPortrait = configuration.orientation == Configuration.ORIENTATION_PORTRAIT
     val mediaWeight = 1f - mapMediaRatio
@@ -254,6 +269,10 @@ fun DashboardScreen(
                 onToggleLauncherMode = onToggleLauncherMode,
                 onToggleLargeShortcutIcons = onToggleLargeShortcutIcons,
                 onDrivingZoomChange = onDrivingZoomChange,
+                appUpdateState = appUpdateState,
+                onCheckForUpdate = appUpdateViewModel::checkForUpdate,
+                onDownloadUpdate = appUpdateViewModel::downloadUpdate,
+                onInstallApk = onInstallApk,
                 onDismiss = { settingsOpen = false },
             )
         }
@@ -278,6 +297,10 @@ private fun SettingsOverlay(
     onToggleLauncherMode: () -> Unit,
     onToggleLargeShortcutIcons: () -> Unit,
     onDrivingZoomChange: (Float) -> Unit,
+    appUpdateState: AppUpdateState,
+    onCheckForUpdate: () -> Unit,
+    onDownloadUpdate: () -> Unit,
+    onInstallApk: (File) -> Unit,
     onDismiss: () -> Unit,
 ) {
     Dialog(
@@ -291,6 +314,7 @@ private fun SettingsOverlay(
             Column(
                 modifier = Modifier
                     .fillMaxSize()
+                    .verticalScroll(rememberScrollState())
                     .padding(CarDimensions.PaneGap * 2),
                 verticalArrangement = Arrangement.spacedBy(CarDimensions.DockItemSpacing),
             ) {
@@ -413,6 +437,127 @@ private fun SettingsOverlay(
                         text = "Zoom ${"%.1f".format(drivingZoom)}",
                         style = MaterialTheme.typography.labelMedium,
                     )
+                }
+
+                AppUpdateSection(
+                    state = appUpdateState,
+                    onCheckForUpdate = onCheckForUpdate,
+                    onDownloadUpdate = onDownloadUpdate,
+                    onInstallApk = onInstallApk,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun AppUpdateSection(
+    state: AppUpdateState,
+    onCheckForUpdate: () -> Unit,
+    onDownloadUpdate: () -> Unit,
+    onInstallApk: (File) -> Unit,
+) {
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        CarBodyText(
+            text = "App Update",
+            style = MaterialTheme.typography.bodyLarge,
+        )
+
+        when (state) {
+            AppUpdateState.Idle,
+            AppUpdateState.UpToDate,
+            -> {
+                if (state is AppUpdateState.UpToDate) {
+                    CarLabelText(
+                        text = "You are on the latest version",
+                        style = MaterialTheme.typography.labelMedium,
+                    )
+                }
+                Button(
+                    onClick = onCheckForUpdate,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(CarDimensions.MinTapTarget),
+                ) {
+                    CarBodyText(text = "Check for Updates")
+                }
+            }
+
+            AppUpdateState.Checking -> {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(CarDimensions.MinTapTarget),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(CarDimensions.PaneGap),
+                ) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(CarDimensions.MinTapTarget / 2),
+                        color = ElectricCyan,
+                    )
+                    CarBodyText(text = "Checking...")
+                }
+            }
+
+            is AppUpdateState.Available -> {
+                Button(
+                    onClick = onDownloadUpdate,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(CarDimensions.MinTapTarget),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = ElectricCyan,
+                        contentColor = OledBlack,
+                    ),
+                ) {
+                    CarBodyText(text = "v${state.versionName} available — Download")
+                }
+            }
+
+            is AppUpdateState.Downloading -> {
+                LinearProgressIndicator(
+                    progress = { state.progress },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(CarDimensions.PaneGap),
+                    color = ElectricCyan,
+                )
+                CarLabelText(
+                    text = "Downloading ${(state.progress * 100).roundToInt()}%",
+                    style = MaterialTheme.typography.labelMedium,
+                )
+            }
+
+            is AppUpdateState.ReadyToInstall -> {
+                Button(
+                    onClick = { onInstallApk(state.apkFile) },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(CarDimensions.PrimaryTapTarget),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = ElectricCyan,
+                        contentColor = OledBlack,
+                    ),
+                ) {
+                    CarBodyText(text = "Install Now")
+                }
+            }
+
+            is AppUpdateState.Error -> {
+                CarLabelText(
+                    text = state.message,
+                    style = MaterialTheme.typography.labelMedium,
+                )
+                Button(
+                    onClick = onCheckForUpdate,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(CarDimensions.MinTapTarget),
+                ) {
+                    CarBodyText(text = "Retry")
                 }
             }
         }
