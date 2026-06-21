@@ -16,6 +16,8 @@ class LocalPlacesRepository(context: Context) {
     private val placesDir: File = File(appContext.filesDir, PLACES_DIR)
     private val prefs = appContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
+    private val dbLock = Any()
+
     private var database: SQLiteDatabase? = null
     private var activeIsoCode: String? = null
     private var fts5Available: Boolean = true
@@ -33,17 +35,39 @@ class LocalPlacesRepository(context: Context) {
 
     val activeCountryIso: String? get() = activeIsoCode
 
+    val hasInstalledDatabase: Boolean
+        get() {
+            val iso = activeIsoCode ?: prefs.getString(KEY_ACTIVE_ISO, null) ?: return false
+            return databaseFile(iso).exists()
+        }
+
     fun databaseFile(isoCode: String): File = File(placesDir, "${isoCode.lowercase()}.db")
 
     fun isDatabaseInstalled(isoCode: String): Boolean = databaseFile(isoCode).exists()
 
-    fun openDatabase(isoCode: String): Boolean {
+    fun openDatabase(isoCode: String): Boolean = synchronized(dbLock) {
+        openDatabaseUnlocked(isoCode)
+    }
+
+    fun closeDatabase() = synchronized(dbLock) {
+        closeDatabaseUnlocked()
+    }
+
+    fun deleteDatabase(isoCode: String) = synchronized(dbLock) {
+        if (activeIsoCode.equals(isoCode, ignoreCase = true)) {
+            closeDatabaseUnlocked()
+            prefs.edit().remove(KEY_ACTIVE_ISO).apply()
+        }
+        deleteDatabaseFiles(isoCode)
+    }
+
+    private fun openDatabaseUnlocked(isoCode: String): Boolean {
         val file = databaseFile(isoCode)
         if (!file.exists()) {
             Log.w(TAG, "Places database missing for $isoCode")
             return false
         }
-        closeDatabase()
+        closeDatabaseUnlocked()
         return try {
             database = SQLiteDatabase.openDatabase(
                 file.absolutePath,
@@ -63,17 +87,37 @@ class LocalPlacesRepository(context: Context) {
         }
     }
 
-    fun closeDatabase() {
+    private fun closeDatabaseUnlocked() {
         database?.close()
         database = null
         activeIsoCode = null
     }
 
-    fun deleteDatabase(isoCode: String) {
-        if (activeIsoCode.equals(isoCode, ignoreCase = true)) {
-            closeDatabase()
-            prefs.edit().remove(KEY_ACTIVE_ISO).apply()
+    private fun readableDatabase(): SQLiteDatabase? = synchronized(dbLock) {
+        val open = database
+        if (open != null && open.isOpen) return open
+
+        val iso = activeIsoCode ?: prefs.getString(KEY_ACTIVE_ISO, null) ?: return null
+        if (!databaseFile(iso).exists()) return null
+        if (!openDatabaseUnlocked(iso)) return null
+        return database
+    }
+
+    private fun prepareDatabaseFileReplacement(isoCode: String) {
+        if (databaseFile(isoCode).exists()) {
+            closeDatabaseUnlocked()
+            deleteSidecarFiles(databaseFile(isoCode))
         }
+    }
+
+    private fun deleteSidecarFiles(dbFile: File) {
+        File("${dbFile.path}-wal").delete()
+        File("${dbFile.path}-shm").delete()
+        File("${dbFile.path}-journal").delete()
+    }
+
+    private fun deleteDatabaseFiles(isoCode: String) {
+        deleteSidecarFiles(databaseFile(isoCode))
         databaseFile(isoCode).delete()
         File(placesDir, "${isoCode.lowercase()}.db.tmp").delete()
     }
@@ -204,12 +248,15 @@ class LocalPlacesRepository(context: Context) {
             }
         }
 
-        if (targetFile.exists()) {
-            targetFile.delete()
-        }
-        if (!tempFile.renameTo(targetFile)) {
-            tempFile.copyTo(targetFile, overwrite = true)
-            tempFile.delete()
+        synchronized(dbLock) {
+            prepareDatabaseFileReplacement(isoCode)
+            if (targetFile.exists()) {
+                targetFile.delete()
+            }
+            if (!tempFile.renameTo(targetFile)) {
+                tempFile.copyTo(targetFile, overwrite = true)
+                tempFile.delete()
+            }
         }
         onProgress?.invoke(1f)
     }
@@ -248,34 +295,40 @@ class LocalPlacesRepository(context: Context) {
         currentLat: Double,
         currentLng: Double,
     ): List<SearchResultPlace> {
-        val db = database ?: return emptyList()
         if (query.isBlank()) return emptyList()
 
-        val minLat = currentLat - BBOX_DELTA
-        val maxLat = currentLat + BBOX_DELTA
-        val minLng = currentLng - BBOX_DELTA
-        val maxLng = currentLng + BBOX_DELTA
+        return runCatching {
+            val db = readableDatabase() ?: return emptyList()
 
-        val results = if (fts5Available) {
-            searchWithFts5(db, query, minLat, maxLat, minLng, maxLng)
-        } else {
-            searchWithLike(db, query, minLat, maxLat, minLng, maxLng)
-        }
+            val minLat = currentLat - BBOX_DELTA
+            val maxLat = currentLat + BBOX_DELTA
+            val minLng = currentLng - BBOX_DELTA
+            val maxLng = currentLng + BBOX_DELTA
 
-        return results
-            .map { row ->
-                val distanceResults = FloatArray(1)
-                Location.distanceBetween(
-                    currentLat,
-                    currentLng,
-                    row.latitude,
-                    row.longitude,
-                    distanceResults,
-                )
-                row.copy(distanceInMeters = distanceResults[0])
+            val results = if (fts5Available) {
+                searchWithFts5(db, query, minLat, maxLat, minLng, maxLng)
+            } else {
+                searchWithLike(db, query, minLat, maxLat, minLng, maxLng)
             }
-            .sortedBy { it.distanceInMeters }
-            .take(LOCAL_RESULT_LIMIT)
+
+            results
+                .map { row ->
+                    val distanceResults = FloatArray(1)
+                    Location.distanceBetween(
+                        currentLat,
+                        currentLng,
+                        row.latitude,
+                        row.longitude,
+                        distanceResults,
+                    )
+                    row.copy(distanceInMeters = distanceResults[0])
+                }
+                .sortedBy { it.distanceInMeters }
+                .take(LOCAL_RESULT_LIMIT)
+        }.getOrElse { error ->
+            Log.w(TAG, "Search failed: ${error.message}")
+            emptyList()
+        }
     }
 
     fun getPlacesInBounds(
@@ -285,7 +338,7 @@ class LocalPlacesRepository(context: Context) {
         maxLng: Double,
         limit: Int = BBOX_RESULT_LIMIT,
     ): List<SearchResultPlace> {
-        val db = database ?: return emptyList()
+        val db = readableDatabase() ?: return emptyList()
         val sql = """
             SELECT name, address, city, lat, lng, category
             FROM places

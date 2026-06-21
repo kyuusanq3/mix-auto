@@ -27,5 +27,6 @@ interface CarMapEngine {
         currentLat: Double,
         currentLng: Double,
         limitDistance: Boolean = true,
+        onLocalResults: suspend (List<SearchResultPlace>) -> Unit = {},
     ): List<SearchResultPlace>
 }

@@ -18,9 +18,6 @@ import com.kyuusanq3.mixauto.domain.map.SearchResultPlace
 import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
-import kotlinx.coroutines.async
-import kotlinx.coroutines.awaitAll
-import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -31,10 +28,14 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
+import org.maplibre.geojson.Geometry
+import org.maplibre.geojson.MultiPoint
+import org.maplibre.geojson.Point
 import org.maplibre.android.MapLibre
 import org.maplibre.android.camera.CameraPosition
 import org.maplibre.android.camera.CameraUpdateFactory
@@ -58,6 +59,9 @@ import org.maplibre.android.style.layers.Property
 import org.maplibre.android.style.layers.PropertyFactory
 import org.maplibre.android.style.layers.SymbolLayer
 import org.maplibre.android.style.sources.GeoJsonSource
+import org.maplibre.android.style.sources.VectorSource
+import kotlin.math.cos
+import kotlin.math.sin
 
 private data class LegStep(
     val maneuverLat: Double,
@@ -118,11 +122,15 @@ class MapLibreEngineImpl(
     private var routeOverviewJob: Job? = null
     private var poiRefreshJob: Job? = null
     private var lastPhotonQueryCenter: LatLng? = null
+    private val poiCache = mutableMapOf<String, SearchResultPlace>()
     private var routeGeometryPoints: List<LatLng> = emptyList()
     private var offRouteCount: Int = 0
     private var rerouteCooldownUntilMs: Long = 0L
     private var isRerouteInProgress: Boolean = false
     private var previousLocationFix: Location? = null
+    private var lastStableBearing: Float? = null
+    private var deadReckoningJob: Job? = null
+    private var lastDeadReckoningLocation: Location? = null
 
     override fun createMapView(context: Context): View {
         mapView?.let { existing ->
@@ -243,6 +251,8 @@ class MapLibreEngineImpl(
     }
 
     override fun onDestroy() {
+        deadReckoningJob?.cancel()
+        deadReckoningJob = null
         locationPollJob?.cancel()
         locationPollJob = null
         locationRetryJob?.cancel()
@@ -250,6 +260,7 @@ class MapLibreEngineImpl(
         poiRefreshJob?.cancel()
         poiRefreshJob = null
         lastPhotonQueryCenter = null
+        clearPoiCache()
         pendingLocationFix = null
         engineScope.cancel()
         removeFreshLocationListener()
@@ -271,25 +282,43 @@ class MapLibreEngineImpl(
         currentLat: Double,
         currentLng: Double,
         limitDistance: Boolean,
+        onLocalResults: suspend (List<SearchResultPlace>) -> Unit,
     ): List<SearchResultPlace> = withContext(Dispatchers.IO) {
         if (query.isBlank()) return@withContext emptyList()
-        coroutineScope {
-            val localDeferred = async {
-                localPlaces?.searchPlaces(query, currentLat, currentLng) ?: emptyList()
+
+        fun applyDistanceLimit(places: List<SearchResultPlace>): List<SearchResultPlace> =
+            if (limitDistance) {
+                places.filter { it.distanceInMeters <= MAX_SEARCH_RADIUS_M }
+            } else {
+                places
             }
-            val photonDeferred = async {
-                fetchPhoton(query, currentLat, currentLng)
-            }
-            val results = awaitAll(localDeferred, photonDeferred)
-            mergeAndDeduplicate(results[0], results[1])
-                .let { merged ->
-                    if (limitDistance) {
-                        merged.filter { it.distanceInMeters <= MAX_SEARCH_RADIUS_M }
-                    } else {
-                        merged
-                    }
-                }
+
+        val hasOfflineData = localPlaces?.hasInstalledDatabase == true
+        val local = if (hasOfflineData) {
+            localPlaces?.searchPlaces(query, currentLat, currentLng).orEmpty()
+        } else {
+            emptyList()
         }
+        val cacheResults = withContext(Dispatchers.Main) {
+            searchPoiCache(query, currentLat, currentLng)
+        }
+        val localAndCache = mergeAndDeduplicate(local, cacheResults)
+        val localAndCacheFiltered = applyDistanceLimit(localAndCache)
+        if (localAndCacheFiltered.isNotEmpty()) {
+            withContext(Dispatchers.Main) {
+                onLocalResults(localAndCacheFiltered)
+            }
+        }
+
+        val photon = fetchPhoton(query, currentLat, currentLng)
+        val finalResults = applyDistanceLimit(mergeAndDeduplicate(localAndCache, photon))
+        if (finalResults.isNotEmpty()) {
+            withContext(Dispatchers.Main) {
+                mergeIntoPoiCache(finalResults)
+                updatePoiLayerFromCache()
+            }
+        }
+        finalResults
     }
 
     private suspend fun fetchPhoton(
@@ -481,6 +510,8 @@ class MapLibreEngineImpl(
     }
 
     override fun startFreeDrive() {
+        deadReckoningJob?.cancel()
+        deadReckoningJob = null
         routeOverviewJob?.cancel()
         routeOverviewJob = null
         poiRefreshJob?.cancel()
@@ -520,6 +551,7 @@ class MapLibreEngineImpl(
         applyDrivingViewportPadding(map)
         map.getStyle { style ->
             runCatching { style.removeLayer(ROUTE_LAYER_ID) }
+            runCatching { style.removeLayer(ROUTE_CASING_LAYER_ID) }
             runCatching { style.removeSource(ROUTE_SOURCE_ID) }
 
             val target = resolveFreeDriveTarget(map)
@@ -983,6 +1015,13 @@ class MapLibreEngineImpl(
                 existing.setGeoJson(featureJson)
             } else {
                 style.addSource(GeoJsonSource(ROUTE_SOURCE_ID, featureJson))
+                val casingLayer = LineLayer(ROUTE_CASING_LAYER_ID, ROUTE_SOURCE_ID).withProperties(
+                    PropertyFactory.lineColor(ROUTE_CASING_COLOR),
+                    PropertyFactory.lineWidth(ROUTE_CASING_WIDTH),
+                    PropertyFactory.lineCap(Property.LINE_CAP_ROUND),
+                    PropertyFactory.lineJoin(Property.LINE_JOIN_ROUND),
+                    PropertyFactory.lineOpacity(1f),
+                )
                 val routeLayer = LineLayer(ROUTE_LAYER_ID, ROUTE_SOURCE_ID).withProperties(
                     PropertyFactory.lineColor(ROUTE_COLOR),
                     PropertyFactory.lineWidth(ROUTE_WIDTH),
@@ -991,8 +1030,10 @@ class MapLibreEngineImpl(
                     PropertyFactory.lineOpacity(0.9f),
                 )
                 if (style.getLayer(RASTER_BASE_LAYER_ID) != null) {
-                    style.addLayerAbove(routeLayer, RASTER_BASE_LAYER_ID)
+                    style.addLayerAbove(casingLayer, RASTER_BASE_LAYER_ID)
+                    style.addLayerAbove(routeLayer, ROUTE_CASING_LAYER_ID)
                 } else {
+                    style.addLayer(casingLayer)
                     style.addLayer(routeLayer)
                 }
             }
@@ -1015,33 +1056,55 @@ class MapLibreEngineImpl(
             poiRefreshJob?.cancel()
             poiRefreshJob = engineScope.launch {
                 delay(POI_DEBOUNCE_MS)
+                if (!isActive) return@launch
                 val bounds = map.projection.visibleRegion.latLngBounds
                 val center = map.cameraPosition.target ?: return@launch
 
+                val latSpan = bounds.northEast.latitude - bounds.southWest.latitude
+                val lngSpan = bounds.northEast.longitude - bounds.southWest.longitude
+                val padLat = latSpan * BBOX_PADDING_FACTOR / 2
+                val padLng = lngSpan * BBOX_PADDING_FACTOR / 2
+                val queryBounds = expandGeoBounds(bounds, padLat, padLng)
+
+                val tileResults = queryTilePois(map, queryBounds)
                 val localResults = withContext(Dispatchers.IO) {
                     (localPlaces?.getPlacesInBounds(
-                        minLat = bounds.southWest.latitude,
-                        maxLat = bounds.northEast.latitude,
-                        minLng = bounds.southWest.longitude,
-                        maxLng = bounds.northEast.longitude,
+                        minLat = queryBounds.minLat,
+                        maxLat = queryBounds.maxLat,
+                        minLng = queryBounds.minLng,
+                        maxLng = queryBounds.maxLng,
                         limit = MAX_POI_PINS,
                     ) ?: emptyList()).map { place ->
                         place.copy(category = normalizeOvertureCategory(place.category))
                     }
                 }
-                if (localResults.isNotEmpty()) {
-                    updatePoiLayer(localResults)
+                if (!isActive) return@launch
+
+                val dedupedFirstPass = mergePoiPins(localResults + tileResults, emptyList())
+                mergeIntoPoiCache(dedupedFirstPass)
+                evictPoiCacheOutsideBounds(bounds, padLat * 2, padLng * 2)
+                if (poiCache.isNotEmpty()) {
+                    updatePoiLayerFromCache()
+                } else {
+                    clearPoiLayer()
                 }
 
                 val photonResults = withContext(Dispatchers.IO) {
                     if (shouldQueryPhoton(center)) {
-                        fetchPhotonNearby(center)
+                        fetchPhotonNearby(center, queryBounds)
                     } else {
                         emptyList()
                     }
                 }
-                val merged = mergePoiPins(localResults, photonResults)
-                updatePoiLayer(merged)
+                if (!isActive) return@launch
+
+                if (photonResults.isNotEmpty()) {
+                    mergeIntoPoiCache(mergePoiPins(localResults, photonResults))
+                    evictPoiCacheOutsideBounds(bounds, padLat * 2, padLng * 2)
+                    updatePoiLayerFromCache()
+                } else if (poiCache.isEmpty()) {
+                    clearPoiLayer()
+                }
             }
         }
 
@@ -1087,7 +1150,10 @@ class MapLibreEngineImpl(
         }
     }
 
-    private suspend fun fetchPhotonNearby(center: LatLng): List<SearchResultPlace> {
+    private suspend fun fetchPhotonNearby(
+        center: LatLng,
+        bounds: GeoBounds,
+    ): List<SearchResultPlace> {
         val encodedQuery = URLEncoder.encode("+", "UTF-8")
         val url = URL(
             "https://photon.komoot.io/api/" +
@@ -1104,7 +1170,10 @@ class MapLibreEngineImpl(
             } else {
                 val body = connection.inputStream.bufferedReader().readText()
                 lastPhotonQueryCenter = center
-                parsePhotonResponse(body, center.latitude, center.longitude)
+                filterPlacesToBounds(
+                    places = parsePhotonResponse(body, center.latitude, center.longitude),
+                    bounds = bounds,
+                )
             }
         } catch (e: Exception) {
             Log.w(TAG, "Photon nearby fetch failed: ${e.message}")
@@ -1112,6 +1181,177 @@ class MapLibreEngineImpl(
         } finally {
             connection.disconnect()
         }
+    }
+
+    private fun searchPoiCache(
+        query: String,
+        currentLat: Double,
+        currentLng: Double,
+    ): List<SearchResultPlace> {
+        val tokens = query.trim()
+            .lowercase()
+            .split(Regex("\\s+"))
+            .filter { it.length >= 2 }
+        if (tokens.isEmpty()) return emptyList()
+
+        return poiCache.values
+            .filter { place ->
+                tokens.all { token -> place.name.lowercase().contains(token) }
+            }
+            .map { place ->
+                val distanceResults = FloatArray(1)
+                Location.distanceBetween(
+                    currentLat,
+                    currentLng,
+                    place.latitude,
+                    place.longitude,
+                    distanceResults,
+                )
+                place.copy(distanceInMeters = distanceResults[0])
+            }
+            .sortedBy { it.distanceInMeters }
+            .take(POI_CACHE_SEARCH_LIMIT)
+    }
+
+    private fun queryTilePois(map: MapLibreMap, queryBounds: GeoBounds): List<SearchResultPlace> {
+        if (!useVectorTiles) return emptyList()
+
+        val source = map.style?.getSourceAs<VectorSource>(OPENMAPTILES_SOURCE_ID) ?: return emptyList()
+        val reference = lastKnownLocation
+        return runCatching {
+            source.querySourceFeatures(arrayOf(OPENMAPTILES_POI_LAYER), null)
+                .mapNotNull { feature -> tileFeatureToPlace(feature, reference, queryBounds) }
+                .distinctBy { "${it.latitude},${it.longitude}" }
+                .take(MAX_POI_PINS)
+        }.getOrElse { error ->
+            Log.w(TAG, "Tile POI query failed: ${error.message}")
+            emptyList()
+        }
+    }
+
+    private fun tileFeatureToPlace(
+        feature: org.maplibre.geojson.Feature,
+        reference: LatLng?,
+        queryBounds: GeoBounds,
+    ): SearchResultPlace? {
+        val name = resolveTileFeatureName(feature) ?: return null
+        val (lat, lng) = extractPointCoordinates(feature.geometry()) ?: return null
+        if (lat !in queryBounds.minLat..queryBounds.maxLat ||
+            lng !in queryBounds.minLng..queryBounds.maxLng
+        ) {
+            return null
+        }
+
+        val cls = feature.getStringProperty("class").orEmpty()
+        val sub = feature.getStringProperty("subclass").orEmpty()
+        val distanceInMeters = if (reference != null) {
+            val distanceResults = FloatArray(1)
+            Location.distanceBetween(
+                reference.latitude,
+                reference.longitude,
+                lat,
+                lng,
+                distanceResults,
+            )
+            distanceResults[0]
+        } else {
+            0f
+        }
+        return SearchResultPlace(
+            name = name,
+            subTitle = cls.ifBlank { sub },
+            latitude = lat,
+            longitude = lng,
+            distanceInMeters = distanceInMeters,
+            category = maplibreClassToCategory(cls, sub),
+        )
+    }
+
+    private fun resolveTileFeatureName(feature: org.maplibre.geojson.Feature): String? {
+        return listOf("name", "name_en", "name:latin", "name:nonlatin")
+            .asSequence()
+            .mapNotNull { key -> feature.getStringProperty(key)?.takeIf { it.isNotBlank() } }
+            .firstOrNull()
+    }
+
+    private fun extractPointCoordinates(geometry: Geometry?): Pair<Double, Double>? {
+        return when (geometry) {
+            is Point -> geometry.latitude() to geometry.longitude()
+            is MultiPoint -> {
+                val first = geometry.coordinates().firstOrNull() ?: return null
+                first.latitude() to first.longitude()
+            }
+            else -> null
+        }
+    }
+
+    private fun filterPlacesToBounds(
+        places: List<SearchResultPlace>,
+        bounds: GeoBounds,
+    ): List<SearchResultPlace> {
+        return places.filter { place -> placeInBounds(place, bounds) }
+    }
+
+    private data class GeoBounds(
+        val minLat: Double,
+        val maxLat: Double,
+        val minLng: Double,
+        val maxLng: Double,
+    )
+
+    private fun expandGeoBounds(
+        bounds: LatLngBounds,
+        padLat: Double,
+        padLng: Double,
+    ): GeoBounds {
+        return GeoBounds(
+            minLat = bounds.southWest.latitude - padLat,
+            maxLat = bounds.northEast.latitude + padLat,
+            minLng = bounds.southWest.longitude - padLng,
+            maxLng = bounds.northEast.longitude + padLng,
+        )
+    }
+
+    private fun placeInBounds(place: SearchResultPlace, bounds: GeoBounds): Boolean {
+        return place.latitude in bounds.minLat..bounds.maxLat &&
+            place.longitude in bounds.minLng..bounds.maxLng
+    }
+
+    private fun poiCacheKey(place: SearchResultPlace): String =
+        "${place.latitude},${place.longitude}"
+
+    private fun mergeIntoPoiCache(places: List<SearchResultPlace>) {
+        for (place in places) {
+            val key = poiCacheKey(place)
+            val existing = poiCache[key]
+            if (existing == null) {
+                poiCache[key] = place
+            } else if (existing.category.isBlank() && place.category.isNotBlank()) {
+                poiCache[key] = existing.copy(category = place.category)
+            }
+        }
+    }
+
+    private fun evictPoiCacheOutsideBounds(
+        visibleBounds: LatLngBounds,
+        padLat: Double,
+        padLng: Double,
+    ) {
+        val evictBounds = expandGeoBounds(visibleBounds, padLat, padLng)
+        poiCache.entries.removeIf { (_, place) -> !placeInBounds(place, evictBounds) }
+    }
+
+    private fun updatePoiLayerFromCache() {
+        val pins = mergePoiPins(poiCache.values.toList(), emptyList())
+        if (pins.isNotEmpty()) {
+            updatePoiLayer(pins)
+        } else {
+            clearPoiLayer()
+        }
+    }
+
+    private fun clearPoiCache() {
+        poiCache.clear()
     }
 
     private fun shouldQueryPhoton(center: LatLng): Boolean {
@@ -1149,6 +1389,7 @@ class MapLibreEngineImpl(
     }
 
     private fun clearPoiLayer() {
+        clearPoiCache()
         val map = mapLibreMap ?: return
         map.getStyle { style ->
             val existing = style.getSource(POI_SOURCE_ID)
@@ -1331,16 +1572,55 @@ class MapLibreEngineImpl(
     private fun enrichLocationWithBearing(location: Location): Location {
         val prev = previousLocationFix
         previousLocationFix = location
-        if (location.hasBearing() && location.bearing != 0f) return location
-        // Speed gate: no synthetic bearing when effectively stopped (< ~5 km/h)
-        if (location.hasSpeed() && location.speed < 1.4f) return location
+        val isStopped = location.hasSpeed() && location.speed < STOPPED_SPEED_MPS
+        if (isStopped) {
+            val frozen = Location(location)
+            frozen.bearing = lastStableBearing ?: location.bearing
+            return frozen
+        }
+        if (location.hasBearing() && location.bearing != 0f) {
+            lastStableBearing = location.bearing
+            return location
+        }
         // Distance gate: need >= 10 m of movement for a stable heading (above GPS jitter floor)
         if (prev != null && prev.distanceTo(location) > 10f) {
             val enriched = Location(location)
             enriched.bearing = prev.bearingTo(location)
+            lastStableBearing = enriched.bearing
             return enriched
         }
         return location
+    }
+
+    private fun startDeadReckoning(from: Location) {
+        deadReckoningJob?.cancel()
+        val speed = if (from.hasSpeed()) from.speed else return
+        if (speed < STOPPED_SPEED_MPS) return
+        val bearing = from.bearing
+        lastDeadReckoningLocation = from
+        deadReckoningJob = engineScope.launch {
+            val ref = from
+            while (isActive) {
+                delay(DEAD_RECKONING_INTERVAL_MS)
+                val elapsed = (System.currentTimeMillis() - ref.time).coerceAtLeast(0)
+                val dist = speed * (elapsed / 1000.0)
+                val bearingRad = Math.toRadians(bearing.toDouble())
+                val latRad = Math.toRadians(ref.latitude)
+                val lat = ref.latitude + cos(bearingRad) * dist / METERS_PER_DEGREE_LAT
+                val lng = ref.longitude + sin(bearingRad) * dist / (METERS_PER_DEGREE_LAT * cos(latRad))
+                val extrapolated = Location(ref).apply {
+                    latitude = lat
+                    longitude = lng
+                    time = System.currentTimeMillis()
+                    this.bearing = bearing
+                }
+                lastDeadReckoningLocation = extrapolated
+                val component = mapLibreMap?.locationComponent ?: break
+                if (component.isLocationComponentActivated && component.isLocationComponentEnabled) {
+                    component.forceLocationUpdate(extrapolated)
+                }
+            }
+        }
     }
 
     private fun applyAndroidLocation(location: Location, snapCamera: Boolean) {
@@ -1360,6 +1640,7 @@ class MapLibreEngineImpl(
         } else {
             pendingLocationFix = locationWithBearing
         }
+        startDeadReckoning(locationWithBearing)
         Log.i(
             TAG,
             "Location fix ${locationWithBearing.latitude}, ${locationWithBearing.longitude} " +
@@ -1703,6 +1984,22 @@ class MapLibreEngineImpl(
         }
     }
 
+    private fun maplibreClassToCategory(cls: String, sub: String): String {
+        val values = listOf(cls, sub).map { it.lowercase().trim() }.filter { it.isNotEmpty() }
+        for (value in values) {
+            when (value) {
+                "food", "restaurant", "fast_food", "cafe", "bar", "pub", "food_court" -> return "food"
+                "fuel" -> return "fuel"
+                "hospital", "pharmacy", "clinic", "doctor", "doctors" -> return "health"
+                "hotel", "hostel", "motel", "guest_house" -> return "accommodation"
+                "bank", "atm" -> return "finance"
+                "shop", "mall", "department_store", "supermarket" -> return "shopping"
+                "attraction", "museum", "park", "stadium", "viewpoint" -> return "recreation"
+            }
+        }
+        return ""
+    }
+
     private fun photonToCategory(osmKey: String, osmValue: String): String {
         val key = osmKey.lowercase().trim()
         val value = osmValue.lowercase().trim()
@@ -1763,7 +2060,10 @@ class MapLibreEngineImpl(
         private const val LOCATION_ACQUIRE_TIMEOUT_MS = 8000L
         private val LOCATION_RETRY_DELAYS_MS = longArrayOf(1_000L, 3_000L, 8_000L)
         private const val ROUTE_SOURCE_ID = "mix-route-source"
+        private const val ROUTE_CASING_LAYER_ID = "mix-route-casing-layer"
         private const val ROUTE_LAYER_ID = "mix-route-layer"
+        private const val OPENMAPTILES_SOURCE_ID = "openmaptiles"
+        private const val OPENMAPTILES_POI_LAYER = "poi"
         private const val POI_SOURCE_ID = "mix-poi-source"
         private const val POI_LAYER_ID = "mix-poi-layer"
         private val POI_CATEGORY_GROUPS = setOf(
@@ -1777,11 +2077,18 @@ class MapLibreEngineImpl(
         )
         private const val MIN_POI_ZOOM = 13.0
         private const val MAX_POI_PINS = 100
-        private const val POI_DEBOUNCE_MS = 1500L
+        private const val POI_CACHE_SEARCH_LIMIT = 15
+        private const val POI_DEBOUNCE_MS = 400L
+        private const val BBOX_PADDING_FACTOR = 1.5
         private const val PHOTON_MOVE_THRESHOLD_M = 300f
         private const val EMPTY_POI_GEOJSON = """{"type":"FeatureCollection","features":[]}"""
+        private const val ROUTE_CASING_COLOR = "#CC000000"
+        private const val ROUTE_CASING_WIDTH = 18f
         private const val ROUTE_COLOR = "#00CBD6"
-        private const val ROUTE_WIDTH = 6f
+        private const val ROUTE_WIDTH = 14f
+        private const val STOPPED_SPEED_MPS = 1.4f
+        private const val DEAD_RECKONING_INTERVAL_MS = 16L
+        private const val METERS_PER_DEGREE_LAT = 111_320.0
         private const val STEP_ADVANCE_THRESHOLD_M = 25f
         private const val ARRIVAL_THRESHOLD_M = 15f
         private const val DEDUP_THRESHOLD_M = 50f

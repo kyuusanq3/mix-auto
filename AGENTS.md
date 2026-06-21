@@ -216,6 +216,9 @@ After enabling Launcher Mode, press Home and select **Mix Auto** as the default 
 | Manual import of `.gz` fails | Import path expects uncompressed `.db`; use in-app Download or decompress first |
 | Search shows overseas / 5000 km destinations | Default 500 km cap is ON — disable **Nearby results only (within 500 km)** in Launcher Settings to include farther Photon results; routing still may fail for long/cross-water trips |
 | Route line disappears while navigating | Raster style: route layer must use `addLayerAbove(..., "osm")` in `drawRoute()` — plain `addLayer()` puts line under tiles |
+| Route line too thin | `ROUTE_WIDTH` is 14f with `ROUTE_CASING_LAYER_ID` (18f dark casing) below cyan line in `drawRoute()` |
+| Puck pauses/jumps between GPS fixes | `startDeadReckoning()` extrapolates puck at 16 ms using last speed + bearing; ensure `hasSpeed()` is present on fixes |
+| Puck spins when stopped in traffic | `enrichLocationWithBearing()` freezes bearing via `lastStableBearing` when speed < `STOPPED_SPEED_MPS` (1.4 m/s) |
 | Nav doesn't re-route after wrong turn | Off-route reroute needs 2 GPS fixes >75 m from `routeGeometryPoints`; 5 s cooldown between reroutes; check Logcat for `Off route` / `Re-routing` |
 | Music doesn't auto-play on launch | Enable notification access; autoplay runs once in `MediaSessionRepository.attachController()` when paused session has metadata |
 | Shortcut bar too small on head unit | Settings → **Large Shortcut Icons** doubles horizontal bar height and icon sizes |

@@ -61,6 +61,7 @@ fun NavigationSearchOverlay(
     var query by remember { mutableStateOf("") }
     var results by remember { mutableStateOf<List<SearchResultPlace>>(emptyList()) }
     var isLoading by remember { mutableStateOf(false) }
+    var isLoadingRemote by remember { mutableStateOf(false) }
     var hasSearched by remember { mutableStateOf(false) }
 
     LaunchedEffect(query, uiState.currentLat, uiState.currentLng, limitSearchDistance) {
@@ -68,18 +69,29 @@ fun NavigationSearchOverlay(
             results = emptyList()
             hasSearched = false
             isLoading = false
+            isLoadingRemote = false
             return@LaunchedEffect
         }
         delay(300)
+        results = emptyList()
         isLoading = true
+        isLoadingRemote = true
         hasSearched = true
-        results = engine.searchDestination(
-            query = query,
-            currentLat = uiState.currentLat ?: 0.0,
-            currentLng = uiState.currentLng ?: 0.0,
-            limitDistance = limitSearchDistance,
-        )
-        isLoading = false
+        try {
+            results = engine.searchDestination(
+                query = query,
+                currentLat = uiState.currentLat ?: 0.0,
+                currentLng = uiState.currentLng ?: 0.0,
+                limitDistance = limitSearchDistance,
+                onLocalResults = { local ->
+                    results = local
+                    isLoading = false
+                },
+            )
+        } finally {
+            isLoading = false
+            isLoadingRemote = false
+        }
     }
 
     Dialog(
@@ -142,7 +154,7 @@ fun NavigationSearchOverlay(
                     ),
                 )
 
-                if (isLoading) {
+                if (isLoading || isLoadingRemote) {
                     LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
                 }
 
@@ -153,7 +165,7 @@ fun NavigationSearchOverlay(
                             style = MaterialTheme.typography.bodyLarge,
                         )
                     }
-                    hasSearched && !isLoading && results.isEmpty() -> {
+                    hasSearched && !isLoading && !isLoadingRemote && results.isEmpty() -> {
                         CarBodyText(
                             text = "No results found",
                             style = MaterialTheme.typography.bodyLarge,
