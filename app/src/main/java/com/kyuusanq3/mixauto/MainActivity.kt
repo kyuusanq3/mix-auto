@@ -52,6 +52,10 @@ class MainActivity : ComponentActivity() {
             initialUseVectorTiles = launcherPreferences.useVectorTiles,
             initialDrivingZoom = launcherPreferences.drivingZoom.toDouble(),
         )
+        mapEngine.setTrafficEnabled(
+            launcherPreferences.showTraffic,
+            launcherPreferences.tomTomApiKey,
+        )
 
         MediaSessionRepository.getInstance(this)
         WindowCompat.setDecorFitsSystemWindows(window, false)
@@ -79,6 +83,8 @@ class MainActivity : ComponentActivity() {
                     mapMediaRatio = launcherViewModel.mapMediaRatio,
                     limitSearchDistance = launcherViewModel.limitSearchDistance,
                     useVectorTiles = launcherViewModel.useVectorTiles,
+                    showTraffic = launcherViewModel.showTraffic,
+                    tomTomApiKey = launcherViewModel.tomTomApiKey,
                     isLauncherMode = launcherViewModel.isLauncherMode,
                     isLargeShortcutIcons = launcherViewModel.isLargeShortcutIcons,
                     drivingZoom = launcherViewModel.drivingZoom,
@@ -89,6 +95,20 @@ class MainActivity : ComponentActivity() {
                     onToggleVectorTiles = {
                         launcherViewModel.toggleVectorTiles()
                         mapEngine.setMapStyle(launcherViewModel.useVectorTiles)
+                    },
+                    onToggleTraffic = {
+                        launcherViewModel.toggleTraffic()
+                        mapEngine.setTrafficEnabled(
+                            launcherViewModel.showTraffic,
+                            launcherViewModel.tomTomApiKey,
+                        )
+                    },
+                    onTomTomApiKeyChange = { key ->
+                        launcherViewModel.updateTomTomApiKey(key)
+                        mapEngine.setTrafficEnabled(
+                            launcherViewModel.showTraffic,
+                            launcherViewModel.tomTomApiKey,
+                        )
                     },
                     onToggleLauncherMode = {
                         launcherViewModel.toggleLauncherMode()

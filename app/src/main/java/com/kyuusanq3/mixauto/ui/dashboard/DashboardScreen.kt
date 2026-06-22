@@ -20,9 +20,11 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
+import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -66,6 +68,8 @@ fun DashboardScreen(
     mapMediaRatio: Float,
     limitSearchDistance: Boolean,
     useVectorTiles: Boolean,
+    showTraffic: Boolean,
+    tomTomApiKey: String,
     isLauncherMode: Boolean,
     isLargeShortcutIcons: Boolean,
     drivingZoom: Float,
@@ -74,6 +78,8 @@ fun DashboardScreen(
     onMapMediaRatioChange: (Float) -> Unit,
     onToggleLimitSearchDistance: () -> Unit,
     onToggleVectorTiles: () -> Unit,
+    onToggleTraffic: () -> Unit,
+    onTomTomApiKeyChange: (String) -> Unit,
     onToggleLauncherMode: () -> Unit,
     onToggleLargeShortcutIcons: () -> Unit,
     onDrivingZoomChange: (Float) -> Unit,
@@ -258,6 +264,8 @@ fun DashboardScreen(
                 mapMediaRatio = mapMediaRatio,
                 limitSearchDistance = limitSearchDistance,
                 useVectorTiles = useVectorTiles,
+                showTraffic = showTraffic,
+                tomTomApiKey = tomTomApiKey,
                 isLauncherMode = isLauncherMode,
                 isLargeShortcutIcons = isLargeShortcutIcons,
                 drivingZoom = drivingZoom,
@@ -266,6 +274,8 @@ fun DashboardScreen(
                 onMapMediaRatioChange = onMapMediaRatioChange,
                 onToggleLimitSearchDistance = onToggleLimitSearchDistance,
                 onToggleVectorTiles = onToggleVectorTiles,
+                onToggleTraffic = onToggleTraffic,
+                onTomTomApiKeyChange = onTomTomApiKeyChange,
                 onToggleLauncherMode = onToggleLauncherMode,
                 onToggleLargeShortcutIcons = onToggleLargeShortcutIcons,
                 onDrivingZoomChange = onDrivingZoomChange,
@@ -286,6 +296,8 @@ private fun SettingsOverlay(
     mapMediaRatio: Float,
     limitSearchDistance: Boolean,
     useVectorTiles: Boolean,
+    showTraffic: Boolean,
+    tomTomApiKey: String,
     isLauncherMode: Boolean,
     isLargeShortcutIcons: Boolean,
     drivingZoom: Float,
@@ -294,6 +306,8 @@ private fun SettingsOverlay(
     onMapMediaRatioChange: (Float) -> Unit,
     onToggleLimitSearchDistance: () -> Unit,
     onToggleVectorTiles: () -> Unit,
+    onToggleTraffic: () -> Unit,
+    onTomTomApiKeyChange: (String) -> Unit,
     onToggleLauncherMode: () -> Unit,
     onToggleLargeShortcutIcons: () -> Unit,
     onDrivingZoomChange: (Float) -> Unit,
@@ -383,6 +397,50 @@ private fun SettingsOverlay(
                         }
                     },
                 )
+
+                SettingsSwitchRow(
+                    label = "Traffic Overlay",
+                    checked = showTraffic,
+                    onCheckedChange = { checked ->
+                        if (checked != showTraffic) {
+                            onToggleTraffic()
+                        }
+                    },
+                )
+
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    CarBodyText(
+                        text = "TomTom API Key (traffic)",
+                        style = MaterialTheme.typography.bodyLarge,
+                    )
+                    OutlinedTextField(
+                        value = tomTomApiKey,
+                        onValueChange = onTomTomApiKeyChange,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(CarDimensions.PrimaryTapTarget + CarDimensions.PaneGap),
+                        placeholder = {
+                            CarBodyText(
+                                text = "Paste key from developer.tomtom.com",
+                                style = MaterialTheme.typography.bodyLarge,
+                            )
+                        },
+                        singleLine = true,
+                        colors = TextFieldDefaults.colors(
+                            focusedContainerColor = OledBlack,
+                            unfocusedContainerColor = OledBlack,
+                            focusedTextColor = ElectricCyan,
+                            unfocusedTextColor = ElectricCyan,
+                        ),
+                    )
+                    CarLabelText(
+                        text = "Free tier covers Philippines. Required for traffic overlay.",
+                        style = MaterialTheme.typography.labelMedium,
+                    )
+                }
 
                 SettingsSwitchRow(
                     label = "Launcher Mode (replaces home screen)",

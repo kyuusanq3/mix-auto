@@ -57,8 +57,11 @@ import org.maplibre.android.style.expressions.Expression
 import org.maplibre.android.style.layers.LineLayer
 import org.maplibre.android.style.layers.Property
 import org.maplibre.android.style.layers.PropertyFactory
+import org.maplibre.android.style.layers.RasterLayer
 import org.maplibre.android.style.layers.SymbolLayer
 import org.maplibre.android.style.sources.GeoJsonSource
+import org.maplibre.android.style.sources.RasterSource
+import org.maplibre.android.style.sources.TileSet
 import org.maplibre.android.style.sources.VectorSource
 import kotlin.math.cos
 import kotlin.math.sin
@@ -98,6 +101,8 @@ class MapLibreEngineImpl(
     private val engineScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
 
     private var useVectorTiles = initialUseVectorTiles
+    private var trafficEnabled = false
+    private var tomTomApiKey = ""
     private var freeDriveZoom = initialDrivingZoom
     private var navZoom = initialDrivingZoom + 1.0
 
@@ -197,6 +202,12 @@ class MapLibreEngineImpl(
         applyMapStyle(map, ctx)
     }
 
+    override fun setTrafficEnabled(enabled: Boolean, apiKey: String) {
+        trafficEnabled = enabled
+        tomTomApiKey = apiKey.trim()
+        applyTrafficOverlay()
+    }
+
     override fun setDrivingZoom(zoom: Double) {
         freeDriveZoom = zoom
         navZoom = zoom + 1.0
@@ -226,6 +237,36 @@ class MapLibreEngineImpl(
             }
             hasSnappedCameraToGps = false
             startFreeDrive()
+            applyTrafficOverlay()
+        }
+    }
+
+    private fun applyTrafficOverlay() {
+        val map = mapLibreMap ?: return
+        val style = map.style ?: return
+
+        if (style.getLayer(TRAFFIC_LAYER_ID) != null) {
+            style.removeLayer(TRAFFIC_LAYER_ID)
+        }
+        if (style.getSource(TRAFFIC_SOURCE_ID) != null) {
+            style.removeSource(TRAFFIC_SOURCE_ID)
+        }
+
+        if (!trafficEnabled || tomTomApiKey.isBlank()) return
+
+        val tileUrl =
+            "https://api.tomtom.com/maps/orbis/traffic/flow/raster/tile/{z}/{x}/{y}" +
+                "?apiVersion=2&key=$tomTomApiKey&style=relative-delay&tileSize=256"
+        val tileSet = TileSet("2.1.0", tileUrl)
+        style.addSource(RasterSource(TRAFFIC_SOURCE_ID, tileSet, 256))
+
+        val trafficLayer = RasterLayer(TRAFFIC_LAYER_ID, TRAFFIC_SOURCE_ID).withProperties(
+            PropertyFactory.rasterOpacity(0.7f),
+        )
+        if (style.getLayer(RASTER_BASE_LAYER_ID) != null) {
+            style.addLayerAbove(trafficLayer, RASTER_BASE_LAYER_ID)
+        } else {
+            style.addLayer(trafficLayer)
         }
     }
 
@@ -2047,6 +2088,8 @@ class MapLibreEngineImpl(
         private const val VIEWPORT_PADDING_TOP_FRACTION = 0.4f
         private const val VIEWPORT_PADDING_LEFT_FRACTION = 0.3f
         private const val RASTER_BASE_LAYER_ID = "osm"
+        private const val TRAFFIC_SOURCE_ID = "mix-traffic-source"
+        private const val TRAFFIC_LAYER_ID = "mix-traffic-layer"
         private const val REROUTE_THRESHOLD_M = 75f
         private const val REROUTE_CONFIRM_COUNT = 1
         private const val REROUTE_COOLDOWN_MS = 5_000L

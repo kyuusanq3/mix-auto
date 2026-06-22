@@ -53,6 +53,18 @@ class LauncherPreferences(context: Context) {
             prefs.edit().putFloat(KEY_DRIVING_ZOOM, value).apply()
         }
 
+    var showTraffic: Boolean
+        get() = prefs.getBoolean(KEY_SHOW_TRAFFIC, false)
+        set(value) {
+            prefs.edit().putBoolean(KEY_SHOW_TRAFFIC, value).apply()
+        }
+
+    var tomTomApiKey: String
+        get() = prefs.getString(KEY_TOMTOM_API_KEY, "") ?: ""
+        set(value) {
+            prefs.edit().putString(KEY_TOMTOM_API_KEY, value).apply()
+        }
+
     companion object {
         private const val PREFS_NAME = "launcher_prefs"
         private const val KEY_LEFT_HAND_DRIVE = "lhd"
@@ -63,6 +75,8 @@ class LauncherPreferences(context: Context) {
         private const val KEY_LAUNCHER_MODE = "launcher_mode"
         private const val KEY_LARGE_SHORTCUT_ICONS = "large_shortcut_icons"
         private const val KEY_DRIVING_ZOOM = "driving_zoom"
+        private const val KEY_SHOW_TRAFFIC = "show_traffic"
+        private const val KEY_TOMTOM_API_KEY = "tomtom_api_key"
         const val DEFAULT_MAP_MEDIA_RATIO = 0.6f
         const val DEFAULT_DRIVING_ZOOM = 17.5f
     }

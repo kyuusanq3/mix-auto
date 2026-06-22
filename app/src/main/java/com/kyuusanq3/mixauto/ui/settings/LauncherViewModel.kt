@@ -33,6 +33,12 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     var drivingZoom by mutableStateOf(preferences.drivingZoom)
         private set
 
+    var showTraffic by mutableStateOf(preferences.showTraffic)
+        private set
+
+    var tomTomApiKey by mutableStateOf(preferences.tomTomApiKey)
+        private set
+
     fun toggleLeftHandDrive() {
         isLeftHandDrive = !isLeftHandDrive
         preferences.isLeftHandDrive = isLeftHandDrive
@@ -71,5 +77,15 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     fun updateDrivingZoom(value: Float) {
         drivingZoom = value
         preferences.drivingZoom = value
+    }
+
+    fun toggleTraffic() {
+        showTraffic = !showTraffic
+        preferences.showTraffic = showTraffic
+    }
+
+    fun updateTomTomApiKey(key: String) {
+        tomTomApiKey = key
+        preferences.tomTomApiKey = key
     }
 }
