@@ -11,10 +11,19 @@ android {
         applicationId = "com.kyuusanq3.mixauto"
         minSdk = 24
         targetSdk = 34
-        versionCode = 3
-        versionName = "0.0.3"
+        versionCode = 4
+        versionName = "0.0.4"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+    }
+
+    signingConfigs {
+        create("release") {
+            storeFile = file("mixauto-release.jks")
+            storePassword = "mixauto123"
+            keyAlias = "mixauto"
+            keyPassword = "mixauto123"
+        }
     }
 
     buildTypes {
@@ -24,6 +33,7 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
+            signingConfig = signingConfigs.getByName("release")
         }
     }
     compileOptions {
