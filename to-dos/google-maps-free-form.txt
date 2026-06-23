@@ -1,0 +1,112 @@
+I want to add a "Google Maps Mode" to MixAuto (Android car launcher at 
+c:\dev\proj\mix-auto). This is a NEW optional mode alongside the existing 
+MapLibre map — not a replacement. Here is the full context and what to build:
+---
+## Background
+The Eonon head unit this app runs on has Android freeform window mode enabled 
+(confirmed working). The goal is to launch Google Maps as a freeform window 
+pinned to exactly the map pane area of DashboardScreen, so it appears seamlessly 
+embedded — similar to how LecaAuto does it. The launcher (MixAuto) stays in the 
+foreground drawing its media pane, shortcut dock, and HUD; Google Maps sits in 
+the map pane bounds as a separate Android window.
+---
+## How freeform launching works
+Use ActivityOptions.setLaunchBounds(Rect) — a public API that works when the 
+device has freeform mode enabled. No system app permission required.
+val options = ActivityOptions.makeBasic()
+options.launchBounds = Rect(left, top, right, bottom)  // pixel coords on screen
+context.startActivity(intent, options.toBundle())
+The Rect must be the actual screen-pixel coordinates of the map pane, not dp.
+---
+## What to build
+### 1. A "Google Maps Mode" toggle in LauncherPreferences
+Key: "google_maps_mode", default false.
+Add to LauncherViewModel as googleMapsMode + toggleGoogleMapsMode().
+### 2. A new shortcut item in ShortcutDock
+Add a "G.Maps" shortcut entry (id = "google_maps_mode") to the dock. 
+- When tapped: if Google Maps is NOT installed → show Toast "Google Maps not installed"
+- If installed and mode is OFF → enable google_maps_mode, launch Google Maps 
+  into the map pane freeform bounds, hide the MapLibre map pane
+- If mode is ON → disable google_maps_mode, dismiss/background Google Maps, 
+  show MapLibre map pane again
+Use Icons.Filled.Map as fallback icon. 
+Google Maps package: com.google.android.apps.maps
+### 3. FreeformMapManager — new file at:
+app/src/main/java/com/kyuusanq3/mixauto/data/map/FreeformMapManager.kt
+Responsibilities:
+- launchGoogleMaps(context, boundsRect, destinationUri?) 
+  Builds Intent for com.google.android.apps.maps.
+  If destinationUri is non-null, use it (e.g. "google.navigation:q=lat,lng&mode=d").
+  Otherwise use ACTION_MAIN for the Maps app.
+  Applies ActivityOptions.setLaunchBounds(boundsRect).
+  Adds FLAG_ACTIVITY_NEW_TASK | FLAG_ACTIVITY_MULTIPLE_TASK.
+- dismissGoogleMaps(context): brings MixAuto back to foreground, moves Maps task 
+  to back via ActivityManager.getRunningTasks + moveTaskToBack equivalent 
+  (use context.startActivity with launcher intent to re-focus our app).
+- isGoogleMapsInstalled(packageManager): Boolean — checks com.google.android.apps.maps
+- isFreeformSupported(packageManager): Boolean — checks 
+  PackageManager.FEATURE_FREEFORM_WINDOW_MANAGEMENT (API 26+) or returns true 
+  as fallback (since we know the unit supports it)
+### 4. Map pane coordinate capture in DashboardScreen / CarMapViewContainer
+The map pane Box needs to report its screen bounds when Google Maps mode is active.
+Use Modifier.onGloballyPositioned { coords ->
+    val rect = coords.boundsInWindow()  // returns Rect in window pixels
+    onMapBoundsChanged(Rect(rect.left.toInt(), rect.top.toInt(), 
+                            rect.right.toInt(), rect.bottom.toInt()))
+}
+Pass onMapBoundsChanged: (Rect) -> Unit up to DashboardScreen → MainActivity.
+MainActivity stores the latest bounds and passes them to FreeformMapManager on launch.
+### 5. DashboardScreen map pane behavior in Google Maps Mode
+When googleMapsMode == true:
+- Replace CarMapViewContainer with a plain Box(Modifier.fillMaxSize().background(OledBlack))
+  (black placeholder — Google Maps window sits on top of this exact area)
+- Pause/stop the MapLibre engine (call mapEngine.onPause() equivalent if available)
+When googleMapsMode == false: show CarMapViewContainer as normal.
+### 6. Pass destination from NavigationSearchOverlay
+When a search result is selected and googleMapsMode is ON, instead of calling 
+mapEngine.navigateToCoordinates(), build a navigation URI and call 
+FreeformMapManager.launchGoogleMaps(context, bounds, destinationUri).
+URI format: "google.navigation:q=${place.lat},${place.lng}&mode=d"
+### 7. Manifest — no changes needed
+setLaunchBounds does not require any manifest declaration.
+---
+## Constraints / Rules (from project workspace rules)
+- Do NOT add play-services-location or any com.google.android.gms dependency.
+  The freeform launch uses only standard Android APIs.
+- Keep MapLibre as the default. Google Maps mode is opt-in via the dock shortcut.
+- Use MixAutoTheme colors: OledBlack for the placeholder, ElectricCyan for 
+  any mode-indicator UI.
+- The shortcut dock item for Google Maps mode should visually indicate when 
+  the mode is active (e.g. ElectricCyan tint on the icon when ON, 
+  default primary color when OFF).
+- Do not add a Google Maps shortcut to shortcutTargets (the static list) — 
+  the Google Maps mode shortcut is a special dock item like the existing 
+  SettingsDockItem and MapDataDockItem, rendered separately in ShortcutDock.kt.
+- Follow existing ShortcutDock patterns: add a GoogleMapsDockItem composable 
+  similar to SettingsDockItem/MapDataDockItem.
+- Use CarLabelText / CarBodyText for any text. Min tap target 48dp horizontal dock.
+- No commits — user will commit manually.
+---
+## Files that will need changes
+- app/src/main/java/com/kyuusanq3/mixauto/ui/settings/LauncherPreferences.kt
+- app/src/main/java/com/kyuusanq3/mixauto/ui/settings/LauncherViewModel.kt
+- app/src/main/java/com/kyuusanq3/mixauto/ui/dashboard/ShortcutDock.kt
+- app/src/main/java/com/kyuusanq3/mixauto/ui/dashboard/DashboardScreen.kt
+- app/src/main/java/com/kyuusanq3/mixauto/ui/components/CarMapViewContainer.kt (bounds callback)
+- app/src/main/java/com/kyuusanq3/mixauto/MainActivity.kt (store bounds, wire toggle)
+- NEW: app/src/main/java/com/kyuusanq3/mixauto/data/map/FreeformMapManager.kt
+---
+## Acceptance criteria
+1. Tapping the "G.Maps" dock item for the first time launches Google Maps into 
+   the exact map pane area; the media pane and shortcut dock remain visible.
+2. Tapping again returns to MapLibre mode.
+3. Searching a destination while in Google Maps mode opens Maps with navigation 
+   pre-filled to that destination.
+4. If Google Maps is not installed, the dock item shows it grayed out (intent = null).
+5. If freeform mode is not supported (isFreeformSupported returns false), tapping 
+   the item falls back to launching Google Maps full-screen with a Toast 
+   "Freeform mode not supported on this device".
+6. Rotating the screen or changing mapMediaRatio while in Google Maps mode: 
+   the placeholder updates correctly; Google Maps window will need to be 
+   relaunched with new bounds (trigger relaunch on onMapBoundsChanged if 
+   googleMapsMode is ON and bounds differ from last launch bounds by > 10px).

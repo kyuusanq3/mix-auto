@@ -5,7 +5,7 @@ alwaysApply: true
 
 # MixAuto Android Car Launcher
 
-Custom HOME launcher for Eonon head units. Jetpack Compose + Material 3, landscape-only, automotive-grade dark UI.
+Custom HOME launcher for Eonon head units. Jetpack Compose + Material 3, sensor orientation (portrait + landscape), automotive-grade dark UI.
 
 ## Stack
 
@@ -24,7 +24,7 @@ Custom HOME launcher for Eonon head units. Jetpack Compose + Material 3, landsca
 
 ## Layout structure
 
-- `DashboardScreen.kt`: horizontal or vertical shortcut dock; map via `CarMapViewContainer` | media + shortcuts
+- `DashboardScreen.kt`: portrait Column (map → media → horizontal dock) or landscape Row/Column; map via `CarMapViewContainer` | media + shortcuts; `mapMediaRatio` slider in settings (default 0.6)
 - Map: `CarMapEngine` interface in `domain/map/`; swap `MapLibreEngineImpl()` in `MainActivity` only
 - `CarMapViewContainer.kt`: `AndroidView` + lifecycle forwarding + HUD + search overlay trigger
 - `ShortcutDock.kt`: PackageManager resolution, `LazyColumn`, `Drawable.toImageBitmap()`
@@ -55,7 +55,7 @@ MainActivity (mapEngine = MapLibreEngineImpl())
 ## Manifest
 
 - HOME + DEFAULT + LAUNCHER intent-filters on `MainActivity`
-- `launchMode="singleTask"`, `screenOrientation="landscape"`
+- `launchMode="singleTask"`, `screenOrientation="sensor"`
 
 ## Build (Windows CLI)
 
@@ -85,6 +85,86 @@ Set `JAVA_HOME` to Android Studio `jbr` before `.\gradlew.bat assembleDebug`.
 - `router.project-osrm.org` returns 403 for third-party apps — use `routing.openstreetmap.de/routed-car` in `fetchOsrmRoute()`; set `User-Agent: MixAutoCarLauncher/1.0` on OSRM requests (same as Nominatim)
 - Turn-by-turn navigation: `fullRouteSteps` / `currentStepIndex` in `MapLibreEngineImpl`; `evaluateStepAdvancement()` runs on GPS fixes when `isNavigating` — do not overwrite `streetName` with "Current location" during navigation
 - Step advance threshold 25 m; arrival at 15 m from destination or when step index exhausts; `navigationArrivalTriggered` prevents duplicate arrival coroutines
-- `startFreeDrive()` removes `mix-route-layer` and `mix-route-source`; resets camera to `FREE_DRIVE_TILT` (0°) / `FREE_DRIVE_ZOOM` (14.5) with `CameraMode.TRACKING`
+- `startFreeDrive()` removes route layer/source, resets `MapUiState`, snaps once via `snapCameraToGpsIfNeeded()` — do not re-snap on every GPS fix (causes camera twitching)
+- Free drive camera: `FREE_DRIVE_ZOOM` 17.5 / `FREE_DRIVE_TILT` 50° / `CameraMode.TRACKING_GPS`; full nav uses zoom 18.5 / tilt 58°
+- One-time snap: `hasSnappedCameraToGps` gates `snapCameraToGpsIfNeeded()`; use `moveCamera` then `TRACKING_GPS` — do not loop animated `setCameraMode` or stale-target checks on GPS updates
+- Style-load callback calls `startFreeDrive()` after `activateLocationTracking()`; `retryLocationActivation()` must NOT call `startFreeDrive()` again (duplicate snap/twitch)
+- Enabling `CameraMode.TRACKING` at wide fallback zoom (6) locks the visual view zoomed out even when `cameraPosition.zoom` reports 14–16 — snap after location component is active
 - End navigation button in `CarMapViewContainer` (Close icon, red tint) calls `engine.startFreeDrive()` when `isNavigating`
-- 3D nav camera: `showRouteThenDive()` → 2 s overview → `enterNavigationCamera()` after `NAV_DIVE_DELAY_MS` (2200 ms); guard with `_uiState.value.isNavigating` so dive is skipped if user exits during overview
+- 3D nav camera: `showRouteThenDive()` sets `CameraMode.NONE` + `cancelTransitions()`, animates bounds in `ROUTE_OVERVIEW_ANIMATION_MS` (2 s), holds full-route view for `ROUTE_OVERVIEW_HOLD_MS` (10 s) with `routeOverviewProgress` timer bar in `CarMapViewContainer`; then `enterNavigationCamera()` — guard with `_uiState.value.isNavigating`; cancel `routeOverviewJob` in `startFreeDrive()`
+- Nav dive camera: `enterNavigationCamera()` must NOT call `zoomWhileTracking`/`tiltWhileTracking` right after `TRACKING_GPS` — MapLibre ignores them while camera mode is transitioning; use `CameraMode.NONE` → `map.animateCamera(zoom 18.5 / tilt 58°)` → set `TRACKING_GPS` in `CancelableCallback.onFinish` (same snap pattern as free drive)
+- Use `RenderMode.GPS` (not `COMPASS`) for heading-up driving view; set on `activateLocationTracking()` and before nav/free-drive camera modes
+- Manual pan/zoom sets `isCameraDetached` via `MapLibreMap.OnCameraMoveStartedListener.REASON_API_GESTURE`; recenter button in `CarMapViewContainer` calls `engine.recenterCamera()`
+- `MainActivity` uses `WindowCompat.setDecorFitsSystemWindows(window, false)` — root `DashboardScreen` must apply `systemBarsPadding()` so phones fit between status/nav bars; head units with no bars get zero inset padding
+- `values-night/themes.xml` must include `windowFullscreen` and `windowContentOverlay` (day theme already had them; night theme loads at runtime)
+- Portrait: map `weight(mapMediaRatio)`, media `weight(1 - ratio)`, horizontal `ShortcutDock` at bottom with wrap-content height
+- Landscape horizontal shortcuts: map/media split by `mapMediaRatio`; vertical shortcuts: dock fixed 18%, map/media share remaining 82% by ratio
+- Horizontal dock compact sizes: `DockHorizontalTapTarget` 48dp, `DockHorizontalIconSize` 40dp — do not reuse `MinTapTarget`/`AppIconSize` for horizontal bar
+- `LauncherViewModel.updateMapMediaRatio()` not `setMapMediaRatio()` — JVM signature clash with `mapMediaRatio` property setter
+- Media controls in `MediaPlayerPane.kt`: each button in `Row` needs `Modifier.weight(1f)` + `requiredSize(MinTapTarget)` or last button shrinks when pane is narrow
+- Now playing: `MediaSessionRepository` + `MixAutoNotificationListenerService`; user must enable Notification access — `MediaSessionManager.getActiveSessions()` requires enabled listener component
+- Shared overlay dismiss: `OverlayCloseButton` in `ui/components/` — use for full-screen dialogs (settings, search), not text Close buttons
+- `MainActivity.onResume()` calls `MediaSessionRepository.refreshSessions()` after returning from notification-access settings or media apps
+- Offline Overture POI build/publish tools live in sibling repo **`mix-auto-overture-maps/tools/`** — not `mix-auto/tools/`; `mix-auto/tools/README.md` is a pointer only
+- App catalog: `MapDataViewModel` fetches `countries.json` from `kyuusanq3/mix-auto-overture-maps/releases/latest/download/`; per-country URL is `{RELEASE_BASE}/{asset}` from manifest — no app update needed when publishing new release tags marked Latest
+- GitHub release must **attach** `countries.json` + `{iso}_places.db.gz` as release assets; a release with zero assets returns 404 on `/latest/download/` even if the tag exists
+- Philippines pack sizes: ~137 MB compressed (`ph_places.db.gz`), ~263 MB installed SQLite; manifest `size_compressed_mb` / `size_db_mb` drives UI labels
+- `LocalPlacesRepository.downloadDatabaseFromUrl()` decompresses `.gz`; manual `importDatabaseFromUri()` does NOT — sideload uncompressed `.db` only
+- `MapDataOverlay` header copy still says "~50 MB compressed" — per-row sizes from catalog are correct (~137 MB for PH)
+- Destination search distance: default **500 km** cap via `MAX_SEARCH_RADIUS_M` in `MapLibreEngineImpl`; filter runs after `mergeAndDeduplicate()` when `limitDistance` is true — local SQLite bbox (±0.5°) unchanged
+- Launcher Settings toggle **"Nearby results only (within 500 km)"** (`LauncherPreferences.limitSearchDistance`, default ON) flows DashboardScreen → CarMapViewContainer → NavigationSearchOverlay → `searchDestination(limitDistance)`; include `limitSearchDistance` in search `LaunchedEffect` keys so toggling re-queries
+- Photon returns global results (lat/lon is bias only); public OSRM demo server cannot reliably route intercontinental or 5000+ km trips — distance limit protects search UX, not routing capability
+- POI map pins: camera-idle listener (zoom ≥ 13, 1.5 s debounce) loads local Overture bbox first then merges Photon; use `mergePoiPins()` not `mergeAndDeduplicate()` for pin layer — latter re-sorts by distance and evicts categorized local pins
+- `PoiIconFactory.kt` generates category teardrop bitmaps (F/G/H/A/$/S/R/•); SymbolLayer uses data-driven `iconImage` from normalized Overture/Photon category
+- Vector tiles: `LauncherPreferences.useVectorTiles` (default false) → `CarMapEngine.setMapStyle()`; raster OSM JSON vs OpenFreeMap Liberty `https://tiles.openfreemap.org/styles/liberty`
+- App display name **Mix Auto** (`strings.xml`); theme style `Theme.MixAuto` (renamed from `Theme.MyApplication`)
+- Launcher icon: `ic_launcher_background.xml` solid `#000000`, `ic_launcher_foreground.xml` cyan pin `#00E5FF` with white center dot
+- **Navigation App Mode** default: `MainActivity` intent-filter is LAUNCHER only; `LauncherModeAlias` (HOME+DEFAULT) `android:enabled="false"` in manifest — enable via Settings **Launcher Mode** + `MainActivity.applyLauncherMode()` / `PackageManager.setComponentEnabledSetting(..., DONT_KILL_APP)`
+- `LauncherPreferences.isLauncherMode` default false; toggled in `LauncherViewModel.toggleLauncherMode()`; restored in `onCreate()` before UI
+- v1.0.0 debug APK: `versionCode = 2`, `versionName = "1.0.0"`; copy `app/build/outputs/apk/debug/app-debug.apk` → `mix-auto-v1.0.0.apk` at repo root for GitHub release upload
+- Off-route reroute: `routeGeometryPoints` + `checkOffRoute()` in `evaluateStepAdvancement()` — 75 m threshold, **1** consecutive off-route fix (`REROUTE_CONFIRM_COUNT = 1`), 5 s cooldown; `startNavigation(..., isReroute=true)` skips `showRouteThenDive()` and calls `enterNavigationCamera()` directly
+- Route line vanishing on raster style: first `drawRoute()` add uses `style.addLayerAbove(routeLayer, "osm")` — do not use plain `addLayer()` or line renders under tiles
+- Waze-style puck: `applyDrivingViewportPadding()` — fraction-based pixel padding (`VIEWPORT_PADDING_LEFT_FRACTION=0.3`, `VIEWPORT_PADDING_TOP_FRACTION=0.4` of map view px dimensions) positions puck at ~65% from left and ~70% from top; uses `map.width`/`map.height` so it scales correctly across all screen sizes and densities; called from `activateLocationTracking()` and `applyFreeDriveToMap()`
+- Media auto-play on boot: `MediaSessionRepository.maybeAutoPlay()` once per process (`hasAutoPlayed`) when session has metadata but is not `STATE_PLAYING`; call from `attachController()` **and** retry in `onMetadataChanged()` (late metadata on head unit boot) and same-token re-attach branch; requires notification access enabled
+- Large shortcut icons: `LauncherPreferences.isLargeShortcutIcons` (default false) → Settings **Large Shortcut Icons**; doubles `DockHorizontalTapTarget`/`DockHorizontalIconSize`/`AppIconSize` in `ShortcutDock`
+- Synthetic bearing in `MapLibreEngineImpl.enrichLocationWithBearing()`: when `hasBearing()` is false (emulator/mock GPS), compute heading from previous fix via `bearingTo()` if movement > 10 m and speed ≥ 1.4 m/s (or `hasSpeed()` false) — prevents north-up camera and jitter-spin when parked
+- Bearing freeze when stopped: `enrichLocationWithBearing()` checks `STOPPED_SPEED_MPS` (1.4 m/s) **before** the `hasBearing()` early-return; applies `lastStableBearing` when stopped so puck does not spin in traffic/parking; update `lastStableBearing` while moving or from synthetic bearing
+- Dead-reckoning puck: `startDeadReckoning()` extrapolates position at `DEAD_RECKONING_INTERVAL_MS` (16 ms) between GPS fixes using last speed + bearing; visual-only `forceLocationUpdate()` — does not call `evaluateStepAdvancement()`; cancelled on each real fix, when speed < 1.4 m/s, `startFreeDrive()`, and `onDestroy()`; requires `import kotlinx.coroutines.isActive`
+- Route line styling: `ROUTE_WIDTH` 14f with `ROUTE_CASING_LAYER_ID` (18f, `#CC000000`) below cyan line in `drawRoute()` — add casing above `osm`, route above casing; remove both layers in `applyFreeDriveToMap()`
+- Android Studio AVD x86_64 GPS (all API levels, Google Play and AOSP images): `adb emu geo fix` returns `OK` but `Number of location reports: 0` — GNSS HAL is broken; workaround is `avd-gps.ps1` at repo root which uses `cmd location providers add-test-provider gps` after `adb root`
+- Android 12+ (API 31) `cmd location providers` mock GPS: `LocationManagerService.addTestProvider` calls `noteOp(OP_MOCK_LOCATION, callingUid, "android")` — default mode is `MODE_ERRORED`; `appops set shell android:mock_location allow` does NOT work (wrong package/uid binding); must grant by uid number: `cmd appops set 0 MOCK_LOCATION allow` and `cmd appops set 2000 MOCK_LOCATION allow` (as root) before calling `cmd location providers`
+- `avd-gps.ps1`: run once per emulator boot; `.\avd-gps.ps1` for single fix at Gov Center, `.\avd-gps.ps1 -Drive` for 39 road-snapped fixes Gov Center → SM City Bacolod via OSRM, `.\avd-gps.ps1 LAT LNG` for custom fix
+- PowerShell URL construction with doubles: always use `InvariantCulture` formatting and concatenate query string separately — PowerShell 7 null-conditional `?.` parses `$varS?query` as null-conditional in double-quoted strings, silently dropping the variable value
+- Release signing: keystore at `app/mixauto-release.jks` (alias `mixauto`, RSA 2048, 10 000-day validity); `signingConfigs { create("release") }` in `app/build.gradle.kts`; credentials stored in plaintext (personal sideload only — move to `keystore.properties` before Play Store)
+- Release APK workflow: `.\gradlew.bat assembleRelease` → copy `app/build/outputs/apk/release/app-release.apk` to `mix-auto.apk` at repo root (no version suffix); use `/local-apk` skill to run this workflow
+- `mix-auto.apk` and `app/mixauto-release.jks` should be in `.gitignore`
+- TomTom traffic overlay: `LauncherPreferences.showTraffic` + `tomTomApiKey`; `MapLibreEngineImpl.applyTrafficOverlay()` adds `RasterSource` via `TileSet("2.1.0", url)` (not direct URL constructor — `{z}/{x}/{y}` placeholder bug); layer IDs `mix-traffic-source` / `mix-traffic-layer`; Orbis v2 URL `https://api.tomtom.com/maps/orbis/traffic/flow/raster/tile/{z}/{x}/{y}?apiVersion=2&key={KEY}&style=light&tileSize=256` — valid styles **`light`** and **`dark`** only
+- TomTom key check: `TomTomTrafficClient.verifyApiKey()` + Settings **Test TomTom API Key** button; `LauncherViewModel.updateTomTomApiKey()` not `setTomTomApiKey()` (JVM signature clash with property setter)
+- Google Places POI caching prohibited by Google Maps Platform ToS even when device has Play Services; TomTom Places or Overture offline DB are cache-friendly alternatives
+- Recent destinations: `LauncherPreferences.recentDestinations` JSON (max 10, 50 m dedup); `LauncherViewModel.addRecentDestination()`; wired MainActivity → DashboardScreen → CarMapViewContainer → NavigationSearchOverlay via `onDestinationSelected`
+- Saved places: `LauncherPreferences.savedPlaces` JSON (max 50, 50 m dedup); `LauncherViewModel.toggleSavedPlace()` / `isPlaceSaved()`; wired MainActivity → DashboardScreen → CarMapViewContainer → NavigationSearchOverlay via `onToggleSavedPlace`
+- Map tap anywhere: `MapLibreEngineImpl.addOnMapClickListener` — POI pin hit uses feature props; empty tap finds nearest `poiCache` entry within `MAP_TAP_NEAREST_POI_MAX_M` (500 m) or creates `SearchResultPlace("Dropped Pin", isDroppedPin=true)` with `formatLatLng` subtitle
+- POI details drawer: `PoiDetailDrawer.kt` rendered at **DashboardScreen** root `Box` (full screen, covers media pane) — not inside `CarMapViewContainer`; Navigate calls `onDestinationSelected` + `navigateToCoordinates`; star calls `onToggleSavedPlace`
+- Starred map pins: `CarMapEngine.setSavedPlaces()` → `savedPlacesKeys` (lat/lng rounded 5 dp) → GeoJSON `starred` property → `poiCategoryIconExpression()` uses `Expression.switchCase` for gold `poi_icon_starred_*` icons from `PoiIconFactory`
+- Empty search overlay: **Recent | Saved | Nearby** `TabRow` when `query.length < 2` — replaces merged badge list; each `SearchResultRow` has star `IconButton`; typed results also show star button
+- Map/media split: draggable 3-dot `MapMediaDividerHandle` on pane seam in `DashboardScreen.kt` (not Settings slider); ratio 0.3–0.8 persisted via `LauncherPreferences.mapMediaRatio` / `LauncherViewModel.updateMapMediaRatio()`
+- Map/media divider drag: never put `mapMediaRatio` in `pointerInput` keys — each ratio update restarts the detector and breaks continuous drag; use `rememberUpdatedState` + `onDragStart` + accumulated `totalDragPx`
+- Map/media divider touch target: do not use `MinTapTarget` as layout width/height in Row/Column — use `seamTouchTarget` layout modifier (0 dp seam, 64 dp hit area placed centered overlapping panes); RHD horizontal shortcuts need `invertDrag = true`
+- Puck position sliders: `puckHorizontalOffset` / `puckVerticalOffset` (default 0.3/0.4) in `LauncherPreferences` flow through `LauncherViewModel` → `CarMapEngine.setViewportPadding()` → `MapLibreEngineImpl`; after calling `paddingWhileTracking`, always call `forceLocationUpdateForImmediateRender()` so the camera repositions without waiting for the next GPS or dead-reckoning tick
+- Puck size slider: `puckScale` (default 1.0) controlled via `LocationComponentOptions.maxZoomIconScale` / `minZoomIconScale` + `locationComponent.applyStyle(updated)` — use `toBuilder()` on `component.locationComponentOptions` to preserve other options; call `forceLocationUpdateForImmediateRender()` after `applyStyle` for immediate visual effect
+- `applyDrivingTrackingPadding`: do NOT guard with `if (component.cameraMode == CameraMode.NONE) return` — tracking padding must always be stored so it takes effect when tracking resumes after camera detach; `activateLocationTracking` should call `applyDrivingTrackingPadding` (not `applyDrivingViewportPadding`) so `paddingWhileTracking` is initialized on style load
+- `computeDrivingViewportPadding` fallback: when `map.width == 0`, use `displayMetrics.widthPixels` / `heightPixels` with the user's fraction fields — never hardcode dp values in the fallback or the slider positions will be silently ignored before layout
+- Settings panel in media pane: `SettingsContent` composable root must be `Surface(color = OledBlack)` — without it, `LocalContentColor` defaults to black and all `Text` composables become invisible against the dark background; `MediaOrSettingsPane` composable conditionally renders either `MediaPlayerPane` or `SettingsContent` to avoid a full-screen dialog
+- App update check: `AppUpdateRepository` uses GitHub Releases API (`api.github.com/repos/kyuusanq3/mix-auto/releases/latest`) with `Accept: application/vnd.github+json`; compares `tag_name` to `BuildConfig.VERSION_NAME` via `isNewerVersion()` — do not require a `version.json` release asset; APK download stays at `releases/latest/download/mix-auto.apk`
+- Album art gestures in `MediaPlayerPane.kt`: double-tap play/pause; swipe L/R prev/next; swipe up like; swipe down shuffle; long-press opens `AlbumArtModePicker` — disable normal `pointerInput` while `isPickerOpen`
+- Album art modes in `AlbumArtDisplay.kt`: `PLAIN`, `VINYL` (spinning record), `VISUALIZER` (animated bars); `AlbumArtModeContent()` helper; picker tap or second long-press confirms selection
+- Vinyl circular clip: apply `clip(CircleShape)` then `graphicsLayer { rotationZ }` on the Box — do not use `Modifier.rotate` before clip (produces rectangular artifact)
+- Album art sizing: `BoxWithConstraints` → `(if (maxWidth < maxHeight) maxWidth else maxHeight) * 0.92f` — do not use `kotlin.math.min` on Dp values
+- Media like: `MediaSessionRepository.toggleLike()` via `RATING_HEART` / custom actions; never send dislike/thumb_down (YT Music skips on unlike); `likedTrackCache` keyed by media ID
+- Media shuffle: `toggleShuffle()` via `MediaControllerCompat` shuffle mode; shuffle button before Previous in transport row
+- Transport controls row order: `[Shuffle] [Prev] [Play/Pause] [Next] [Like]` — Like is the 5th `MediaControlButton` with `active = mediaState.isLiked == true`; do not overlay Like on album art; when `supportsLike` is false the button renders disabled (not hidden) to keep layout stable
+- Settings shortcut toggleable: `onOpenSettings = { settingsOpen = !settingsOpen }` in all `ShortcutDock` call sites in `DashboardScreen.kt`; pass `isSettingsOpen = settingsOpen` to `ShortcutDock`; `SettingsDockItem` uses `ElectricCyan` icon tint + `primaryContainer` card background when `isActive = true`
+- Road-snap puck: `snapLocationToRoute()` in `MapLibreEngineImpl` projects GPS fix onto nearest `routeGeometryPoints` segment when within `SNAP_TO_ROUTE_MAX_M = 40f` metres; `applyAndroidLocation()` uses snapped `displayLocation` for puck/HUD/`lastKnownLocation` but passes raw `locationWithBearing` to `evaluateStepAdvancement()` so off-route detection (75 m threshold) is unaffected; helper `closestPointOnSegment()` returns `ClosestSegmentResult(distM, lat, lng)` — do not use `distanceToSegmentMeters()` alone for snap (it discards the projected coordinates)
+- Destination voice search: Eonon hardware voice button dispatches `KEYCODE_VOICE_ASSIST` (fallback `KEYCODE_SEARCH`) to foreground app — `MainActivity.onKeyDown()` consumes only when `LauncherViewModel.isDestinationSearchOpen`; otherwise passes through to Google Assistant/Gemini; `CarMapViewContainer` syncs `searchOpen` via `LaunchedEffect`; overlay collects `voiceSearchTrigger` and runs `SpeechRecognizer` (partial + final results → `query` state); mic trailing icon in `NavigationSearchOverlay` as touch fallback; requires `RECORD_AUDIO` manifest + runtime grant; hide mic when `SpeechRecognizer.isRecognitionAvailable()` is false; do not call `rememberInfiniteTransition` inside `if (isListening)` — always create transition, gate alpha instead
+- Permission onboarding wizard: `ui/onboarding/OnboardingWizard.kt` + `LauncherPreferences.onboardingVersion` (key `onboarding_version`, default 0); `CURRENT_ONBOARDING_VERSION = 1`; on launch if stored version < current, show full-screen wizard over `DashboardScreen` with steps filtered by `sinceVersion > onboardingVersion`; on complete persist `onboardingVersion = CURRENT` and call `requestLocationPermissionIfNeeded()` + `MediaSessionRepository.refreshSessions()`; bump `CURRENT_ONBOARDING_VERSION` and add new steps with higher `sinceVersion` when a future update introduces new permissions — do not re-show completed steps
+- `OnboardingWizard` root must be `Surface(color = OledBlack)` not bare `Box(background)` — same `LocalContentColor` black-on-black bug as `SettingsContent`; title/body `Car*Text` invisible without Surface; Button labels still render because Button sets its own content color

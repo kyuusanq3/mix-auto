@@ -5,17 +5,21 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.GpsFixed
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -25,25 +29,40 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.viewmodel.compose.viewModel
 import com.kyuusanq3.mixauto.domain.map.CarMapEngine
+import com.kyuusanq3.mixauto.domain.map.SearchResultPlace
+import com.kyuusanq3.mixauto.ui.settings.LauncherViewModel
 import com.kyuusanq3.mixauto.ui.theme.CarBodyText
 import com.kyuusanq3.mixauto.ui.theme.CarDimensions
 import com.kyuusanq3.mixauto.ui.theme.CarHeadlineText
 import com.kyuusanq3.mixauto.ui.theme.CarLabelText
+import com.kyuusanq3.mixauto.ui.theme.ElectricCyan
 import com.kyuusanq3.mixauto.ui.theme.OledBlack
 
 @Composable
 fun CarMapViewContainer(
     engine: CarMapEngine,
+    limitSearchDistance: Boolean,
+    recentDestinations: List<SearchResultPlace>,
+    savedPlaces: List<SearchResultPlace>,
+    onDestinationSelected: (SearchResultPlace) -> Unit,
+    onToggleSavedPlace: (SearchResultPlace) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val lifecycleOwner = LocalLifecycleOwner.current
+    val launcherViewModel: LauncherViewModel = viewModel()
     val mapUiState by engine.uiState.collectAsState()
     var searchOpen by remember { mutableStateOf(false) }
+
+    LaunchedEffect(searchOpen) {
+        launcherViewModel.isDestinationSearchOpen = searchOpen
+    }
 
     DisposableEffect(lifecycleOwner, engine) {
         val observer = LifecycleEventObserver { _, event ->
@@ -140,12 +159,45 @@ fun CarMapViewContainer(
                     )
                 }
             }
+
+            if (mapUiState.isCameraDetached) {
+                Spacer(modifier = Modifier.height(CarDimensions.PaneGap))
+                IconButton(
+                    onClick = { engine.recenterCamera() },
+                    modifier = Modifier
+                        .size(CarDimensions.MinTapTarget)
+                        .background(OledBlack.copy(alpha = 0.72f), MaterialTheme.shapes.small),
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.GpsFixed,
+                        contentDescription = "Recenter map",
+                        tint = MaterialTheme.colorScheme.primary,
+                    )
+                }
+            }
+        }
+
+        if (mapUiState.routeOverviewProgress > 0f) {
+            LinearProgressIndicator(
+                progress = { mapUiState.routeOverviewProgress },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .align(Alignment.BottomCenter)
+                    .height(6.dp),
+                color = ElectricCyan,
+                trackColor = OledBlack.copy(alpha = 0.5f),
+            )
         }
     }
 
     if (searchOpen) {
         NavigationSearchOverlay(
             engine = engine,
+            limitSearchDistance = limitSearchDistance,
+            recentDestinations = recentDestinations,
+            savedPlaces = savedPlaces,
+            onDestinationSelected = onDestinationSelected,
+            onToggleSavedPlace = onToggleSavedPlace,
             onDismiss = { searchOpen = false },
         )
     }

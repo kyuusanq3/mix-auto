@@ -1,0 +1,23 @@
+Mix Auto — Nav Broadcast / Client Display Feature
+
+I want to build a two-device navigation display system using Mix Auto. The main Eonon head unit (server) runs Mix Auto normally and broadcasts its navigation state over UDP to a secondary weaker Android head unit (client) that renders a minimal map display.
+
+Server side (add to existing Mix Auto app):
+
+Create a NavBroadcastService background service that reads from MapLibreEngineImpl's existing MapUiState flow and broadcasts a JSON payload over UDP every GPS fix (~1s interval)
+Payload fields: lat, lng, bearing, speed_kmh, street_name, is_navigating, current_step, distance_to_next_m, route_geometry (polyline points)
+Use UDP broadcast on a fixed port (e.g. 47477) so the client needs no IP config
+Start/stop the service from MainActivity alongside the map engine lifecycle
+Add a toggle in Launcher Settings: "Broadcast nav state (LAN)" backed by LauncherPreferences
+Client side (new minimal Android app, sibling project):
+
+New Android project, package com.kyuusanq3.mixauto.display
+Single screen: MapLibre map (same OSM raster tile source) + HUD overlay
+Listens on UDP port 47477, deserializes payload, updates map camera to received lat/lng/bearing
+HUD shows speed, street name, current turn instruction and distance — same visual style as Mix Auto (OledBlack, ElectricCyan, MixAutoTheme)
+Draws route line on map from route_geometry when is_navigating is true
+No GPS, no search, no routing — pure display client
+Reconnect/retry loop if no packets received for 5s (show "Waiting for main unit…" message)
+Network assumption: both devices on same LAN (main unit hotspot or shared Wi-Fi). No pairing or IP configuration needed thanks to UDP broadcast.
+
+Use the existing MapUiState, CarDimensions, color tokens, and CarMapViewContainer patterns from the main app as reference. Keep the client app as lightweight as possible for weaker hardware.
