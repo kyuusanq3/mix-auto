@@ -23,6 +23,8 @@ interface CarMapEngine {
     fun setMapStyle(useVectorTiles: Boolean)
     fun setTrafficEnabled(enabled: Boolean, apiKey: String)
     fun setDrivingZoom(zoom: Double)
+    fun setViewportPadding(horizontalFraction: Float, verticalFraction: Float)
+    fun setPuckScale(scale: Float)
     suspend fun searchDestination(
         query: String,
         currentLat: Double,
@@ -30,4 +32,6 @@ interface CarMapEngine {
         limitDistance: Boolean = true,
         onLocalResults: suspend (List<SearchResultPlace>) -> Unit = {},
     ): List<SearchResultPlace>
+
+    fun getNearbyPois(lat: Double, lng: Double, limit: Int): List<SearchResultPlace>
 }

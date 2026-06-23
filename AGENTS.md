@@ -58,7 +58,7 @@ app/src/main/java/com/kyuusanq3/mixauto/
     │   └── MapDataOverlay.kt            # Offline Overture POI download UI
     ├── theme/                   # Color, CarDimensions, Type, Theme
     └── dashboard/
-        ├── DashboardScreen.kt   # Map + media + shortcut dock layouts; settings overlay
+        ├── DashboardScreen.kt   # Map + media + shortcut dock layouts; draggable map/media divider; settings overlay
         ├── MediaPlayerPane.kt   # Now playing UI (media session driven)
         └── ShortcutDock.kt      # System app shortcuts
 ```
@@ -152,6 +152,8 @@ Bundled sample asset: `python tools/build_sample_places_db.py` (writes to `mix-a
 
 **Search integration:** `MapLibreEngineImpl.searchDestination()` fans out to local SQLite (FTS5 + bbox) and Photon in parallel, deduplicates within 50 m, sorts by distance. Optional 500 km cap (default ON) via Launcher Settings **"Nearby results only (within 500 km)"** — persisted in `LauncherPreferences.limitSearchDistance`, passed as `limitDistance` to the engine.
 
+**Recent destinations:** Up to 10 saved in `LauncherPreferences.recentDestinations` (JSON in SharedPreferences). `LauncherViewModel.addRecentDestination()` prepends, dedupes within 50 m, persists. Flow: `MainActivity` → `DashboardScreen` → `CarMapViewContainer` → `NavigationSearchOverlay`; any selection calls `onDestinationSelected` before `navigateToCoordinates`. Empty search field shows merged list: recents first, then `engine.getNearbyPois()` from `poiCache` to fill remaining slots — per-row **Recent** / **Nearby** badge in `SearchResultRow`, not section headers.
+
 ## Manifest / launcher setup
 
 `MainActivity` is the main entry with `singleTask` and `sensor` orientation:
@@ -211,10 +213,14 @@ After enabling Launcher Mode, press Home and select **Mix Auto** as the default 
 | Now playing not updating | `MainActivity.onResume()` refreshes sessions; ensure `MixAutoNotificationListenerService` is enabled |
 | Skip-next media button shrinks in narrow pane | `MediaPlayerPane.kt`: use `weight(1f)` slots + `requiredSize(MinTapTarget)` on all three controls |
 | `setMapMediaRatio` JVM signature clash | Use `updateMapMediaRatio()` in `LauncherViewModel` — property already generates `setMapMediaRatio` setter |
+| Map/media divider only moves on repeated swipes | Do not include `mapMediaRatio` in `pointerInput` keys in `MapMediaDividerHandle` — use `rememberUpdatedState` + accumulate drag from `onDragStart` |
+| Wide black gap between map and media panes | Divider touch target must not use `MinTapTarget` as Row/Column layout size — use `seamTouchTarget` (0 dp seam, 64 dp hit area overlapping panes) in `DashboardScreen.kt` |
+| Resize map vs media | Drag the cyan 3-dot handle on the pane border (not Settings); ratio 0.3–0.8, persisted in `LauncherPreferences.mapMediaRatio` |
 | Philippines download returns HTTP 404 | Attach `ph_places.db.gz` + `countries.json` as **release assets** on `mix-auto-overture-maps` (committing to repo is not enough); verify `/releases/latest/download/countries.json` returns 200 |
 | Catalog loads but download 404 | Release exists but assets array empty — edit release and upload both files from `places-dist/` |
 | Manual import of `.gz` fails | Import path expects uncompressed `.db`; use in-app Download or decompress first |
 | Search shows overseas / 5000 km destinations | Default 500 km cap is ON — disable **Nearby results only (within 500 km)** in Launcher Settings to include farther Photon results; routing still may fail for long/cross-water trips |
+| Empty search shows no Nearby rows | Nearby fill uses `poiCache` only — pan/zoom map (zoom ≥ 13) so camera-idle POI load runs; no network fetch for empty-query nearby list |
 | Route line disappears while navigating | Raster style: route layer must use `addLayerAbove(..., "osm")` in `drawRoute()` — plain `addLayer()` puts line under tiles |
 | Route line too thin | `ROUTE_WIDTH` is 14f with `ROUTE_CASING_LAYER_ID` (18f dark casing) below cyan line in `drawRoute()` |
 | Puck pauses/jumps between GPS fixes | `startDeadReckoning()` extrapolates puck at 16 ms using last speed + bearing; ensure `hasSpeed()` is present on fixes |
@@ -222,6 +228,10 @@ After enabling Launcher Mode, press Home and select **Mix Auto** as the default 
 | Nav doesn't re-route after wrong turn | Off-route reroute needs 2 GPS fixes >75 m from `routeGeometryPoints`; 5 s cooldown between reroutes; check Logcat for `Off route` / `Re-routing` |
 | Music doesn't auto-play on launch | Enable notification access; autoplay runs once in `MediaSessionRepository.attachController()` when paused session has metadata |
 | Shortcut bar too small on head unit | Settings → **Large Shortcut Icons** doubles horizontal bar height and icon sizes |
+| TomTom traffic HTTP 400 `Invalid style: relative-delay` | Orbis v2 raster tiles only accept `style=light` or `style=dark` — not legacy styles (`relative`, `relative-delay`, etc.); see `MapLibreEngineImpl.applyTrafficOverlay()` |
+| TomTom traffic not showing / key unknown | Launcher Settings → paste key from developer.tomtom.com → **Test TomTom API Key**; enable Traffic Flow product on key; Logcat tag `TomTomTrafficClient` |
+| Traffic tiles fail with HTTP 403 | Invalid key or Traffic Flow API not enabled for that TomTom developer key |
+| Update check fails HTTP 404 | App uses GitHub Releases API (`AppUpdateRepository.RELEASES_API_URL`), not a `version.json` asset — attach `mix-auto.apk` to the release and set tag to semver (e.g. `0.0.5`); download URL is `releases/latest/download/mix-auto.apk` |
 
 ## Related agent resources
 

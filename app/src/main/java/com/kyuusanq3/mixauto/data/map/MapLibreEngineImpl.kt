@@ -42,6 +42,7 @@ import org.maplibre.android.camera.CameraUpdateFactory
 import org.maplibre.android.geometry.LatLng
 import org.maplibre.android.geometry.LatLngBounds
 import org.maplibre.android.location.LocationComponentActivationOptions
+import org.maplibre.android.location.LocationComponentOptions
 import org.maplibre.android.location.engine.LocationEngine
 import org.maplibre.android.location.engine.LocationEngineCallback
 import org.maplibre.android.location.engine.LocationEngineProxy
@@ -64,6 +65,7 @@ import org.maplibre.android.style.sources.RasterSource
 import org.maplibre.android.style.sources.TileSet
 import org.maplibre.android.style.sources.VectorSource
 import kotlin.math.cos
+import kotlin.math.max
 import kotlin.math.sin
 
 private data class LegStep(
@@ -93,6 +95,9 @@ class MapLibreEngineImpl(
     private val localPlaces: LocalPlacesRepository? = null,
     initialUseVectorTiles: Boolean = false,
     initialDrivingZoom: Double = 17.5,
+    initialPuckHOffset: Float = 0.3f,
+    initialPuckVOffset: Float = 0.4f,
+    initialPuckScale: Float = 1.0f,
 ) : CarMapEngine {
 
     private val _uiState = MutableStateFlow(MapUiState())
@@ -105,6 +110,9 @@ class MapLibreEngineImpl(
     private var tomTomApiKey = ""
     private var freeDriveZoom = initialDrivingZoom
     private var navZoom = initialDrivingZoom + 1.0
+    private var puckHorizontalOffset = initialPuckHOffset
+    private var puckVerticalOffset = initialPuckVOffset
+    private var puckScale = initialPuckScale
 
     private var mapView: MapView? = null
     private var mapLibreMap: org.maplibre.android.maps.MapLibreMap? = null
@@ -218,6 +226,46 @@ class MapLibreEngineImpl(
         )
     }
 
+    override fun setViewportPadding(horizontalFraction: Float, verticalFraction: Float) {
+        puckHorizontalOffset = horizontalFraction
+        puckVerticalOffset = verticalFraction
+        val map = mapLibreMap ?: return
+        applyDrivingViewportPadding(map)
+        applyDrivingTrackingPadding(map)
+        forceLocationUpdateForImmediateRender(map)
+    }
+
+    override fun setPuckScale(scale: Float) {
+        puckScale = scale
+        val component = mapLibreMap?.locationComponent ?: return
+        if (!component.isLocationComponentActivated) return
+        val updated = component.locationComponentOptions
+            .toBuilder()
+            .maxZoomIconScale(scale)
+            .minZoomIconScale(scale)
+            .build()
+        component.applyStyle(updated)
+        forceLocationUpdateForImmediateRender(mapLibreMap ?: return)
+    }
+
+    /**
+     * After changing tracking padding or puck style, force a forceLocationUpdate so the map
+     * camera repositions immediately without waiting for the next GPS fix or dead-reckoning tick.
+     */
+    private fun forceLocationUpdateForImmediateRender(map: MapLibreMap) {
+        val component = map.locationComponent
+        if (!component.isLocationComponentActivated || !component.isLocationComponentEnabled) return
+        val location = component.lastKnownLocation
+            ?: lastKnownLocation?.let { ll ->
+                Location("forced").apply {
+                    latitude = ll.latitude
+                    longitude = ll.longitude
+                }
+            }
+            ?: return
+        component.forceLocationUpdate(location)
+    }
+
     private fun applyMapStyle(map: MapLibreMap, context: Context) {
         val builder = if (useVectorTiles) {
             Style.Builder().fromUri(VECTOR_STYLE_URL)
@@ -256,7 +304,7 @@ class MapLibreEngineImpl(
 
         val tileUrl =
             "https://api.tomtom.com/maps/orbis/traffic/flow/raster/tile/{z}/{x}/{y}" +
-                "?apiVersion=2&key=$tomTomApiKey&style=relative-delay&tileSize=256"
+                "?apiVersion=2&key=$tomTomApiKey&style=light&tileSize=256"
         val tileSet = TileSet("2.1.0", tileUrl)
         style.addSource(RasterSource(TRAFFIC_SOURCE_ID, tileSet, 256))
 
@@ -267,6 +315,14 @@ class MapLibreEngineImpl(
             style.addLayerAbove(trafficLayer, RASTER_BASE_LAYER_ID)
         } else {
             style.addLayer(trafficLayer)
+        }
+        val existingCasing = style.getLayer(ROUTE_CASING_LAYER_ID)
+        val existingRoute = style.getLayer(ROUTE_LAYER_ID)
+        if (existingCasing != null && existingRoute != null) {
+            style.removeLayer(existingCasing)
+            style.removeLayer(existingRoute)
+            style.addLayerAbove(existingCasing, TRAFFIC_LAYER_ID)
+            style.addLayerAbove(existingRoute, ROUTE_CASING_LAYER_ID)
         }
     }
 
@@ -360,6 +416,24 @@ class MapLibreEngineImpl(
             }
         }
         finalResults
+    }
+
+    override fun getNearbyPois(lat: Double, lng: Double, limit: Int): List<SearchResultPlace> {
+        if (limit <= 0) return emptyList()
+        return poiCache.values
+            .map { place ->
+                val distanceResults = FloatArray(1)
+                Location.distanceBetween(
+                    lat,
+                    lng,
+                    place.latitude,
+                    place.longitude,
+                    distanceResults,
+                )
+                place.copy(distanceInMeters = distanceResults[0])
+            }
+            .sortedBy { it.distanceInMeters }
+            .take(limit)
     }
 
     private suspend fun fetchPhoton(
@@ -915,17 +989,37 @@ class MapLibreEngineImpl(
         val component = map.locationComponent
         if (component.isLocationComponentActivated && component.isLocationComponentEnabled) {
             component.cameraMode = CameraMode.NONE
+            component.paddingWhileTracking(doubleArrayOf(0.0, 0.0, 0.0, 0.0))
         }
         map.cancelTransitions()
+        map.setPadding(0, 0, 0, 0)
 
-        val bounds = LatLngBounds.Builder()
-            .include(origin)
-            .include(destination)
-            .build()
-        map.animateCamera(
-            CameraUpdateFactory.newLatLngBounds(bounds, ROUTE_OVERVIEW_PADDING_PX),
-            ROUTE_OVERVIEW_ANIMATION_MS,
-        )
+        val bounds = buildRouteOverviewBounds(origin, destination)
+        val padding = computeRouteOverviewPadding(map)
+        val animateToBounds = {
+            map.moveCamera(
+                CameraUpdateFactory.newCameraPosition(
+                    CameraPosition.Builder()
+                        .target(map.cameraPosition.target)
+                        .zoom(map.cameraPosition.zoom)
+                        .tilt(0.0)
+                        .bearing(0.0)
+                        .build(),
+                ),
+            )
+            map.animateCamera(
+                CameraUpdateFactory.newLatLngBounds(
+                    bounds,
+                    padding.left,
+                    padding.top,
+                    padding.right,
+                    padding.bottom,
+                ),
+                ROUTE_OVERVIEW_ANIMATION_MS,
+            )
+        }
+        mapView?.post { animateToBounds() } ?: animateToBounds()
+
         routeOverviewJob = engineScope.launch {
             val startMs = System.currentTimeMillis()
             while (true) {
@@ -940,6 +1034,51 @@ class MapLibreEngineImpl(
                 enterNavigationCamera()
             }
         }
+    }
+
+    private fun buildRouteOverviewBounds(origin: LatLng, destination: LatLng): LatLngBounds {
+        val builder = LatLngBounds.Builder()
+        if (routeGeometryPoints.isNotEmpty()) {
+            routeGeometryPoints.forEach { builder.include(it) }
+        } else {
+            builder.include(origin)
+        }
+        builder.include(destination)
+        lastKnownLocation?.let { builder.include(it) }
+        return expandLatLngBounds(builder.build(), ROUTE_OVERVIEW_BOUNDS_EXPAND_FRACTION)
+    }
+
+    private fun expandLatLngBounds(bounds: LatLngBounds, fraction: Double): LatLngBounds {
+        val latSpan = bounds.northEast.latitude - bounds.southWest.latitude
+        val lngSpan = bounds.northEast.longitude - bounds.southWest.longitude
+        val latPad = max(latSpan * fraction, ROUTE_OVERVIEW_MIN_BOUNDS_PAD_DEGREES)
+        val lngPad = max(lngSpan * fraction, ROUTE_OVERVIEW_MIN_BOUNDS_PAD_DEGREES)
+        return LatLngBounds.from(
+            bounds.northEast.latitude + latPad,
+            bounds.northEast.longitude + lngPad,
+            bounds.southWest.latitude - latPad,
+            bounds.southWest.longitude - lngPad,
+        )
+    }
+
+    private fun computeRouteOverviewPadding(map: MapLibreMap): ViewportPadding {
+        val density = appContext?.resources?.displayMetrics?.density ?: 2f
+        val w = map.width
+        val h = map.height
+        if (w > 0 && h > 0) {
+            return ViewportPadding(
+                left = max((w * 0.14f).toInt(), (72 * density).toInt()),
+                top = max((h * 0.24f).toInt(), (140 * density).toInt()),
+                right = max((w * 0.10f).toInt(), (56 * density).toInt()),
+                bottom = max((h * 0.08f).toInt(), (40 * density).toInt()),
+            )
+        }
+        return ViewportPadding(
+            left = (160 * density).toInt(),
+            top = (220 * density).toInt(),
+            right = (112 * density).toInt(),
+            bottom = (64 * density).toInt(),
+        )
     }
 
     private fun enterNavigationCamera() {
@@ -1014,14 +1153,16 @@ class MapLibreEngineImpl(
         val h = map.height
         if (w > 0 && h > 0) {
             return ViewportPadding(
-                left = (w * VIEWPORT_PADDING_LEFT_FRACTION).toInt(),
-                top = (h * VIEWPORT_PADDING_TOP_FRACTION).toInt(),
+                left = (w * puckHorizontalOffset).toInt(),
+                top = (h * puckVerticalOffset).toInt(),
             )
         }
-        val density = appContext?.resources?.displayMetrics?.density ?: 2f
+        val dm = appContext?.resources?.displayMetrics
+        val fallbackW = dm?.widthPixels?.takeIf { it > 0 } ?: 1080
+        val fallbackH = dm?.heightPixels?.takeIf { it > 0 } ?: 1920
         return ViewportPadding(
-            left = (48 * density).toInt(),
-            top = (120 * density).toInt(),
+            left = (fallbackW * puckHorizontalOffset).toInt(),
+            top = (fallbackH * puckVerticalOffset).toInt(),
         )
     }
 
@@ -1036,7 +1177,8 @@ class MapLibreEngineImpl(
         map.setPadding(padding.left, padding.top, padding.right, padding.bottom)
         val component = map.locationComponent
         if (!component.isLocationComponentActivated || !component.isLocationComponentEnabled) return
-        if (component.cameraMode == CameraMode.NONE) return
+        // Always store the tracking padding regardless of current camera mode — it will take
+        // effect immediately in TRACKING_GPS mode and when tracking resumes after detach.
         component.paddingWhileTracking(
             doubleArrayOf(
                 padding.left.toDouble(),
@@ -1070,8 +1212,13 @@ class MapLibreEngineImpl(
                     PropertyFactory.lineJoin(Property.LINE_JOIN_ROUND),
                     PropertyFactory.lineOpacity(0.9f),
                 )
-                if (style.getLayer(RASTER_BASE_LAYER_ID) != null) {
-                    style.addLayerAbove(casingLayer, RASTER_BASE_LAYER_ID)
+                val baseLayerId = if (style.getLayer(TRAFFIC_LAYER_ID) != null) {
+                    TRAFFIC_LAYER_ID
+                } else {
+                    RASTER_BASE_LAYER_ID
+                }
+                if (style.getLayer(baseLayerId) != null) {
+                    style.addLayerAbove(casingLayer, baseLayerId)
                     style.addLayerAbove(routeLayer, ROUTE_CASING_LAYER_ID)
                 } else {
                     style.addLayer(casingLayer)
@@ -1489,15 +1636,22 @@ class MapLibreEngineImpl(
             val locationEngine = createLocationEngine(ctx)
             this.locationEngine = locationEngine
             val locationComponent = map.locationComponent
+            val componentOptions = LocationComponentOptions.builder(ctx)
+                .maxZoomIconScale(puckScale)
+                .minZoomIconScale(puckScale)
+                .build()
             val options = LocationComponentActivationOptions.builder(ctx, style)
                 .locationEngine(locationEngine)
+                .locationComponentOptions(componentOptions)
                 .build()
             if (!locationComponent.isLocationComponentActivated) {
                 locationComponent.activateLocationComponent(options)
+            } else {
+                locationComponent.applyStyle(componentOptions)
             }
             locationComponent.isLocationComponentEnabled = true
             locationComponent.renderMode = RenderMode.GPS
-            applyDrivingViewportPadding(map)
+            applyDrivingTrackingPadding(map)
 
             flushPendingLocationFix()
             beginLocationAcquisition(ctx)
@@ -2085,15 +2239,14 @@ class MapLibreEngineImpl(
         private const val NAV_TILT = 58.0
         private const val NAV_CAMERA_DURATION_MS = 2500
         private const val FREE_DRIVE_TILT = 50.0
-        private const val VIEWPORT_PADDING_TOP_FRACTION = 0.4f
-        private const val VIEWPORT_PADDING_LEFT_FRACTION = 0.3f
         private const val RASTER_BASE_LAYER_ID = "osm"
         private const val TRAFFIC_SOURCE_ID = "mix-traffic-source"
         private const val TRAFFIC_LAYER_ID = "mix-traffic-layer"
         private const val REROUTE_THRESHOLD_M = 75f
         private const val REROUTE_CONFIRM_COUNT = 1
         private const val REROUTE_COOLDOWN_MS = 5_000L
-        private const val ROUTE_OVERVIEW_PADDING_PX = 120
+        private const val ROUTE_OVERVIEW_BOUNDS_EXPAND_FRACTION = 0.12
+        private const val ROUTE_OVERVIEW_MIN_BOUNDS_PAD_DEGREES = 0.0008
         private const val ROUTE_OVERVIEW_ANIMATION_MS = 2000
         private const val ROUTE_OVERVIEW_HOLD_MS = 10_000L
         private const val LOCATION_INTERVAL_MS = 1000L

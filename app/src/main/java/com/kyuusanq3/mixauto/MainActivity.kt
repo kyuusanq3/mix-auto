@@ -51,6 +51,9 @@ class MainActivity : ComponentActivity() {
             localPlaces = localPlacesRepository,
             initialUseVectorTiles = launcherPreferences.useVectorTiles,
             initialDrivingZoom = launcherPreferences.drivingZoom.toDouble(),
+            initialPuckHOffset = launcherPreferences.puckHorizontalOffset,
+            initialPuckVOffset = launcherPreferences.puckVerticalOffset,
+            initialPuckScale = launcherPreferences.puckScale,
         )
         mapEngine.setTrafficEnabled(
             launcherPreferences.showTraffic,
@@ -82,12 +85,17 @@ class MainActivity : ComponentActivity() {
                     isShortcutsHorizontal = launcherViewModel.isShortcutsHorizontal,
                     mapMediaRatio = launcherViewModel.mapMediaRatio,
                     limitSearchDistance = launcherViewModel.limitSearchDistance,
+                    recentDestinations = launcherViewModel.recentDestinations,
+                    onDestinationSelected = launcherViewModel::addRecentDestination,
                     useVectorTiles = launcherViewModel.useVectorTiles,
                     showTraffic = launcherViewModel.showTraffic,
                     tomTomApiKey = launcherViewModel.tomTomApiKey,
                     isLauncherMode = launcherViewModel.isLauncherMode,
                     isLargeShortcutIcons = launcherViewModel.isLargeShortcutIcons,
                     drivingZoom = launcherViewModel.drivingZoom,
+                    puckHorizontalOffset = launcherViewModel.puckHorizontalOffset,
+                    puckVerticalOffset = launcherViewModel.puckVerticalOffset,
+                    puckScale = launcherViewModel.puckScale,
                     onToggleLhd = launcherViewModel::toggleLeftHandDrive,
                     onToggleShortcutsHorizontal = launcherViewModel::toggleShortcutsHorizontal,
                     onMapMediaRatioChange = launcherViewModel::updateMapMediaRatio,
@@ -118,6 +126,24 @@ class MainActivity : ComponentActivity() {
                     onDrivingZoomChange = { value ->
                         launcherViewModel.updateDrivingZoom(value)
                         mapEngine.setDrivingZoom(value.toDouble())
+                    },
+                    onPuckHorizontalOffsetChange = { value ->
+                        launcherViewModel.updatePuckHorizontalOffset(value)
+                        mapEngine.setViewportPadding(
+                            launcherViewModel.puckHorizontalOffset,
+                            launcherViewModel.puckVerticalOffset,
+                        )
+                    },
+                    onPuckVerticalOffsetChange = { value ->
+                        launcherViewModel.updatePuckVerticalOffset(value)
+                        mapEngine.setViewportPadding(
+                            launcherViewModel.puckHorizontalOffset,
+                            launcherViewModel.puckVerticalOffset,
+                        )
+                    },
+                    onPuckScaleChange = { value ->
+                        launcherViewModel.updatePuckScale(value)
+                        mapEngine.setPuckScale(value)
                     },
                     onInstallApk = ::launchApkInstall,
                 )

@@ -1,6 +1,9 @@
 package com.kyuusanq3.mixauto.ui.settings
 
 import android.content.Context
+import com.kyuusanq3.mixauto.domain.map.SearchResultPlace
+import org.json.JSONArray
+import org.json.JSONObject
 
 class LauncherPreferences(context: Context) {
     private val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -53,6 +56,24 @@ class LauncherPreferences(context: Context) {
             prefs.edit().putFloat(KEY_DRIVING_ZOOM, value).apply()
         }
 
+    var puckHorizontalOffset: Float
+        get() = prefs.getFloat(KEY_PUCK_H_OFFSET, DEFAULT_PUCK_H_OFFSET)
+        set(value) {
+            prefs.edit().putFloat(KEY_PUCK_H_OFFSET, value).apply()
+        }
+
+    var puckVerticalOffset: Float
+        get() = prefs.getFloat(KEY_PUCK_V_OFFSET, DEFAULT_PUCK_V_OFFSET)
+        set(value) {
+            prefs.edit().putFloat(KEY_PUCK_V_OFFSET, value).apply()
+        }
+
+    var puckScale: Float
+        get() = prefs.getFloat(KEY_PUCK_SCALE, DEFAULT_PUCK_SCALE)
+        set(value) {
+            prefs.edit().putFloat(KEY_PUCK_SCALE, value).apply()
+        }
+
     var showTraffic: Boolean
         get() = prefs.getBoolean(KEY_SHOW_TRAFFIC, false)
         set(value) {
@@ -65,6 +86,19 @@ class LauncherPreferences(context: Context) {
             prefs.edit().putString(KEY_TOMTOM_API_KEY, value).apply()
         }
 
+    var recentDestinations: List<SearchResultPlace>
+        get() {
+            val json = prefs.getString(KEY_RECENT_DESTINATIONS, null) ?: return emptyList()
+            return parseRecentDestinations(json)
+        }
+        set(value) {
+            val array = JSONArray()
+            value.take(MAX_RECENT_DESTINATIONS).forEach { place ->
+                array.put(placeToJson(place))
+            }
+            prefs.edit().putString(KEY_RECENT_DESTINATIONS, array.toString()).apply()
+        }
+
     companion object {
         private const val PREFS_NAME = "launcher_prefs"
         private const val KEY_LEFT_HAND_DRIVE = "lhd"
@@ -75,9 +109,50 @@ class LauncherPreferences(context: Context) {
         private const val KEY_LAUNCHER_MODE = "launcher_mode"
         private const val KEY_LARGE_SHORTCUT_ICONS = "large_shortcut_icons"
         private const val KEY_DRIVING_ZOOM = "driving_zoom"
+        private const val KEY_PUCK_H_OFFSET = "puck_h_offset"
+        private const val KEY_PUCK_V_OFFSET = "puck_v_offset"
+        private const val KEY_PUCK_SCALE = "puck_scale"
         private const val KEY_SHOW_TRAFFIC = "show_traffic"
         private const val KEY_TOMTOM_API_KEY = "tomtom_api_key"
+        private const val KEY_RECENT_DESTINATIONS = "recent_destinations"
+        const val MAX_RECENT_DESTINATIONS = 10
         const val DEFAULT_MAP_MEDIA_RATIO = 0.6f
         const val DEFAULT_DRIVING_ZOOM = 17.5f
+        const val DEFAULT_PUCK_H_OFFSET = 0.3f
+        const val DEFAULT_PUCK_V_OFFSET = 0.4f
+        const val DEFAULT_PUCK_SCALE = 1.0f
+
+        private fun placeToJson(place: SearchResultPlace): JSONObject =
+            JSONObject().apply {
+                put("name", place.name)
+                put("subTitle", place.subTitle)
+                put("latitude", place.latitude)
+                put("longitude", place.longitude)
+                put("distanceInMeters", place.distanceInMeters.toDouble())
+                put("category", place.category)
+            }
+
+        private fun parseRecentDestinations(json: String): List<SearchResultPlace> {
+            return try {
+                val array = JSONArray(json)
+                buildList {
+                    for (i in 0 until array.length()) {
+                        val obj = array.getJSONObject(i)
+                        add(
+                            SearchResultPlace(
+                                name = obj.getString("name"),
+                                subTitle = obj.optString("subTitle", ""),
+                                latitude = obj.getDouble("latitude"),
+                                longitude = obj.getDouble("longitude"),
+                                distanceInMeters = obj.optDouble("distanceInMeters", 0.0).toFloat(),
+                                category = obj.optString("category", ""),
+                            ),
+                        )
+                    }
+                }
+            } catch (_: Exception) {
+                emptyList()
+            }
+        }
     }
 }

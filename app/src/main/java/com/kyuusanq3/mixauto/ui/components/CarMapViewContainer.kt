@@ -93,6 +93,8 @@ private fun categoryColor(category: String): Color = when (category) {
 fun CarMapViewContainer(
     engine: CarMapEngine,
     limitSearchDistance: Boolean,
+    recentDestinations: List<SearchResultPlace>,
+    onDestinationSelected: (SearchResultPlace) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -245,6 +247,8 @@ fun CarMapViewContainer(
         NavigationSearchOverlay(
             engine = engine,
             limitSearchDistance = limitSearchDistance,
+            recentDestinations = recentDestinations,
+            onDestinationSelected = onDestinationSelected,
             onDismiss = { searchOpen = false },
         )
     }
