@@ -34,4 +34,6 @@ interface CarMapEngine {
     ): List<SearchResultPlace>
 
     fun getNearbyPois(lat: Double, lng: Double, limit: Int): List<SearchResultPlace>
+
+    fun setSavedPlaces(places: List<SearchResultPlace>)
 }

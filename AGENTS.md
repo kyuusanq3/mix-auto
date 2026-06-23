@@ -54,12 +54,16 @@ app/src/main/java/com/kyuusanq3/mixauto/
 └── ui/
     ├── components/
     │   ├── CarMapViewContainer.kt       # AndroidView bridge + HUD + search button
-    │   ├── NavigationSearchOverlay.kt   # Destination search dialog
+    │   ├── NavigationSearchOverlay.kt   # Destination search dialog (Recent/Saved/Nearby tabs)
+    │   ├── PoiDetailDrawer.kt           # Full-screen POI/dropped-pin details + star + navigate
     │   └── MapDataOverlay.kt            # Offline Overture POI download UI
     ├── theme/                   # Color, CarDimensions, Type, Theme
+    ├── onboarding/
+    │   └── OnboardingWizard.kt  # First-run / update permission wizard (location, notification access, mic)
     └── dashboard/
         ├── DashboardScreen.kt   # Map + media + shortcut dock layouts; draggable map/media divider; settings overlay
-        ├── MediaPlayerPane.kt   # Now playing UI (media session driven)
+        ├── MediaPlayerPane.kt   # Now playing UI (media session driven; album art gestures + mode picker)
+        ├── AlbumArtDisplay.kt   # Plain / Vinyl / Visualizer modes + Galaxy Watch-style picker carousel
         └── ShortcutDock.kt      # System app shortcuts
 ```
 
@@ -71,6 +75,7 @@ MainActivity (localPlacesRepo + mapEngine = MapLibreEngineImpl(localPlacesRepo))
         └── DashboardScreen(mapEngine, mapDataViewModel)
               ├── CarMapViewContainer — map pane (60% or CarDimensions.MapWeight)
               ├── MediaPlayerPane + ShortcutDock (Map Data + Launcher settings)
+              ├── PoiDetailDrawer — full-screen overlay when map POI/pin selected
               └── MapDataOverlay — offline POI country download
 ```
 
@@ -152,7 +157,9 @@ Bundled sample asset: `python tools/build_sample_places_db.py` (writes to `mix-a
 
 **Search integration:** `MapLibreEngineImpl.searchDestination()` fans out to local SQLite (FTS5 + bbox) and Photon in parallel, deduplicates within 50 m, sorts by distance. Optional 500 km cap (default ON) via Launcher Settings **"Nearby results only (within 500 km)"** — persisted in `LauncherPreferences.limitSearchDistance`, passed as `limitDistance` to the engine.
 
-**Recent destinations:** Up to 10 saved in `LauncherPreferences.recentDestinations` (JSON in SharedPreferences). `LauncherViewModel.addRecentDestination()` prepends, dedupes within 50 m, persists. Flow: `MainActivity` → `DashboardScreen` → `CarMapViewContainer` → `NavigationSearchOverlay`; any selection calls `onDestinationSelected` before `navigateToCoordinates`. Empty search field shows merged list: recents first, then `engine.getNearbyPois()` from `poiCache` to fill remaining slots — per-row **Recent** / **Nearby** badge in `SearchResultRow`, not section headers.
+**Recent destinations:** Up to 10 saved in `LauncherPreferences.recentDestinations` (JSON in SharedPreferences). `LauncherViewModel.addRecentDestination()` prepends, dedupes within 50 m, persists. Flow: `MainActivity` → `DashboardScreen` → `CarMapViewContainer` → `NavigationSearchOverlay`; any selection calls `onDestinationSelected` before `navigateToCoordinates`.
+
+**Saved places:** Up to 50 in `LauncherPreferences.savedPlaces` (same JSON schema + `isDroppedPin`). `LauncherViewModel.toggleSavedPlace()` dedupes at 50 m. Starred POIs show gold teardrop icons on map via `mapEngine.setSavedPlaces()` synced from `DashboardScreen`. Empty search field shows **Recent | Saved | Nearby** tabs; each row has a star button. Map tap anywhere opens `PoiDetailDrawer` at dashboard root (covers media pane) — POI pin, nearest cached POI within 500 m, or Dropped Pin.
 
 ## Manifest / launcher setup
 
@@ -220,18 +227,29 @@ After enabling Launcher Mode, press Home and select **Mix Auto** as the default 
 | Catalog loads but download 404 | Release exists but assets array empty — edit release and upload both files from `places-dist/` |
 | Manual import of `.gz` fails | Import path expects uncompressed `.db`; use in-app Download or decompress first |
 | Search shows overseas / 5000 km destinations | Default 500 km cap is ON — disable **Nearby results only (within 500 km)** in Launcher Settings to include farther Photon results; routing still may fail for long/cross-water trips |
-| Empty search shows no Nearby rows | Nearby fill uses `poiCache` only — pan/zoom map (zoom ≥ 13) so camera-idle POI load runs; no network fetch for empty-query nearby list |
+| Empty search shows no Nearby rows | Nearby tab uses `poiCache` only — pan/zoom map (zoom ≥ 13) so camera-idle POI load runs; no network fetch for empty-query nearby list |
+| Saved tab empty | Star a place from map tap drawer or search row star button — `LauncherPreferences.savedPlaces` persists up to 50 entries |
+| Map tap shows Dropped Pin instead of POI name | No POI pin hit and no `poiCache` entry within 500 m — zoom in (≥ 13) so POI pins load, or tap directly on a pin |
 | Route line disappears while navigating | Raster style: route layer must use `addLayerAbove(..., "osm")` in `drawRoute()` — plain `addLayer()` puts line under tiles |
 | Route line too thin | `ROUTE_WIDTH` is 14f with `ROUTE_CASING_LAYER_ID` (18f dark casing) below cyan line in `drawRoute()` |
 | Puck pauses/jumps between GPS fixes | `startDeadReckoning()` extrapolates puck at 16 ms using last speed + bearing; ensure `hasSpeed()` is present on fixes |
 | Puck spins when stopped in traffic | `enrichLocationWithBearing()` freezes bearing via `lastStableBearing` when speed < `STOPPED_SPEED_MPS` (1.4 m/s) |
 | Nav doesn't re-route after wrong turn | Off-route reroute needs 2 GPS fixes >75 m from `routeGeometryPoints`; 5 s cooldown between reroutes; check Logcat for `Off route` / `Re-routing` |
-| Music doesn't auto-play on launch | Enable notification access; autoplay runs once in `MediaSessionRepository.attachController()` when paused session has metadata |
+| Music doesn't auto-play on launch | Enable notification access; `maybeAutoPlay()` runs once per process when paused session has metadata — also retried from `onMetadataChanged()` (late metadata) and same-token `attachController()` re-attach; Logcat `MediaSessionRepository`: `Auto-playing paused media session on launch` |
 | Shortcut bar too small on head unit | Settings → **Large Shortcut Icons** doubles horizontal bar height and icon sizes |
 | TomTom traffic HTTP 400 `Invalid style: relative-delay` | Orbis v2 raster tiles only accept `style=light` or `style=dark` — not legacy styles (`relative`, `relative-delay`, etc.); see `MapLibreEngineImpl.applyTrafficOverlay()` |
 | TomTom traffic not showing / key unknown | Launcher Settings → paste key from developer.tomtom.com → **Test TomTom API Key**; enable Traffic Flow product on key; Logcat tag `TomTomTrafficClient` |
 | Traffic tiles fail with HTTP 403 | Invalid key or Traffic Flow API not enabled for that TomTom developer key |
 | Update check fails HTTP 404 | App uses GitHub Releases API (`AppUpdateRepository.RELEASES_API_URL`), not a `version.json` asset — attach `mix-auto.apk` to the release and set tag to semver (e.g. `0.0.5`); download URL is `releases/latest/download/mix-auto.apk` |
+| Vinyl album art shows as square/rectangle | `VinylAlbumArt`: use `clip(CircleShape)` then `graphicsLayer { rotationZ }` — not `Modifier.rotate` before clip |
+| Long-press on album art does nothing / swipes conflict with picker | Long-press opens `AlbumArtModePicker`; normal swipe gestures disabled while `isPickerOpen` in `MediaPlayerPane.kt` |
+| Album art too small in tall portrait pane | Size via `BoxWithConstraints`: `(if (maxWidth < maxHeight) maxWidth else maxHeight) * 0.92f` |
+| Unlike skips track in YT Music | `MediaSessionRepository.toggleLike()` never sends dislike/thumb_down — use unrated or re-toggle like action only |
+| Like heart not lit when returning to song | Per-track `likedTrackCache` in `MediaSessionRepository` keyed by media ID / title\|artist |
+| Voice button opens Assistant instead of search | Voice key only intercepted when destination search overlay is open — open map search first; grant **Microphone** permission on first use; Eonon may send `KEYCODE_SEARCH` instead of `KEYCODE_VOICE_ASSIST` (both handled in `MainActivity.onKeyDown`) |
+| Mic button missing in search overlay | `SpeechRecognizer.isRecognitionAvailable()` false on bare AOSP — install Google app or use typed search; mic hidden when no recognizer |
+| Onboarding wizard shows icon only, no title/body | `OnboardingWizard` root must be `Surface(color = OledBlack)` — bare `Box` leaves `LocalContentColor` black and `Car*Text` invisible on OLED background |
+| Re-test permission onboarding wizard | Clear app data or set `launcher_prefs` key `onboarding_version` to `0`; wizard shows when `onboardingVersion < CURRENT_ONBOARDING_VERSION` in `OnboardingWizard.kt` |
 
 ## Related agent resources
 

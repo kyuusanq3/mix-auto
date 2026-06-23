@@ -49,6 +49,7 @@ import com.kyuusanq3.mixauto.ui.theme.CarBodyText
 import com.kyuusanq3.mixauto.ui.theme.CarDimensions
 import com.kyuusanq3.mixauto.ui.theme.CarLabelText
 import com.kyuusanq3.mixauto.ui.theme.DeepCharcoal
+import com.kyuusanq3.mixauto.ui.theme.ElectricCyan
 
 private const val TAG = "ShortcutDock"
 private const val LAUNCHER_SETTINGS_KEY = "launcher_settings"
@@ -103,6 +104,7 @@ private val shortcutTargets = listOf(
 fun ShortcutDock(
     isHorizontal: Boolean,
     isLargeIcons: Boolean = false,
+    isSettingsOpen: Boolean = false,
     onOpenSettings: () -> Unit,
     onOpenMapData: () -> Unit,
     modifier: Modifier = Modifier,
@@ -169,6 +171,7 @@ fun ShortcutDock(
                     item(key = LAUNCHER_SETTINGS_KEY) {
                         SettingsDockItem(
                             horizontal = true,
+                            isActive = isSettingsOpen,
                             tapTarget = tapTarget,
                             iconSize = horizontalIconSize,
                             onClick = onOpenSettings,
@@ -209,6 +212,7 @@ fun ShortcutDock(
                         item(key = LAUNCHER_SETTINGS_KEY) {
                             SettingsDockItem(
                                 horizontal = false,
+                                isActive = isSettingsOpen,
                                 iconSize = verticalIconSize,
                                 onClick = onOpenSettings,
                             )
@@ -279,10 +283,12 @@ private fun MapDataDockItem(
 @Composable
 private fun SettingsDockItem(
     horizontal: Boolean,
+    isActive: Boolean = false,
     iconSize: Dp,
     onClick: () -> Unit,
     tapTarget: Dp = CarDimensions.DockHorizontalTapTarget,
 ) {
+    val iconTint = if (isActive) ElectricCyan else MaterialTheme.colorScheme.primary
     if (horizontal) {
         Box(
             modifier = Modifier
@@ -294,7 +300,7 @@ private fun SettingsDockItem(
                 imageVector = Icons.Filled.Tune,
                 contentDescription = "Launcher",
                 modifier = Modifier.size(iconSize),
-                tint = MaterialTheme.colorScheme.primary,
+                tint = iconTint,
             )
         }
     } else {
@@ -305,7 +311,11 @@ private fun SettingsDockItem(
                 .clickable(onClick = onClick),
             elevation = CardDefaults.elevatedCardElevation(defaultElevation = CarDimensions.CardElevation),
             colors = CardDefaults.elevatedCardColors(
-                containerColor = MaterialTheme.colorScheme.surfaceVariant,
+                containerColor = if (isActive) {
+                    MaterialTheme.colorScheme.primaryContainer
+                } else {
+                    MaterialTheme.colorScheme.surfaceVariant
+                },
             ),
         ) {
             Column(
@@ -319,7 +329,7 @@ private fun SettingsDockItem(
                     imageVector = Icons.Filled.Tune,
                     contentDescription = "Launcher",
                     modifier = Modifier.size(iconSize),
-                    tint = MaterialTheme.colorScheme.primary,
+                    tint = iconTint,
                 )
                 CarBodyText(
                     text = "Launcher",

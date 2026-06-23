@@ -5,10 +5,16 @@ import android.content.ComponentName
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Bundle
+import android.view.KeyEvent
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import androidx.core.view.WindowCompat
@@ -21,6 +27,10 @@ import com.kyuusanq3.mixauto.data.places.LocalPlacesRepository
 import com.kyuusanq3.mixauto.domain.map.CarMapEngine
 import com.kyuusanq3.mixauto.ui.dashboard.DashboardScreen
 import com.kyuusanq3.mixauto.ui.media.MediaPlayerViewModel
+import com.kyuusanq3.mixauto.ui.onboarding.CURRENT_ONBOARDING_VERSION
+import com.kyuusanq3.mixauto.ui.onboarding.OnboardingStep
+import com.kyuusanq3.mixauto.ui.onboarding.OnboardingWizard
+import com.kyuusanq3.mixauto.ui.onboarding.pendingOnboardingSteps
 import com.kyuusanq3.mixauto.ui.settings.AppUpdateViewModel
 import com.kyuusanq3.mixauto.ui.settings.LauncherPreferences
 import com.kyuusanq3.mixauto.ui.settings.LauncherViewModel
@@ -33,6 +43,11 @@ class MainActivity : ComponentActivity() {
 
     private lateinit var localPlacesRepository: LocalPlacesRepository
     private lateinit var mapEngine: CarMapEngine
+    private lateinit var launcherViewModel: LauncherViewModel
+    private lateinit var launcherPreferences: LauncherPreferences
+
+    private var showOnboarding by mutableStateOf(false)
+    private var pendingOnboardingSteps = emptyList<OnboardingStep>()
 
     private val locationPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions(),
@@ -44,7 +59,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        val launcherPreferences = LauncherPreferences(this)
+        launcherPreferences = LauncherPreferences(this)
         applyLauncherMode(launcherPreferences.isLauncherMode)
         localPlacesRepository = LocalPlacesRepository(this)
         mapEngine = MapLibreEngineImpl(
@@ -61,32 +76,41 @@ class MainActivity : ComponentActivity() {
         )
 
         MediaSessionRepository.getInstance(this)
+        launcherViewModel = ViewModelProvider(this)[LauncherViewModel::class.java]
+        pendingOnboardingSteps = pendingOnboardingSteps(launcherPreferences.onboardingVersion)
+        val shouldShowOnboarding = launcherPreferences.onboardingVersion < CURRENT_ONBOARDING_VERSION &&
+            pendingOnboardingSteps.isNotEmpty()
+        showOnboarding = shouldShowOnboarding
         WindowCompat.setDecorFitsSystemWindows(window, false)
         setContent {
             MixAutoTheme {
-                val launcherViewModel: LauncherViewModel = viewModel()
-                val mediaViewModel: MediaPlayerViewModel = viewModel()
-                val mapDataViewModel: MapDataViewModel = viewModel(
-                    factory = MapDataViewModelFactory(
-                        application = application,
-                        localPlacesRepository = localPlacesRepository,
-                    ),
-                )
-                val mediaState by mediaViewModel.mediaState.collectAsStateWithLifecycle()
+                Box(modifier = Modifier.fillMaxSize()) {
+                    val mediaViewModel: MediaPlayerViewModel = viewModel()
+                    val mapDataViewModel: MapDataViewModel = viewModel(
+                        factory = MapDataViewModelFactory(
+                            application = application,
+                            localPlacesRepository = localPlacesRepository,
+                        ),
+                    )
+                    val mediaState by mediaViewModel.mediaState.collectAsStateWithLifecycle()
 
-                DashboardScreen(
+                    DashboardScreen(
                     mapEngine = mapEngine,
                     mapDataViewModel = mapDataViewModel,
                     mediaState = mediaState,
                     onMediaPlayPause = mediaViewModel::playPause,
                     onMediaSkipPrevious = mediaViewModel::skipToPrevious,
                     onMediaSkipNext = mediaViewModel::skipToNext,
+                    onMediaToggleLike = mediaViewModel::toggleLike,
+                    onMediaToggleShuffle = mediaViewModel::toggleShuffle,
                     isLeftHandDrive = launcherViewModel.isLeftHandDrive,
                     isShortcutsHorizontal = launcherViewModel.isShortcutsHorizontal,
                     mapMediaRatio = launcherViewModel.mapMediaRatio,
                     limitSearchDistance = launcherViewModel.limitSearchDistance,
                     recentDestinations = launcherViewModel.recentDestinations,
+                    savedPlaces = launcherViewModel.savedPlaces,
                     onDestinationSelected = launcherViewModel::addRecentDestination,
+                    onToggleSavedPlace = launcherViewModel::toggleSavedPlace,
                     useVectorTiles = launcherViewModel.useVectorTiles,
                     showTraffic = launcherViewModel.showTraffic,
                     tomTomApiKey = launcherViewModel.tomTomApiKey,
@@ -147,15 +171,41 @@ class MainActivity : ComponentActivity() {
                     },
                     onInstallApk = ::launchApkInstall,
                 )
+
+                    if (showOnboarding) {
+                        OnboardingWizard(
+                            pendingSteps = pendingOnboardingSteps,
+                            onComplete = {
+                                launcherPreferences.onboardingVersion = CURRENT_ONBOARDING_VERSION
+                                showOnboarding = false
+                                requestLocationPermissionIfNeeded()
+                                MediaSessionRepository.getInstance(this@MainActivity).refreshSessions()
+                            },
+                        )
+                    }
+                }
             }
         }
         ViewModelProvider(this)[AppUpdateViewModel::class.java].checkForUpdate()
-        requestLocationPermissionIfNeeded()
+        if (!shouldShowOnboarding) {
+            requestLocationPermissionIfNeeded()
+        }
     }
 
     override fun onResume() {
         super.onResume()
         MediaSessionRepository.getInstance(this).refreshSessions()
+    }
+
+    override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
+        if ((keyCode == KeyEvent.KEYCODE_VOICE_ASSIST || keyCode == KeyEvent.KEYCODE_SEARCH) &&
+            ::launcherViewModel.isInitialized &&
+            launcherViewModel.isDestinationSearchOpen
+        ) {
+            launcherViewModel.triggerVoiceSearch()
+            return true
+        }
+        return super.onKeyDown(keyCode, event)
     }
 
     private fun requestLocationPermissionIfNeeded() {

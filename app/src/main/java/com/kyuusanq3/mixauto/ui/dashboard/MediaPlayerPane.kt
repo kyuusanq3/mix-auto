@@ -2,11 +2,14 @@ package com.kyuusanq3.mixauto.ui.dashboard
 
 import android.content.Intent
 import android.provider.Settings
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -16,22 +19,36 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Shuffle
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
+import androidx.compose.material.icons.outlined.FavoriteBorder
 import androidx.compose.material3.Button
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import com.kyuusanq3.mixauto.domain.media.MediaPlaybackState
 import com.kyuusanq3.mixauto.ui.theme.CarBodyText
@@ -39,6 +56,12 @@ import com.kyuusanq3.mixauto.ui.theme.CarDimensions
 import com.kyuusanq3.mixauto.ui.theme.CarHeadlineText
 import com.kyuusanq3.mixauto.ui.theme.CarLabelText
 import com.kyuusanq3.mixauto.ui.theme.DarkSurface
+import com.kyuusanq3.mixauto.ui.theme.ElectricCyan
+import kotlin.math.abs
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.launch
+
+private val AlbumArtSwipeThreshold = 40.dp
 
 @Composable
 fun MediaPlayerPane(
@@ -46,9 +69,24 @@ fun MediaPlayerPane(
     onPlayPause: () -> Unit,
     onSkipPrevious: () -> Unit,
     onSkipNext: () -> Unit,
+    onToggleLike: () -> Unit,
+    onToggleShuffle: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
+    val artModeState = remember { mutableStateOf(AlbumArtMode.PLAIN) }
+    val artMode by artModeState
+    var isPickerOpen by remember { mutableStateOf(false) }
+    var pickerIndex by remember { mutableIntStateOf(0) }
+    val swipeThresholdPx = with(LocalDensity.current) { AlbumArtSwipeThreshold.toPx() }
+    val onPlayPauseState = rememberUpdatedState(onPlayPause)
+    val onSkipPreviousState = rememberUpdatedState(onSkipPrevious)
+    val onSkipNextState = rememberUpdatedState(onSkipNext)
+    val onToggleLikeState = rememberUpdatedState(onToggleLike)
+    val onToggleShuffleState = rememberUpdatedState(onToggleShuffle)
+    val supportsLikeState = rememberUpdatedState(mediaState.supportsLike)
+    val supportsShuffleState = rememberUpdatedState(mediaState.supportsShuffle)
+    val hasActiveSessionState = rememberUpdatedState(mediaState.hasActiveSession)
 
     ElevatedCard(
         modifier = modifier.padding(CarDimensions.PaneGap),
@@ -95,25 +133,116 @@ fun MediaPlayerPane(
                 } else {
                     Box(
                         modifier = Modifier
-                            .size(CarDimensions.PrimaryTapTarget)
-                            .background(
-                                color = MaterialTheme.colorScheme.surfaceVariant,
-                                shape = MaterialTheme.shapes.medium,
-                            ),
-                        contentAlignment = Alignment.Center,
+                            .weight(1f)
+                            .fillMaxWidth(),
                     ) {
-                        if (mediaState.albumArt != null) {
-                            Image(
-                                bitmap = mediaState.albumArt.asImageBitmap(),
-                                contentDescription = "Album art",
-                                modifier = Modifier.fillMaxSize(),
-                            )
-                        } else {
-                            CarLabelText(
-                                text = "Album Art",
-                                style = MaterialTheme.typography.labelMedium,
-                            )
+                        BoxWithConstraints(
+                            modifier = Modifier.fillMaxSize(),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            val artSize = (if (maxWidth < maxHeight) maxWidth else maxHeight) * 0.92f
+                            val gestureModifier = if (!isPickerOpen) {
+                                Modifier.pointerInput(
+                                    mediaState.hasActiveSession,
+                                    mediaState.supportsLike,
+                                    mediaState.supportsShuffle,
+                                    swipeThresholdPx,
+                                ) {
+                                    coroutineScope {
+                                        launch {
+                                            detectTapGestures(
+                                                onDoubleTap = {
+                                                    if (hasActiveSessionState.value) {
+                                                        onPlayPauseState.value()
+                                                    }
+                                                },
+                                                onLongPress = {
+                                                    pickerIndex = artModeState.value.ordinal
+                                                    isPickerOpen = true
+                                                },
+                                            )
+                                        }
+                                        launch {
+                                            awaitEachGesture {
+                                                if (!hasActiveSessionState.value) return@awaitEachGesture
+                                                val down = awaitFirstDown(requireUnconsumed = false)
+                                                var drag = Offset.Zero
+                                                var isDrag = false
+                                                while (true) {
+                                                    val event = awaitPointerEvent()
+                                                    val change = event.changes.firstOrNull { it.id == down.id }
+                                                        ?: break
+                                                    drag += change.positionChange()
+                                                    if (!change.pressed) break
+                                                    if (drag.getDistance() > swipeThresholdPx) {
+                                                        isDrag = true
+                                                    }
+                                                    if (isDrag) {
+                                                        change.consume()
+                                                    }
+                                                }
+                                                if (!isDrag) return@awaitEachGesture
+                                                val absX = abs(drag.x)
+                                                val absY = abs(drag.y)
+                                                when {
+                                                    absY > absX && drag.y < 0f && supportsLikeState.value -> {
+                                                        onToggleLikeState.value()
+                                                    }
+                                                    absY > absX && drag.y > 0f && supportsShuffleState.value -> {
+                                                        onToggleShuffleState.value()
+                                                    }
+                                                    absX > absY && drag.x < 0f -> {
+                                                        onSkipPreviousState.value()
+                                                    }
+                                                    absX > absY && drag.x > 0f -> {
+                                                        onSkipNextState.value()
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            } else {
+                                Modifier
+                            }
+
+                            if (isPickerOpen) {
+                                AlbumArtModePicker(
+                                    albumArt = mediaState.albumArt,
+                                    isPlaying = mediaState.isPlaying,
+                                    selectedIndex = pickerIndex,
+                                    onSelectedIndexChange = { pickerIndex = it },
+                                    onConfirm = { mode ->
+                                        artModeState.value = mode
+                                        isPickerOpen = false
+                                    },
+                                    tileSize = artSize,
+                                    modifier = Modifier
+                                        .size(artSize)
+                                        .fillMaxWidth(),
+                                )
+                            } else {
+                                Box(
+                                    modifier = Modifier
+                                        .size(artSize)
+                                        .then(gestureModifier)
+                                        .clip(RoundedCornerShape(12.dp))
+                                        .background(
+                                            color = MaterialTheme.colorScheme.surfaceVariant,
+                                            shape = RoundedCornerShape(12.dp),
+                                        ),
+                                    contentAlignment = Alignment.Center,
+                                ) {
+                                    AlbumArtModeContent(
+                                        mode = artMode,
+                                        albumArt = mediaState.albumArt,
+                                        isPlaying = mediaState.isPlaying,
+                                        modifier = Modifier.fillMaxSize(),
+                                    )
+                                }
+                            }
                         }
+
                     }
 
                     CarHeadlineText(
@@ -141,6 +270,18 @@ fun MediaPlayerPane(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     MediaControlButton(
+                        onClick = onToggleShuffle,
+                        contentDescription = if (mediaState.isShuffleOn) {
+                            "Shuffle on"
+                        } else {
+                            "Shuffle off"
+                        },
+                        icon = Icons.Filled.Shuffle,
+                        enabled = mediaState.hasActiveSession && mediaState.supportsShuffle,
+                        active = mediaState.isShuffleOn,
+                        modifier = Modifier.weight(1f),
+                    )
+                    MediaControlButton(
                         onClick = onSkipPrevious,
                         contentDescription = "Previous",
                         icon = Icons.Filled.SkipPrevious,
@@ -162,6 +303,14 @@ fun MediaPlayerPane(
                         enabled = mediaState.hasActiveSession,
                         modifier = Modifier.weight(1f),
                     )
+                    MediaControlButton(
+                        onClick = onToggleLike,
+                        contentDescription = if (mediaState.isLiked == true) "Unlike" else "Like",
+                        icon = if (mediaState.isLiked == true) Icons.Filled.Favorite else Icons.Outlined.FavoriteBorder,
+                        enabled = mediaState.hasActiveSession && mediaState.supportsLike,
+                        active = mediaState.isLiked == true,
+                        modifier = Modifier.weight(1f),
+                    )
                 }
             }
         }
@@ -175,6 +324,7 @@ private fun MediaControlButton(
     icon: ImageVector,
     modifier: Modifier = Modifier,
     emphasized: Boolean = false,
+    active: Boolean = false,
     enabled: Boolean = true,
 ) {
     Box(
@@ -193,10 +343,10 @@ private fun MediaControlButton(
                 modifier = Modifier.requiredSize(
                     if (emphasized) CarDimensions.AppIconSize else CarDimensions.AppIconSize - 8.dp,
                 ),
-                tint = if (enabled) {
-                    MaterialTheme.colorScheme.primary
-                } else {
-                    MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
+                tint = when {
+                    !enabled -> MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
+                    active -> ElectricCyan
+                    else -> MaterialTheme.colorScheme.primary
                 },
             )
         }

@@ -11,6 +11,8 @@ import com.kyuusanq3.mixauto.data.map.TomTomKeyCheckResult
 import com.kyuusanq3.mixauto.data.map.TomTomTrafficClient
 import com.kyuusanq3.mixauto.domain.map.SearchResultPlace
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -66,8 +68,21 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     var recentDestinations by mutableStateOf(preferences.recentDestinations)
         private set
 
+    var savedPlaces by mutableStateOf(preferences.savedPlaces)
+        private set
+
     var tomTomKeyCheckState by mutableStateOf<TomTomKeyCheckState>(TomTomKeyCheckState.Idle)
         private set
+
+    var isDestinationSearchOpen by mutableStateOf(false)
+        internal set
+
+    private val _voiceSearchTrigger = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+    val voiceSearchTrigger = _voiceSearchTrigger.asSharedFlow()
+
+    fun triggerVoiceSearch() {
+        _voiceSearchTrigger.tryEmit(Unit)
+    }
 
     fun toggleLeftHandDrive() {
         isLeftHandDrive = !isLeftHandDrive
@@ -142,6 +157,20 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         val updated = listOf(place) + filtered
         recentDestinations = updated.take(LauncherPreferences.MAX_RECENT_DESTINATIONS)
         preferences.recentDestinations = recentDestinations
+    }
+
+    fun toggleSavedPlace(place: SearchResultPlace) {
+        val existing = savedPlaces.find { isWithinDedupThreshold(it, place) }
+        savedPlaces = if (existing != null) {
+            savedPlaces.filterNot { isWithinDedupThreshold(it, place) }
+        } else {
+            (listOf(place) + savedPlaces).take(LauncherPreferences.MAX_SAVED_PLACES)
+        }
+        preferences.savedPlaces = savedPlaces
+    }
+
+    fun isPlaceSaved(place: SearchResultPlace): Boolean {
+        return savedPlaces.any { isWithinDedupThreshold(it, place) }
     }
 
     fun checkTomTomApiKey() {

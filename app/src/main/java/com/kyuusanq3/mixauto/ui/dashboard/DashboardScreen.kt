@@ -1,6 +1,9 @@
 package com.kyuusanq3.mixauto.ui.dashboard
 
 import android.content.res.Configuration
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
@@ -32,6 +35,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -55,6 +59,7 @@ import com.kyuusanq3.mixauto.domain.media.MediaPlaybackState
 import com.kyuusanq3.mixauto.ui.components.CarMapViewContainer
 import com.kyuusanq3.mixauto.ui.components.MapDataOverlay
 import com.kyuusanq3.mixauto.ui.components.OverlayCloseButton
+import com.kyuusanq3.mixauto.ui.components.PoiDetailDrawer
 import com.kyuusanq3.mixauto.ui.settings.AppUpdateState
 import com.kyuusanq3.mixauto.ui.settings.AppUpdateViewModel
 import com.kyuusanq3.mixauto.ui.settings.LauncherViewModel
@@ -69,6 +74,20 @@ import com.kyuusanq3.mixauto.ui.theme.OledBlack
 import java.io.File
 import kotlin.math.roundToInt
 
+private const val SAVED_PLACE_DEDUP_THRESHOLD_M = 50f
+
+private fun isSavedPlaceMatch(a: SearchResultPlace, b: SearchResultPlace): Boolean {
+    val distanceResults = FloatArray(1)
+    android.location.Location.distanceBetween(
+        a.latitude,
+        a.longitude,
+        b.latitude,
+        b.longitude,
+        distanceResults,
+    )
+    return distanceResults[0] < SAVED_PLACE_DEDUP_THRESHOLD_M
+}
+
 @Composable
 fun DashboardScreen(
     mapEngine: CarMapEngine,
@@ -77,12 +96,16 @@ fun DashboardScreen(
     onMediaPlayPause: () -> Unit,
     onMediaSkipPrevious: () -> Unit,
     onMediaSkipNext: () -> Unit,
+    onMediaToggleLike: () -> Unit,
+    onMediaToggleShuffle: () -> Unit,
     isLeftHandDrive: Boolean,
     isShortcutsHorizontal: Boolean,
     mapMediaRatio: Float,
     limitSearchDistance: Boolean,
     recentDestinations: List<SearchResultPlace>,
+    savedPlaces: List<SearchResultPlace>,
     onDestinationSelected: (SearchResultPlace) -> Unit,
+    onToggleSavedPlace: (SearchResultPlace) -> Unit,
     useVectorTiles: Boolean,
     showTraffic: Boolean,
     tomTomApiKey: String,
@@ -110,6 +133,7 @@ fun DashboardScreen(
 ) {
     var settingsOpen by remember { mutableStateOf(false) }
     var mapDataOpen by remember { mutableStateOf(false) }
+    val mapUiState by mapEngine.uiState.collectAsStateWithLifecycle()
     val appUpdateViewModel: AppUpdateViewModel = viewModel()
     val appUpdateState by appUpdateViewModel.uiState.collectAsStateWithLifecycle()
     val configuration = LocalConfiguration.current
@@ -122,6 +146,10 @@ fun DashboardScreen(
     var landscapeMapMediaContainerPx by remember { mutableStateOf(0f) }
     var verticalDockRowWidthPx by remember { mutableStateOf(0f) }
     val verticalDockMapMediaContainerPx = verticalDockRowWidthPx * dockContentWeight
+
+    LaunchedEffect(savedPlaces) {
+        mapEngine.setSavedPlaces(savedPlaces)
+    }
 
     Box(
         modifier = modifier
@@ -142,7 +170,9 @@ fun DashboardScreen(
                             engine = mapEngine,
                             limitSearchDistance = limitSearchDistance,
                             recentDestinations = recentDestinations,
+                            savedPlaces = savedPlaces,
                             onDestinationSelected = onDestinationSelected,
+                            onToggleSavedPlace = onToggleSavedPlace,
                             modifier = Modifier
                                 .weight(mapMediaRatio)
                                 .fillMaxWidth(),
@@ -160,6 +190,8 @@ fun DashboardScreen(
                             onMediaPlayPause = onMediaPlayPause,
                             onMediaSkipPrevious = onMediaSkipPrevious,
                             onMediaSkipNext = onMediaSkipNext,
+                            onMediaToggleLike = onMediaToggleLike,
+                            onMediaToggleShuffle = onMediaToggleShuffle,
                             isLeftHandDrive = isLeftHandDrive,
                             isShortcutsHorizontal = isShortcutsHorizontal,
                             limitSearchDistance = limitSearchDistance,
@@ -196,7 +228,8 @@ fun DashboardScreen(
                     ShortcutDock(
                         isHorizontal = true,
                         isLargeIcons = isLargeShortcutIcons,
-                        onOpenSettings = { settingsOpen = true },
+                        isSettingsOpen = settingsOpen,
+                        onOpenSettings = { settingsOpen = !settingsOpen },
                         onOpenMapData = { mapDataOpen = true },
                         modifier = Modifier
                             .fillMaxWidth()
@@ -220,7 +253,9 @@ fun DashboardScreen(
                                 engine = mapEngine,
                                 limitSearchDistance = limitSearchDistance,
                                 recentDestinations = recentDestinations,
+                                savedPlaces = savedPlaces,
                                 onDestinationSelected = onDestinationSelected,
+                                onToggleSavedPlace = onToggleSavedPlace,
                                 modifier = Modifier
                                     .weight(mapMediaRatio)
                                     .fillMaxSize(),
@@ -238,6 +273,8 @@ fun DashboardScreen(
                                 onMediaPlayPause = onMediaPlayPause,
                                 onMediaSkipPrevious = onMediaSkipPrevious,
                                 onMediaSkipNext = onMediaSkipNext,
+                                onMediaToggleLike = onMediaToggleLike,
+                                onMediaToggleShuffle = onMediaToggleShuffle,
                                 isLeftHandDrive = isLeftHandDrive,
                                 isShortcutsHorizontal = isShortcutsHorizontal,
                                 limitSearchDistance = limitSearchDistance,
@@ -278,6 +315,8 @@ fun DashboardScreen(
                                 onMediaPlayPause = onMediaPlayPause,
                                 onMediaSkipPrevious = onMediaSkipPrevious,
                                 onMediaSkipNext = onMediaSkipNext,
+                                onMediaToggleLike = onMediaToggleLike,
+                                onMediaToggleShuffle = onMediaToggleShuffle,
                                 isLeftHandDrive = isLeftHandDrive,
                                 isShortcutsHorizontal = isShortcutsHorizontal,
                                 limitSearchDistance = limitSearchDistance,
@@ -321,7 +360,9 @@ fun DashboardScreen(
                                 engine = mapEngine,
                                 limitSearchDistance = limitSearchDistance,
                                 recentDestinations = recentDestinations,
+                                savedPlaces = savedPlaces,
                                 onDestinationSelected = onDestinationSelected,
+                                onToggleSavedPlace = onToggleSavedPlace,
                                 modifier = Modifier
                                     .weight(mapMediaRatio)
                                     .fillMaxSize(),
@@ -331,7 +372,8 @@ fun DashboardScreen(
                     ShortcutDock(
                         isHorizontal = true,
                         isLargeIcons = isLargeShortcutIcons,
-                        onOpenSettings = { settingsOpen = true },
+                        isSettingsOpen = settingsOpen,
+                        onOpenSettings = { settingsOpen = !settingsOpen },
                         onOpenMapData = { mapDataOpen = true },
                         modifier = Modifier
                             .fillMaxWidth()
@@ -351,7 +393,9 @@ fun DashboardScreen(
                             engine = mapEngine,
                             limitSearchDistance = limitSearchDistance,
                             recentDestinations = recentDestinations,
+                            savedPlaces = savedPlaces,
                             onDestinationSelected = onDestinationSelected,
+                            onToggleSavedPlace = onToggleSavedPlace,
                             modifier = Modifier
                                 .weight(landscapeMapWeight)
                                 .fillMaxSize(),
@@ -369,6 +413,8 @@ fun DashboardScreen(
                             onMediaPlayPause = onMediaPlayPause,
                             onMediaSkipPrevious = onMediaSkipPrevious,
                             onMediaSkipNext = onMediaSkipNext,
+                            onMediaToggleLike = onMediaToggleLike,
+                            onMediaToggleShuffle = onMediaToggleShuffle,
                             isLeftHandDrive = isLeftHandDrive,
                             isShortcutsHorizontal = isShortcutsHorizontal,
                             limitSearchDistance = limitSearchDistance,
@@ -404,7 +450,8 @@ fun DashboardScreen(
                         ShortcutDock(
                             isHorizontal = false,
                             isLargeIcons = isLargeShortcutIcons,
-                            onOpenSettings = { settingsOpen = true },
+                            isSettingsOpen = settingsOpen,
+                            onOpenSettings = { settingsOpen = !settingsOpen },
                             onOpenMapData = { mapDataOpen = true },
                             modifier = Modifier
                                 .weight(CarDimensions.DockVerticalWeight)
@@ -414,7 +461,8 @@ fun DashboardScreen(
                         ShortcutDock(
                             isHorizontal = false,
                             isLargeIcons = isLargeShortcutIcons,
-                            onOpenSettings = { settingsOpen = true },
+                            isSettingsOpen = settingsOpen,
+                            onOpenSettings = { settingsOpen = !settingsOpen },
                             onOpenMapData = { mapDataOpen = true },
                             modifier = Modifier
                                 .weight(CarDimensions.DockVerticalWeight)
@@ -424,7 +472,9 @@ fun DashboardScreen(
                             engine = mapEngine,
                             limitSearchDistance = limitSearchDistance,
                             recentDestinations = recentDestinations,
+                            savedPlaces = savedPlaces,
                             onDestinationSelected = onDestinationSelected,
+                            onToggleSavedPlace = onToggleSavedPlace,
                             modifier = Modifier
                                 .weight(landscapeMapWeight)
                                 .fillMaxSize(),
@@ -442,6 +492,8 @@ fun DashboardScreen(
                             onMediaPlayPause = onMediaPlayPause,
                             onMediaSkipPrevious = onMediaSkipPrevious,
                             onMediaSkipNext = onMediaSkipNext,
+                            onMediaToggleLike = onMediaToggleLike,
+                            onMediaToggleShuffle = onMediaToggleShuffle,
                             isLeftHandDrive = isLeftHandDrive,
                             isShortcutsHorizontal = isShortcutsHorizontal,
                             limitSearchDistance = limitSearchDistance,
@@ -485,6 +537,27 @@ fun DashboardScreen(
                 onDismiss = { mapDataOpen = false },
             )
         }
+
+        val selectedPoi = mapUiState.selectedPoi
+        AnimatedVisibility(
+            visible = selectedPoi != null,
+            modifier = Modifier.fillMaxSize(),
+            enter = slideInVertically { it },
+            exit = slideOutVertically { it },
+        ) {
+            selectedPoi?.let { poi ->
+                PoiDetailDrawer(
+                    poi = poi,
+                    isStarred = savedPlaces.any { saved -> isSavedPlaceMatch(saved, poi) },
+                    onStar = { onToggleSavedPlace(poi) },
+                    onNavigate = {
+                        onDestinationSelected(poi)
+                        mapEngine.navigateToCoordinates(poi.latitude, poi.longitude)
+                    },
+                    onDismiss = { mapEngine.dismissSelectedPoi() },
+                )
+            }
+        }
     }
 }
 
@@ -496,6 +569,8 @@ private fun MediaOrSettingsPane(
     onMediaPlayPause: () -> Unit,
     onMediaSkipPrevious: () -> Unit,
     onMediaSkipNext: () -> Unit,
+    onMediaToggleLike: () -> Unit,
+    onMediaToggleShuffle: () -> Unit,
     isLeftHandDrive: Boolean,
     isShortcutsHorizontal: Boolean,
     limitSearchDistance: Boolean,
@@ -566,6 +641,8 @@ private fun MediaOrSettingsPane(
                 onPlayPause = onMediaPlayPause,
                 onSkipPrevious = onMediaSkipPrevious,
                 onSkipNext = onMediaSkipNext,
+                onToggleLike = onMediaToggleLike,
+                onToggleShuffle = onMediaToggleShuffle,
                 modifier = Modifier.fillMaxSize(),
             )
         }

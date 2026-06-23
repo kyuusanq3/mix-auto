@@ -30,15 +30,27 @@ object PoiIconFactory {
         CategoryIconSpec("poi_icon_default", 0xFF00E5FF.toInt(), "•"),
     )
 
+    private const val STARRED_COLOR = 0xFFFFD700.toInt()
+    private const val STARRED_LABEL = "★"
+
     fun createAllIcons(density: Float): Map<String, Bitmap> {
-        return CATEGORY_SPECS.associate { spec ->
-            spec.iconId to drawPinBitmap(
+        val icons = mutableMapOf<String, Bitmap>()
+        CATEGORY_SPECS.forEach { spec ->
+            icons[spec.iconId] = drawPinBitmap(
                 color = spec.color,
                 label = spec.label,
                 density = density,
             )
+            icons[starredIconId(spec.iconId)] = drawPinBitmap(
+                color = STARRED_COLOR,
+                label = STARRED_LABEL,
+                density = density,
+            )
         }
+        return icons
     }
+
+    fun starredIconId(baseIconId: String): String = "poi_icon_starred_${baseIconId.removePrefix("poi_icon_")}"
 
     private fun drawPinBitmap(color: Int, label: String, density: Float): Bitmap {
         val width = (PIN_W_DP * density).toInt().coerceAtLeast(1)

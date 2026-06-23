@@ -89,7 +89,7 @@ class LauncherPreferences(context: Context) {
     var recentDestinations: List<SearchResultPlace>
         get() {
             val json = prefs.getString(KEY_RECENT_DESTINATIONS, null) ?: return emptyList()
-            return parseRecentDestinations(json)
+            return parsePlacesJson(json)
         }
         set(value) {
             val array = JSONArray()
@@ -97,6 +97,25 @@ class LauncherPreferences(context: Context) {
                 array.put(placeToJson(place))
             }
             prefs.edit().putString(KEY_RECENT_DESTINATIONS, array.toString()).apply()
+        }
+
+    var savedPlaces: List<SearchResultPlace>
+        get() {
+            val json = prefs.getString(KEY_SAVED_PLACES, null) ?: return emptyList()
+            return parsePlacesJson(json)
+        }
+        set(value) {
+            val array = JSONArray()
+            value.take(MAX_SAVED_PLACES).forEach { place ->
+                array.put(placeToJson(place))
+            }
+            prefs.edit().putString(KEY_SAVED_PLACES, array.toString()).apply()
+        }
+
+    var onboardingVersion: Int
+        get() = prefs.getInt(KEY_ONBOARDING_VERSION, 0)
+        set(value) {
+            prefs.edit().putInt(KEY_ONBOARDING_VERSION, value).apply()
         }
 
     companion object {
@@ -115,7 +134,10 @@ class LauncherPreferences(context: Context) {
         private const val KEY_SHOW_TRAFFIC = "show_traffic"
         private const val KEY_TOMTOM_API_KEY = "tomtom_api_key"
         private const val KEY_RECENT_DESTINATIONS = "recent_destinations"
+        private const val KEY_SAVED_PLACES = "saved_places"
+        private const val KEY_ONBOARDING_VERSION = "onboarding_version"
         const val MAX_RECENT_DESTINATIONS = 10
+        const val MAX_SAVED_PLACES = 50
         const val DEFAULT_MAP_MEDIA_RATIO = 0.6f
         const val DEFAULT_DRIVING_ZOOM = 17.5f
         const val DEFAULT_PUCK_H_OFFSET = 0.3f
@@ -130,9 +152,10 @@ class LauncherPreferences(context: Context) {
                 put("longitude", place.longitude)
                 put("distanceInMeters", place.distanceInMeters.toDouble())
                 put("category", place.category)
+                put("isDroppedPin", place.isDroppedPin)
             }
 
-        private fun parseRecentDestinations(json: String): List<SearchResultPlace> {
+        private fun parsePlacesJson(json: String): List<SearchResultPlace> {
             return try {
                 val array = JSONArray(json)
                 buildList {
@@ -146,6 +169,7 @@ class LauncherPreferences(context: Context) {
                                 longitude = obj.getDouble("longitude"),
                                 distanceInMeters = obj.optDouble("distanceInMeters", 0.0).toFloat(),
                                 category = obj.optString("category", ""),
+                                isDroppedPin = obj.optBoolean("isDroppedPin", false),
                             ),
                         )
                     }

@@ -7,4 +7,5 @@ data class SearchResultPlace(
     val longitude: Double,
     val distanceInMeters: Float = 0f,
     val category: String = "",
+    val isDroppedPin: Boolean = false,
 )

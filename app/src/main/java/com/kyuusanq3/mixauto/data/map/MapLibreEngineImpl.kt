@@ -66,7 +66,10 @@ import org.maplibre.android.style.sources.TileSet
 import org.maplibre.android.style.sources.VectorSource
 import kotlin.math.cos
 import kotlin.math.max
+import kotlin.math.roundToInt
 import kotlin.math.sin
+
+private data class ClosestSegmentResult(val distM: Float, val lat: Double, val lng: Double)
 
 private data class LegStep(
     val maneuverLat: Double,
@@ -136,6 +139,7 @@ class MapLibreEngineImpl(
     private var poiRefreshJob: Job? = null
     private var lastPhotonQueryCenter: LatLng? = null
     private val poiCache = mutableMapOf<String, SearchResultPlace>()
+    private var savedPlacesKeys = emptySet<String>()
     private var routeGeometryPoints: List<LatLng> = emptyList()
     private var offRouteCount: Int = 0
     private var rerouteCooldownUntilMs: Long = 0L
@@ -660,6 +664,11 @@ class MapLibreEngineImpl(
 
     override fun dismissSelectedPoi() {
         _uiState.update { it.copy(selectedPoi = null) }
+    }
+
+    override fun setSavedPlaces(places: List<SearchResultPlace>) {
+        savedPlacesKeys = places.map { savedPlaceKey(it) }.toSet()
+        updatePoiLayerFromCache()
     }
 
     private fun applyFreeDriveToMap(map: MapLibreMap) {
@@ -1299,39 +1308,39 @@ class MapLibreEngineImpl(
         map.addOnMapClickListener { latLng ->
             val screenPoint = map.projection.toScreenLocation(latLng)
             val features = map.queryRenderedFeatures(screenPoint, POI_LAYER_ID)
-            val feature = features.firstOrNull() ?: return@addOnMapClickListener false
-
-            val name = feature.getStringProperty("name") ?: return@addOnMapClickListener false
-            val subtitle = feature.getStringProperty("subtitle").orEmpty()
-            val category = feature.getStringProperty("category").orEmpty()
-            val lat = feature.getNumberProperty("lat")?.toDouble() ?: return@addOnMapClickListener false
-            val lng = feature.getNumberProperty("lng")?.toDouble() ?: return@addOnMapClickListener false
-
-            val distanceResults = FloatArray(1)
-            val reference = lastKnownLocation
-            val distanceInMeters = if (reference != null) {
-                Location.distanceBetween(
-                    reference.latitude,
-                    reference.longitude,
-                    lat,
-                    lng,
-                    distanceResults,
+            val feature = features.firstOrNull()
+            val selectedPlace = if (feature != null) {
+                val name = feature.getStringProperty("name") ?: return@addOnMapClickListener false
+                val subtitle = feature.getStringProperty("subtitle").orEmpty()
+                val category = feature.getStringProperty("category").orEmpty()
+                val lat = feature.getNumberProperty("lat")?.toDouble() ?: return@addOnMapClickListener false
+                val lng = feature.getNumberProperty("lng")?.toDouble() ?: return@addOnMapClickListener false
+                SearchResultPlace(
+                    name = name,
+                    subTitle = subtitle,
+                    latitude = lat,
+                    longitude = lng,
+                    category = category,
                 )
-                distanceResults[0]
             } else {
-                0f
+                findNearestPoiInCache(latLng.latitude, latLng.longitude)
+                    ?: SearchResultPlace(
+                        name = "Dropped Pin",
+                        subTitle = formatLatLng(latLng.latitude, latLng.longitude),
+                        latitude = latLng.latitude,
+                        longitude = latLng.longitude,
+                        isDroppedPin = true,
+                    )
             }
+
+            val distanceInMeters = computeDistanceFromReference(
+                selectedPlace.latitude,
+                selectedPlace.longitude,
+            )
 
             _uiState.update {
                 it.copy(
-                    selectedPoi = SearchResultPlace(
-                        name = name,
-                        subTitle = subtitle,
-                        latitude = lat,
-                        longitude = lng,
-                        distanceInMeters = distanceInMeters,
-                        category = category,
-                    ),
+                    selectedPoi = selectedPlace.copy(distanceInMeters = distanceInMeters),
                 )
             }
             true
@@ -1612,6 +1621,7 @@ class MapLibreEngineImpl(
                         put("lat", place.latitude)
                         put("lng", place.longitude)
                         put("category", place.category)
+                        put("starred", savedPlacesKeys.contains(savedPlaceKey(place)))
                     },
                 )
             }
@@ -1820,29 +1830,42 @@ class MapLibreEngineImpl(
 
     private fun applyAndroidLocation(location: Location, snapCamera: Boolean) {
         val locationWithBearing = enrichLocationWithBearing(location)
-        val latLng = LatLng(locationWithBearing.latitude, locationWithBearing.longitude)
+
+        // During navigation, snap the display location onto the nearest route segment so the
+        // puck stays on the road despite GPS jitter. Off-route evaluation always uses the raw
+        // bearing-enriched fix so reroute detection is not suppressed by the snapping.
+        val displayLocation = if (_uiState.value.isNavigating) {
+            snapLocationToRoute(locationWithBearing) ?: locationWithBearing
+        } else {
+            locationWithBearing
+        }
+
+        val latLng = LatLng(displayLocation.latitude, displayLocation.longitude)
         lastKnownLocation = latLng
         _uiState.update {
             it.copy(
-                currentLat = locationWithBearing.latitude,
-                currentLng = locationWithBearing.longitude,
+                currentLat = displayLocation.latitude,
+                currentLng = displayLocation.longitude,
             )
         }
         val component = mapLibreMap?.locationComponent
         if (component != null && component.isLocationComponentActivated && component.isLocationComponentEnabled) {
-            component.forceLocationUpdate(locationWithBearing)
+            component.forceLocationUpdate(displayLocation)
             pendingLocationFix = null
         } else {
-            pendingLocationFix = locationWithBearing
+            pendingLocationFix = displayLocation
         }
-        startDeadReckoning(locationWithBearing)
+        startDeadReckoning(displayLocation)
         Log.i(
             TAG,
-            "Location fix ${locationWithBearing.latitude}, ${locationWithBearing.longitude} " +
-                "(provider=${locationWithBearing.provider}, bearing=${locationWithBearing.bearing}, " +
-                "snapped=$snapCamera, zoom=${mapLibreMap?.cameraPosition?.zoom})",
+            "Location fix ${displayLocation.latitude}, ${displayLocation.longitude} " +
+                "(provider=${displayLocation.provider}, bearing=${displayLocation.bearing}, " +
+                "roadSnapped=${displayLocation !== locationWithBearing}, " +
+                "snapCamera=$snapCamera, zoom=${mapLibreMap?.cameraPosition?.zoom})",
         )
         when {
+            // Pass the raw bearing-enriched fix to step/off-route logic so actual GPS deviation
+            // is measured — the snapped display location would always appear on the route.
             _uiState.value.isNavigating -> evaluateStepAdvancement(locationWithBearing)
             !hasSnappedCameraToGps -> snapCameraToGpsIfNeeded(latLng)
             else -> _uiState.update { it.copy(streetName = "Free Drive") }
@@ -1982,6 +2005,70 @@ class MapLibreEngineImpl(
         val results = FloatArray(1)
         Location.distanceBetween(py, px, closestLat, closestLng, results)
         return results[0]
+    }
+
+    /**
+     * Returns the closest point on the given segment together with its distance from [point].
+     * Mirrors the math in [distanceToSegmentMeters] but also returns the projected coordinates.
+     */
+    private fun closestPointOnSegment(
+        point: Location,
+        segStart: LatLng,
+        segEnd: LatLng,
+    ): ClosestSegmentResult {
+        val px = point.longitude
+        val py = point.latitude
+        val ax = segStart.longitude
+        val ay = segStart.latitude
+        val bx = segEnd.longitude
+        val by = segEnd.latitude
+        val dx = bx - ax
+        val dy = by - ay
+        if (dx == 0.0 && dy == 0.0) {
+            val results = FloatArray(1)
+            Location.distanceBetween(py, px, ay, ax, results)
+            return ClosestSegmentResult(results[0], ay, ax)
+        }
+        var t = ((px - ax) * dx + (py - ay) * dy) / (dx * dx + dy * dy)
+        t = t.coerceIn(0.0, 1.0)
+        val closestLat = ay + t * dy
+        val closestLng = ax + t * dx
+        val results = FloatArray(1)
+        Location.distanceBetween(py, px, closestLat, closestLng, results)
+        return ClosestSegmentResult(results[0], closestLat, closestLng)
+    }
+
+    /**
+     * When navigating, snaps [location] onto the nearest route segment if the GPS fix is within
+     * [SNAP_TO_ROUTE_MAX_M] metres of the route. Preserves all other location fields (bearing,
+     * speed, accuracy) so the HUD and dead-reckoning remain unaffected.
+     *
+     * Returns null when there is no active route or the fix is too far away (off-route territory —
+     * let [checkOffRoute] handle that case with the original coordinates).
+     */
+    private fun snapLocationToRoute(location: Location): Location? {
+        val points = routeGeometryPoints
+        if (points.size < 2) return null
+
+        var minDist = Float.MAX_VALUE
+        var snappedLat = location.latitude
+        var snappedLng = location.longitude
+
+        for (i in 0 until points.size - 1) {
+            val result = closestPointOnSegment(location, points[i], points[i + 1])
+            if (result.distM < minDist) {
+                minDist = result.distM
+                snappedLat = result.lat
+                snappedLng = result.lng
+            }
+        }
+
+        if (minDist > SNAP_TO_ROUTE_MAX_M) return null
+
+        return Location(location).apply {
+            latitude = snappedLat
+            longitude = snappedLng
+        }
     }
 
     private fun triggerArrival() {
@@ -2218,6 +2305,14 @@ class MapLibreEngineImpl(
     }
 
     private fun poiCategoryIconExpression(): Expression {
+        return Expression.switchCase(
+            Expression.eq(Expression.get("starred"), Expression.literal(true)),
+            starredCategoryIconExpression(),
+            normalCategoryIconExpression(),
+        )
+    }
+
+    private fun normalCategoryIconExpression(): Expression {
         return Expression.match(
             Expression.get("category"),
             Expression.literal("poi_icon_default"),
@@ -2228,6 +2323,73 @@ class MapLibreEngineImpl(
             Expression.stop("finance", Expression.literal("poi_icon_finance")),
             Expression.stop("shopping", Expression.literal("poi_icon_shopping")),
             Expression.stop("recreation", Expression.literal("poi_icon_recreation")),
+        )
+    }
+
+    private fun starredCategoryIconExpression(): Expression {
+        return Expression.match(
+            Expression.get("category"),
+            Expression.literal(PoiIconFactory.starredIconId("poi_icon_default")),
+            Expression.stop("food", Expression.literal(PoiIconFactory.starredIconId("poi_icon_food"))),
+            Expression.stop("fuel", Expression.literal(PoiIconFactory.starredIconId("poi_icon_fuel"))),
+            Expression.stop("health", Expression.literal(PoiIconFactory.starredIconId("poi_icon_health"))),
+            Expression.stop(
+                "accommodation",
+                Expression.literal(PoiIconFactory.starredIconId("poi_icon_accommodation")),
+            ),
+            Expression.stop("finance", Expression.literal(PoiIconFactory.starredIconId("poi_icon_finance"))),
+            Expression.stop("shopping", Expression.literal(PoiIconFactory.starredIconId("poi_icon_shopping"))),
+            Expression.stop(
+                "recreation",
+                Expression.literal(PoiIconFactory.starredIconId("poi_icon_recreation")),
+            ),
+        )
+    }
+
+    private fun savedPlaceKey(place: SearchResultPlace): String {
+        val lat = (place.latitude * 100_000.0).roundToInt() / 100_000.0
+        val lng = (place.longitude * 100_000.0).roundToInt() / 100_000.0
+        return "$lat,$lng"
+    }
+
+    private fun findNearestPoiInCache(lat: Double, lng: Double): SearchResultPlace? {
+        var nearest: SearchResultPlace? = null
+        var nearestDistance = MAP_TAP_NEAREST_POI_MAX_M
+        for (place in poiCache.values) {
+            val distanceResults = FloatArray(1)
+            Location.distanceBetween(lat, lng, place.latitude, place.longitude, distanceResults)
+            val distance = distanceResults[0]
+            if (distance < nearestDistance) {
+                nearestDistance = distance
+                nearest = place
+            }
+        }
+        return nearest
+    }
+
+    private fun computeDistanceFromReference(lat: Double, lng: Double): Float {
+        val reference = lastKnownLocation ?: return 0f
+        val distanceResults = FloatArray(1)
+        Location.distanceBetween(
+            reference.latitude,
+            reference.longitude,
+            lat,
+            lng,
+            distanceResults,
+        )
+        return distanceResults[0]
+    }
+
+    private fun formatLatLng(lat: Double, lng: Double): String {
+        val latDir = if (lat >= 0) "N" else "S"
+        val lngDir = if (lng >= 0) "E" else "W"
+        return String.format(
+            java.util.Locale.US,
+            "%.5f° %s, %.5f° %s",
+            kotlin.math.abs(lat),
+            latDir,
+            kotlin.math.abs(lng),
+            lngDir,
         )
     }
 
@@ -2243,6 +2405,7 @@ class MapLibreEngineImpl(
         private const val TRAFFIC_SOURCE_ID = "mix-traffic-source"
         private const val TRAFFIC_LAYER_ID = "mix-traffic-layer"
         private const val REROUTE_THRESHOLD_M = 75f
+        private const val SNAP_TO_ROUTE_MAX_M = 40f
         private const val REROUTE_CONFIRM_COUNT = 1
         private const val REROUTE_COOLDOWN_MS = 5_000L
         private const val ROUTE_OVERVIEW_BOUNDS_EXPAND_FRACTION = 0.12
@@ -2277,6 +2440,7 @@ class MapLibreEngineImpl(
         private const val POI_DEBOUNCE_MS = 400L
         private const val BBOX_PADDING_FACTOR = 1.5
         private const val PHOTON_MOVE_THRESHOLD_M = 300f
+        private const val MAP_TAP_NEAREST_POI_MAX_M = 500f
         private const val EMPTY_POI_GEOJSON = """{"type":"FeatureCollection","features":[]}"""
         private const val ROUTE_CASING_COLOR = "#CC000000"
         private const val ROUTE_CASING_WIDTH = 18f

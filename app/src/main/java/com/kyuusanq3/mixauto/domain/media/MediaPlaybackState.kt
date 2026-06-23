@@ -9,6 +9,11 @@ data class MediaPlaybackState(
     val isPlaying: Boolean = false,
     val hasActiveSession: Boolean = false,
     val needsNotificationAccess: Boolean = false,
+    val sourcePackage: String = "",
+    val supportsLike: Boolean = false,
+    val isLiked: Boolean? = null,
+    val supportsShuffle: Boolean = false,
+    val isShuffleOn: Boolean = false,
 ) {
     val displayTitle: String
         get() = title.ifBlank { "No track playing" }

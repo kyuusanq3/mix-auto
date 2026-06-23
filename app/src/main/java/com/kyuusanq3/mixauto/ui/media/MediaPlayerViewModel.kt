@@ -33,4 +33,12 @@ class MediaPlayerViewModel(application: Application) : AndroidViewModel(applicat
     fun skipToPrevious() {
         repository.skipToPrevious()
     }
+
+    fun toggleLike() {
+        repository.toggleLike()
+    }
+
+    fun toggleShuffle() {
+        repository.toggleShuffle()
+    }
 }
