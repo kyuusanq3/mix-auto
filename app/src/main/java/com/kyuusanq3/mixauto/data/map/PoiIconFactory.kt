@@ -33,6 +33,12 @@ object PoiIconFactory {
     private const val STARRED_COLOR = 0xFFFFD700.toInt()
     private const val STARRED_LABEL = "★"
 
+    const val CUSTOM_PIN_PENDING_ICON_ID = "poi_icon_custom_pin_pending"
+    const val CUSTOM_PIN_ICON_ID = "poi_icon_custom_pin"
+
+    private const val CUSTOM_PIN_PENDING_COLOR = 0xFF888888.toInt()
+    private const val CUSTOM_PIN_COLOR = 0xFF00E5FF.toInt()
+
     fun createAllIcons(density: Float): Map<String, Bitmap> {
         val icons = mutableMapOf<String, Bitmap>()
         CATEGORY_SPECS.forEach { spec ->
@@ -47,6 +53,16 @@ object PoiIconFactory {
                 density = density,
             )
         }
+        icons[CUSTOM_PIN_PENDING_ICON_ID] = drawPinBitmap(
+            color = CUSTOM_PIN_PENDING_COLOR,
+            label = "…",
+            density = density,
+        )
+        icons[CUSTOM_PIN_ICON_ID] = drawPinBitmap(
+            color = CUSTOM_PIN_COLOR,
+            label = "+",
+            density = density,
+        )
         return icons
     }
 

@@ -18,6 +18,8 @@ import androidx.compose.ui.Modifier
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -65,6 +67,7 @@ class MainActivity : ComponentActivity() {
         mapEngine = MapLibreEngineImpl(
             localPlaces = localPlacesRepository,
             initialUseVectorTiles = launcherPreferences.useVectorTiles,
+            initialShow3dBuildings = launcherPreferences.show3dBuildings,
             initialDrivingZoom = launcherPreferences.drivingZoom.toDouble(),
             initialPuckHOffset = launcherPreferences.puckHorizontalOffset,
             initialPuckVOffset = launcherPreferences.puckVerticalOffset,
@@ -82,6 +85,10 @@ class MainActivity : ComponentActivity() {
             pendingOnboardingSteps.isNotEmpty()
         showOnboarding = shouldShowOnboarding
         WindowCompat.setDecorFitsSystemWindows(window, false)
+        WindowInsetsControllerCompat(window, window.decorView).apply {
+            show(WindowInsetsCompat.Type.systemBars())
+            systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_DEFAULT
+        }
         setContent {
             MixAutoTheme {
                 Box(modifier = Modifier.fillMaxSize()) {
@@ -111,7 +118,9 @@ class MainActivity : ComponentActivity() {
                     savedPlaces = launcherViewModel.savedPlaces,
                     onDestinationSelected = launcherViewModel::addRecentDestination,
                     onToggleSavedPlace = launcherViewModel::toggleSavedPlace,
+                    onUpdateSavedPlace = launcherViewModel::updateSavedPlace,
                     useVectorTiles = launcherViewModel.useVectorTiles,
+                    show3dBuildings = launcherViewModel.show3dBuildings,
                     showTraffic = launcherViewModel.showTraffic,
                     tomTomApiKey = launcherViewModel.tomTomApiKey,
                     isLauncherMode = launcherViewModel.isLauncherMode,
@@ -127,6 +136,10 @@ class MainActivity : ComponentActivity() {
                     onToggleVectorTiles = {
                         launcherViewModel.toggleVectorTiles()
                         mapEngine.setMapStyle(launcherViewModel.useVectorTiles)
+                    },
+                    onToggleShow3dBuildings = {
+                        launcherViewModel.toggleShow3dBuildings()
+                        mapEngine.setShow3dBuildings(launcherViewModel.show3dBuildings)
                     },
                     onToggleTraffic = {
                         launcherViewModel.toggleTraffic()

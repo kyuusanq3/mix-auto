@@ -41,6 +41,9 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     var useVectorTiles by mutableStateOf(preferences.useVectorTiles)
         private set
 
+    var show3dBuildings by mutableStateOf(preferences.show3dBuildings)
+        private set
+
     var isLauncherMode by mutableStateOf(preferences.isLauncherMode)
         private set
 
@@ -109,6 +112,11 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         preferences.useVectorTiles = useVectorTiles
     }
 
+    fun toggleShow3dBuildings() {
+        show3dBuildings = !show3dBuildings
+        preferences.show3dBuildings = show3dBuildings
+    }
+
     fun toggleLauncherMode() {
         isLauncherMode = !isLauncherMode
         preferences.isLauncherMode = isLauncherMode
@@ -166,6 +174,13 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         } else {
             (listOf(place) + savedPlaces).take(LauncherPreferences.MAX_SAVED_PLACES)
         }
+        preferences.savedPlaces = savedPlaces
+    }
+
+    fun updateSavedPlace(place: SearchResultPlace) {
+        val index = savedPlaces.indexOfFirst { isWithinDedupThreshold(it, place) }
+        if (index < 0) return
+        savedPlaces = savedPlaces.toMutableList().also { it[index] = place }
         preferences.savedPlaces = savedPlaces
     }
 

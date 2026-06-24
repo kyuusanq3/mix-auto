@@ -185,7 +185,7 @@ After enabling Launcher Mode, press Home and select **Mix Auto** as the default 
 - Route re-routing when driver deviates from the drawn path — **implemented** (75 m threshold, OSRM re-fetch)
 - Dynamic discovery of all launchable apps (currently fixed shortcut list)
 - Release signing / Play Store config
-- Vector map style is optional in Settings (OpenFreeMap); OSM raster remains default
+- Vector map style (OpenFreeMap Liberty) is the first-launch default; OSM raster remains available via Settings toggle
 
 ## Troubleshooting
 
@@ -215,7 +215,7 @@ After enabling Launcher Mode, press Home and select **Mix Auto** as the default 
 | Nav camera frozen while GPS puck moves / dive never zooms in | `enterNavigationCamera()`: `CameraMode.NONE` → `map.animateCamera()` to zoom 18.5 / tilt 58° → `TRACKING_GPS` in callback; do NOT use `zoomWhileTracking`/`tiltWhileTracking` immediately after mode change (ignored during transition) |
 | Map doesn't rotate to direction of travel | Use `RenderMode.GPS` not `COMPASS` in `activateLocationTracking()` and camera entry |
 | UI cut off by status/nav bars on phone | `MainActivity` is edge-to-edge (`setDecorFitsSystemWindows(false)`); add `systemBarsPadding()` on `DashboardScreen` root `Box` |
-| Night theme missing fullscreen flags | Add `windowFullscreen` + `windowContentOverlay` to `res/values-night/themes.xml` |
+| Status bar hidden on Eonon / head unit | Remove `android:windowFullscreen` from `themes.xml` (day + night); `MainActivity` calls `WindowInsetsControllerCompat.show(systemBars())` — do not re-add fullscreen theme flag |
 | Media pane shows "Enable notification access" | Settings → Special app access → Notification access → enable MixAuto; start playback in YT Music/Spotify then return to launcher |
 | Now playing not updating | `MainActivity.onResume()` refreshes sessions; ensure `MixAutoNotificationListenerService` is enabled |
 | Skip-next media button shrinks in narrow pane | `MediaPlayerPane.kt`: use `weight(1f)` slots + `requiredSize(MinTapTarget)` on all three controls |
@@ -236,9 +236,10 @@ After enabling Launcher Mode, press Home and select **Mix Auto** as the default 
 | Puck spins when stopped in traffic | `enrichLocationWithBearing()` freezes bearing via `lastStableBearing` when speed < `STOPPED_SPEED_MPS` (1.4 m/s) |
 | Nav doesn't re-route after wrong turn | Off-route reroute needs 2 GPS fixes >75 m from `routeGeometryPoints`; 5 s cooldown between reroutes; check Logcat for `Off route` / `Re-routing` |
 | Music doesn't auto-play on launch | Enable notification access; `maybeAutoPlay()` runs once per process when paused session has metadata — also retried from `onMetadataChanged()` (late metadata) and same-token `attachController()` re-attach; Logcat `MediaSessionRepository`: `Auto-playing paused media session on launch` |
-| Shortcut bar too small on head unit | Settings → **Large Shortcut Icons** doubles horizontal bar height and icon sizes |
+| Shortcut bar too small on head unit | Settings → **Large Shortcut Icons** doubles tap target and icon size in both horizontal and vertical dock (uses `DockHorizontalTapTarget` / `DockHorizontalIconSize`) |
+| Vertical shortcut bar too wide / large side padding | Vertical dock must use `wrapContentWidth()` in `ShortcutDock` + `DashboardScreen` — not `.weight(DockVerticalWeight)`; icon-only, no labels |
 | TomTom traffic HTTP 400 `Invalid style: relative-delay` | Orbis v2 raster tiles only accept `style=light` or `style=dark` — not legacy styles (`relative`, `relative-delay`, etc.); see `MapLibreEngineImpl.applyTrafficOverlay()` |
-| TomTom traffic not showing / key unknown | Launcher Settings → paste key from developer.tomtom.com → **Test TomTom API Key**; enable Traffic Flow product on key; Logcat tag `TomTomTrafficClient` |
+| TomTom traffic not showing / key unknown | Map Data shortcut → paste key from developer.tomtom.com → **Test TomTom API Key**; enable **Traffic Overlay** in Launcher Settings; enable Traffic Flow product on key; Logcat tag `TomTomTrafficClient` |
 | Traffic tiles fail with HTTP 403 | Invalid key or Traffic Flow API not enabled for that TomTom developer key |
 | Update check fails HTTP 404 | App uses GitHub Releases API (`AppUpdateRepository.RELEASES_API_URL`), not a `version.json` asset — attach `mix-auto.apk` to the release and set tag to semver (e.g. `0.0.5`); download URL is `releases/latest/download/mix-auto.apk` |
 | Vinyl album art shows as square/rectangle | `VinylAlbumArt`: use `clip(CircleShape)` then `graphicsLayer { rotationZ }` — not `Modifier.rotate` before clip |

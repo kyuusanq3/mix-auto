@@ -52,8 +52,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.kyuusanq3.mixauto.domain.map.CarMapEngine
@@ -104,20 +102,19 @@ private fun isWithinDedupThreshold(a: SearchResultPlace, b: SearchResultPlace): 
 }
 
 private enum class SuggestedTab {
-    Recent,
+    Suggestions,
     Saved,
-    Nearby,
 }
 
 @Composable
-fun NavigationSearchOverlay(
+fun NavigationSearchContent(
     engine: CarMapEngine,
     limitSearchDistance: Boolean,
     recentDestinations: List<SearchResultPlace>,
     savedPlaces: List<SearchResultPlace>,
-    onDestinationSelected: (SearchResultPlace) -> Unit,
     onToggleSavedPlace: (SearchResultPlace) -> Unit,
     onDismiss: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
     val launcherViewModel: LauncherViewModel = viewModel()
@@ -130,7 +127,7 @@ fun NavigationSearchOverlay(
     var hasSearched by remember { mutableStateOf(false) }
     var isListening by remember { mutableStateOf(false) }
     var pendingVoiceStart by remember { mutableStateOf(false) }
-    var selectedTab by remember { mutableStateOf(SuggestedTab.Recent) }
+    var selectedTab by remember { mutableStateOf(SuggestedTab.Suggestions) }
 
     val speechAvailable = remember(context) {
         SpeechRecognizer.isRecognitionAvailable(context)
@@ -289,11 +286,9 @@ fun NavigationSearchOverlay(
         nearbyPois.map { it.withDistanceFrom(currentLat, currentLng) }
     }
 
-    val tabPlaces = remember(selectedTab, displayedRecents, displayedSaved, displayedNearby) {
-        when (selectedTab) {
-            SuggestedTab.Recent -> displayedRecents
-            SuggestedTab.Saved -> displayedSaved
-            SuggestedTab.Nearby -> displayedNearby
+    val displayedSuggestionsNearby = remember(displayedNearby, displayedRecents) {
+        displayedNearby.filterNot { nearby ->
+            displayedRecents.any { recent -> isWithinDedupThreshold(recent, nearby) }
         }
     }
 
@@ -301,26 +296,21 @@ fun NavigationSearchOverlay(
         savedPlaces.any { saved -> isWithinDedupThreshold(saved, place) }
     }
 
-    val selectDestination: (SearchResultPlace) -> Unit = { place ->
-        onDestinationSelected(place)
-        engine.navigateToCoordinates(place.latitude, place.longitude)
+    val previewPlace: (SearchResultPlace) -> Unit = { place ->
+        engine.focusOnPoi(place)
         onDismiss()
     }
 
-    Dialog(
-        onDismissRequest = onDismiss,
-        properties = DialogProperties(usePlatformDefaultWidth = false),
+    Surface(
+        modifier = modifier.fillMaxSize(),
+        color = OledBlack,
     ) {
-        Surface(
-            modifier = Modifier.fillMaxSize(),
-            color = OledBlack,
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(CarDimensions.PaneGap * 2),
+            verticalArrangement = Arrangement.spacedBy(CarDimensions.DockItemSpacing),
         ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(CarDimensions.PaneGap * 2),
-                verticalArrangement = Arrangement.spacedBy(CarDimensions.DockItemSpacing),
-            ) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -416,13 +406,17 @@ fun NavigationSearchOverlay(
                             }
                         }
 
-                        if (tabPlaces.isEmpty()) {
+                        val suggestionsEmpty = displayedRecents.isEmpty() && displayedSuggestionsNearby.isEmpty()
+                        val savedEmpty = displayedSaved.isEmpty()
+
+                        if (selectedTab == SuggestedTab.Suggestions && suggestionsEmpty) {
                             CarBodyText(
-                                text = when (selectedTab) {
-                                    SuggestedTab.Recent -> "No recent destinations"
-                                    SuggestedTab.Saved -> "No saved places — star a POI on the map"
-                                    SuggestedTab.Nearby -> "Pan the map to load nearby POIs"
-                                },
+                                text = "No recent destinations — pan the map to load nearby POIs",
+                                style = MaterialTheme.typography.bodyLarge,
+                            )
+                        } else if (selectedTab == SuggestedTab.Saved && savedEmpty) {
+                            CarBodyText(
+                                text = "No saved places — star a POI on the map",
                                 style = MaterialTheme.typography.bodyLarge,
                             )
                         } else {
@@ -430,16 +424,69 @@ fun NavigationSearchOverlay(
                                 modifier = Modifier.weight(1f),
                                 verticalArrangement = Arrangement.spacedBy(CarDimensions.PaneGap / 2),
                             ) {
-                                items(
-                                    tabPlaces,
-                                    key = { "${selectedTab.name}-${it.latitude},${it.longitude},${it.name}" },
-                                ) { place ->
-                                    SearchResultRow(
-                                        place = place,
-                                        isStarred = isPlaceSaved(place),
-                                        onClick = { selectDestination(place) },
-                                        onToggleStar = { onToggleSavedPlace(place) },
-                                    )
+                                if (selectedTab == SuggestedTab.Suggestions) {
+                                    if (displayedRecents.isNotEmpty()) {
+                                        item(key = "header-recent") {
+                                            CarLabelText(
+                                                text = "Recent",
+                                                style = MaterialTheme.typography.labelLarge.copy(
+                                                    color = ElectricCyan,
+                                                ),
+                                                modifier = Modifier.padding(
+                                                    horizontal = CarDimensions.PaneGap,
+                                                    vertical = CarDimensions.PaneGap / 4,
+                                                ),
+                                            )
+                                        }
+                                        items(
+                                            displayedRecents,
+                                            key = { "recent-${it.latitude},${it.longitude},${it.name}" },
+                                        ) { place ->
+                                            SearchResultRow(
+                                                place = place,
+                                                isStarred = isPlaceSaved(place),
+                                                onClick = { previewPlace(place) },
+                                                onToggleStar = { onToggleSavedPlace(place) },
+                                            )
+                                        }
+                                    }
+                                    if (displayedSuggestionsNearby.isNotEmpty()) {
+                                        item(key = "header-nearby") {
+                                            CarLabelText(
+                                                text = "Nearby",
+                                                style = MaterialTheme.typography.labelLarge.copy(
+                                                    color = ElectricCyan,
+                                                ),
+                                                modifier = Modifier.padding(
+                                                    horizontal = CarDimensions.PaneGap,
+                                                    vertical = CarDimensions.PaneGap / 4,
+                                                ),
+                                            )
+                                        }
+                                        items(
+                                            displayedSuggestionsNearby,
+                                            key = { "nearby-${it.latitude},${it.longitude},${it.name}" },
+                                        ) { place ->
+                                            SearchResultRow(
+                                                place = place,
+                                                isStarred = isPlaceSaved(place),
+                                                onClick = { previewPlace(place) },
+                                                onToggleStar = { onToggleSavedPlace(place) },
+                                            )
+                                        }
+                                    }
+                                } else {
+                                    items(
+                                        displayedSaved,
+                                        key = { "saved-${it.latitude},${it.longitude},${it.name}" },
+                                    ) { place ->
+                                        SearchResultRow(
+                                            place = place,
+                                            isStarred = isPlaceSaved(place),
+                                            onClick = { previewPlace(place) },
+                                            onToggleStar = { onToggleSavedPlace(place) },
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -462,14 +509,13 @@ fun NavigationSearchOverlay(
                                 SearchResultRow(
                                     place = place,
                                     isStarred = isPlaceSaved(place),
-                                    onClick = { selectDestination(place) },
+                                    onClick = { previewPlace(place) },
                                     onToggleStar = { onToggleSavedPlace(place) },
                                 )
                             }
                         }
                     }
                 }
-            }
         }
     }
 }

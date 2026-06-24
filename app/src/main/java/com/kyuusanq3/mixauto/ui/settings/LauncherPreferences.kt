@@ -15,7 +15,7 @@ class LauncherPreferences(context: Context) {
         }
 
     var isShortcutsHorizontal: Boolean
-        get() = prefs.getBoolean(KEY_SHORTCUTS_HORIZONTAL, false)
+        get() = prefs.getBoolean(KEY_SHORTCUTS_HORIZONTAL, true)
         set(value) {
             prefs.edit().putBoolean(KEY_SHORTCUTS_HORIZONTAL, value).apply()
         }
@@ -33,9 +33,15 @@ class LauncherPreferences(context: Context) {
         }
 
     var useVectorTiles: Boolean
-        get() = prefs.getBoolean(KEY_VECTOR_TILES, false)
+        get() = prefs.getBoolean(KEY_VECTOR_TILES, true)
         set(value) {
             prefs.edit().putBoolean(KEY_VECTOR_TILES, value).apply()
+        }
+
+    var show3dBuildings: Boolean
+        get() = prefs.getBoolean(KEY_3D_BUILDINGS, false)
+        set(value) {
+            prefs.edit().putBoolean(KEY_3D_BUILDINGS, value).apply()
         }
 
     var isLauncherMode: Boolean
@@ -45,7 +51,7 @@ class LauncherPreferences(context: Context) {
         }
 
     var isLargeShortcutIcons: Boolean
-        get() = prefs.getBoolean(KEY_LARGE_SHORTCUT_ICONS, false)
+        get() = prefs.getBoolean(KEY_LARGE_SHORTCUT_ICONS, true)
         set(value) {
             prefs.edit().putBoolean(KEY_LARGE_SHORTCUT_ICONS, value).apply()
         }
@@ -125,6 +131,7 @@ class LauncherPreferences(context: Context) {
         private const val KEY_MAP_MEDIA_RATIO = "map_media_ratio"
         private const val KEY_LIMIT_SEARCH_DISTANCE = "limit_search_distance"
         private const val KEY_VECTOR_TILES = "vector_tiles"
+        private const val KEY_3D_BUILDINGS = "show_3d_buildings"
         private const val KEY_LAUNCHER_MODE = "launcher_mode"
         private const val KEY_LARGE_SHORTCUT_ICONS = "large_shortcut_icons"
         private const val KEY_DRIVING_ZOOM = "driving_zoom"
