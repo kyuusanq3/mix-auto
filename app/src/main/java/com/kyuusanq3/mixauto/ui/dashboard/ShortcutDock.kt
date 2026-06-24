@@ -1,5 +1,6 @@
 package com.kyuusanq3.mixauto.ui.dashboard
 
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -16,6 +17,7 @@ import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Apps
@@ -30,8 +32,10 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.key
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import com.kyuusanq3.mixauto.ui.components.rememberAppIcon
 import com.kyuusanq3.mixauto.ui.theme.CarDimensions
 import com.kyuusanq3.mixauto.ui.theme.DeepCharcoal
 import com.kyuusanq3.mixauto.ui.theme.ElectricCyan
@@ -78,6 +82,7 @@ private fun LazyListScope.dockItems(
     order: List<DockItem>,
     activePanel: ActivePanel,
     musicPaneEnabled: Boolean,
+    sourcePackage: String,
     tapTarget: Dp,
     iconSize: Dp,
     activeIndicatorPlacement: DockActiveIndicatorPlacement,
@@ -97,6 +102,7 @@ private fun LazyListScope.dockItems(
             DockItem.Music -> item(key = MUSIC_KEY) {
                 MusicDockItem(
                     isActive = musicPaneEnabled,
+                    sourcePackage = sourcePackage,
                     tapTarget = tapTarget,
                     iconSize = iconSize,
                     activeIndicatorPlacement = activeIndicatorPlacement,
@@ -132,6 +138,7 @@ fun ShortcutDock(
     isLeftHandDrive: Boolean = true,
     activePanel: ActivePanel,
     musicPaneEnabled: Boolean,
+    sourcePackage: String = "",
     onTogglePanel: (ActivePanel) -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -183,6 +190,7 @@ fun ShortcutDock(
                         order = itemOrder,
                         activePanel = activePanel,
                         musicPaneEnabled = musicPaneEnabled,
+                        sourcePackage = sourcePackage,
                         tapTarget = tapTarget,
                         iconSize = iconSize,
                         activeIndicatorPlacement = activeIndicatorPlacement,
@@ -200,6 +208,7 @@ fun ShortcutDock(
                         order = itemOrder,
                         activePanel = activePanel,
                         musicPaneEnabled = musicPaneEnabled,
+                        sourcePackage = sourcePackage,
                         tapTarget = tapTarget,
                         iconSize = iconSize,
                         activeIndicatorPlacement = activeIndicatorPlacement,
@@ -262,10 +271,13 @@ private fun MusicDockItem(
     isActive: Boolean,
     iconSize: Dp,
     onClick: () -> Unit,
+    sourcePackage: String = "",
     tapTarget: Dp = CarDimensions.DockHorizontalTapTarget,
     activeIndicatorPlacement: DockActiveIndicatorPlacement = DockActiveIndicatorPlacement.Bottom,
 ) {
     val iconTint = if (isActive) ElectricCyan else MaterialTheme.colorScheme.primary
+    val sourceIcon = rememberAppIcon(sourcePackage)
+    val badgeSize = 20.dp
     Box(
         modifier = Modifier
             .size(tapTarget)
@@ -278,6 +290,18 @@ private fun MusicDockItem(
             modifier = Modifier.size(iconSize),
             tint = iconTint,
         )
+        if (sourceIcon != null) {
+            Image(
+                bitmap = sourceIcon,
+                contentDescription = "Audio source",
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(2.dp)
+                    .size(badgeSize)
+                    .clip(CircleShape)
+                    .background(DeepCharcoal, CircleShape),
+            )
+        }
         DockActiveIndicator(isActive, activeIndicatorPlacement)
     }
 }

@@ -2,6 +2,7 @@ package com.kyuusanq3.mixauto.ui.dashboard
 
 import android.content.Intent
 import android.provider.Settings
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
@@ -22,9 +23,9 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Favorite
+import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.Shuffle
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.material.icons.outlined.FavoriteBorder
@@ -51,6 +52,9 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import com.kyuusanq3.mixauto.domain.media.MediaPlaybackState
+import com.kyuusanq3.mixauto.ui.components.canLaunchApp
+import com.kyuusanq3.mixauto.ui.components.launchAppByPackage
+import com.kyuusanq3.mixauto.ui.components.rememberAppIcon
 import com.kyuusanq3.mixauto.ui.theme.CarBodyText
 import com.kyuusanq3.mixauto.ui.theme.CarDimensions
 import com.kyuusanq3.mixauto.ui.theme.CarHeadlineText
@@ -70,7 +74,6 @@ fun MediaPlayerPane(
     onSkipPrevious: () -> Unit,
     onSkipNext: () -> Unit,
     onToggleLike: () -> Unit,
-    onToggleShuffle: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
@@ -83,9 +86,7 @@ fun MediaPlayerPane(
     val onSkipPreviousState = rememberUpdatedState(onSkipPrevious)
     val onSkipNextState = rememberUpdatedState(onSkipNext)
     val onToggleLikeState = rememberUpdatedState(onToggleLike)
-    val onToggleShuffleState = rememberUpdatedState(onToggleShuffle)
     val supportsLikeState = rememberUpdatedState(mediaState.supportsLike)
-    val supportsShuffleState = rememberUpdatedState(mediaState.supportsShuffle)
     val hasActiveSessionState = rememberUpdatedState(mediaState.hasActiveSession)
 
     ElevatedCard(
@@ -145,7 +146,6 @@ fun MediaPlayerPane(
                                 Modifier.pointerInput(
                                     mediaState.hasActiveSession,
                                     mediaState.supportsLike,
-                                    mediaState.supportsShuffle,
                                     swipeThresholdPx,
                                 ) {
                                     coroutineScope {
@@ -187,9 +187,6 @@ fun MediaPlayerPane(
                                                 when {
                                                     absY > absX && drag.y < 0f && supportsLikeState.value -> {
                                                         onToggleLikeState.value()
-                                                    }
-                                                    absY > absX && drag.y > 0f && supportsShuffleState.value -> {
-                                                        onToggleShuffleState.value()
                                                     }
                                                     absX > absY && drag.x < 0f -> {
                                                         onSkipPreviousState.value()
@@ -269,16 +266,9 @@ fun MediaPlayerPane(
                         .height(CarDimensions.MinTapTarget),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    MediaControlButton(
-                        onClick = onToggleShuffle,
-                        contentDescription = if (mediaState.isShuffleOn) {
-                            "Shuffle on"
-                        } else {
-                            "Shuffle off"
-                        },
-                        icon = Icons.Filled.Shuffle,
-                        enabled = mediaState.hasActiveSession && mediaState.supportsShuffle,
-                        active = mediaState.isShuffleOn,
+                    SourceAppButton(
+                        sourcePackage = mediaState.sourcePackage,
+                        hasActiveSession = mediaState.hasActiveSession,
                         modifier = Modifier.weight(1f),
                     )
                     MediaControlButton(
@@ -312,6 +302,56 @@ fun MediaPlayerPane(
                         modifier = Modifier.weight(1f),
                     )
                 }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SourceAppButton(
+    sourcePackage: String,
+    hasActiveSession: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    val context = LocalContext.current
+    val appIcon = rememberAppIcon(sourcePackage)
+    val canLaunch = remember(sourcePackage) { canLaunchApp(context, sourcePackage) }
+    val enabled = hasActiveSession && canLaunch
+    val iconSize = CarDimensions.AppIconSize - 8.dp
+
+    Box(
+        modifier = modifier.fillMaxHeight(),
+        contentAlignment = Alignment.Center,
+    ) {
+        Box(
+            modifier = Modifier
+                .requiredSize(CarDimensions.MinTapTarget)
+                .then(
+                    if (enabled) {
+                        Modifier.clickable {
+                            launchAppByPackage(context, sourcePackage)
+                        }
+                    } else {
+                        Modifier
+                    },
+                ),
+            contentAlignment = Alignment.Center,
+        ) {
+            if (appIcon != null && enabled) {
+                Image(
+                    bitmap = appIcon,
+                    contentDescription = "Open audio source",
+                    modifier = Modifier.size(iconSize),
+                )
+            } else {
+                Icon(
+                    imageVector = Icons.Filled.MusicNote,
+                    contentDescription = "Audio source",
+                    modifier = Modifier.requiredSize(iconSize),
+                    tint = MaterialTheme.colorScheme.onSurface.copy(
+                        alpha = if (enabled) 1f else 0.38f,
+                    ),
+                )
             }
         }
     }

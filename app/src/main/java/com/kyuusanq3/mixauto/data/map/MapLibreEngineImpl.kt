@@ -7,7 +7,9 @@ import android.location.Location
 import android.location.LocationListener
 import android.location.LocationManager
 import android.os.Looper
+import android.graphics.RectF
 import android.util.Log
+import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
 import androidx.core.content.ContextCompat
@@ -64,7 +66,6 @@ import org.maplibre.android.style.layers.SymbolLayer
 import org.maplibre.android.style.sources.GeoJsonSource
 import org.maplibre.android.style.sources.RasterSource
 import org.maplibre.android.style.sources.TileSet
-import org.maplibre.android.style.sources.VectorSource
 import kotlin.math.cos
 import kotlin.math.hypot
 import kotlin.math.max
@@ -177,6 +178,7 @@ class MapLibreEngineImpl(
             }
             view.getMapAsync { map ->
                 mapLibreMap = map
+                configureCompassPosition(map, context)
                 map.addOnCameraMoveStartedListener { reason ->
                     if (reason == MapLibreMap.OnCameraMoveStartedListener.REASON_API_GESTURE) {
                         _uiState.update { it.copy(isCameraDetached = true) }
@@ -186,6 +188,14 @@ class MapLibreEngineImpl(
                 applyMapStyle(map, context)
             }
             mapView = view
+        }
+    }
+
+    private fun configureCompassPosition(map: MapLibreMap, context: Context) {
+        val marginPx = (COMPASS_MARGIN_DP * context.resources.displayMetrics.density).toInt()
+        map.uiSettings.apply {
+            setCompassGravity(Gravity.BOTTOM or Gravity.END)
+            setCompassMargins(marginPx, marginPx, marginPx, marginPx)
         }
     }
 
@@ -270,7 +280,6 @@ class MapLibreEngineImpl(
             .minZoomIconScale(scale)
             .build()
         component.applyStyle(updated)
-        forceLocationUpdateForImmediateRender(mapLibreMap ?: return)
     }
 
     /**
@@ -646,7 +655,7 @@ class MapLibreEngineImpl(
                 snapCameraToGpsIfNeeded(target)
             } else {
                 activateFreeDriveTrackingMode(map)
-                _uiState.update { it.copy(isCameraDetached = false) }
+                _uiState.update { it.copy(isCameraDetached = false, isInTopDownView = false) }
             }
         }
     }
@@ -764,7 +773,7 @@ class MapLibreEngineImpl(
             ),
             POI_PREVIEW_ANIMATION_MS,
         )
-        _uiState.update { it.copy(isCameraDetached = true) }
+        _uiState.update { it.copy(isCameraDetached = true, isInTopDownView = true) }
     }
 
     override fun setSavedPlaces(places: List<SearchResultPlace>) {
@@ -871,7 +880,9 @@ class MapLibreEngineImpl(
         }
 
         hasSnappedCameraToGps = true
-        _uiState.update { it.copy(streetName = "Free Drive", isCameraDetached = false) }
+        _uiState.update {
+            it.copy(streetName = "Free Drive", isCameraDetached = false, isInTopDownView = false)
+        }
     }
 
     override fun navigateToCoordinates(lat: Double, lng: Double) {
@@ -1241,7 +1252,7 @@ class MapLibreEngineImpl(
                 }
             },
         )
-        _uiState.update { it.copy(isCameraDetached = false) }
+        _uiState.update { it.copy(isCameraDetached = false, isInTopDownView = false) }
     }
 
     private fun activateNavigationTracking(componentReady: Boolean) {
@@ -1434,7 +1445,7 @@ class MapLibreEngineImpl(
             val lng = feature.getNumberProperty("lng")?.toDouble() ?: return@run
             if (!isTapNearPinIcon(map, screenPoint, lat, lng)) return@run
             val place = findSavedPlaceAt(lat, lng) ?: placeFromSymbolFeature(feature) ?: return@run
-            focusOnPoi(place, moveCamera = false)
+            focusOnPoi(place, moveCamera = true)
             return true
         }
 
@@ -1458,13 +1469,13 @@ class MapLibreEngineImpl(
                         isDroppedPin = true,
                     )
             }
-            focusOnPoi(place, moveCamera = false)
+            focusOnPoi(place, moveCamera = true)
             return true
         }
 
         map.queryRenderedFeatures(screenPoint, POI_LAYER_ID).firstOrNull()?.let { feature ->
             val place = placeFromSymbolFeature(feature) ?: return false
-            focusOnPoi(place, moveCamera = false)
+            focusOnPoi(place, moveCamera = true)
             return true
         }
 
@@ -1624,11 +1635,14 @@ class MapLibreEngineImpl(
 
     private fun queryTilePois(map: MapLibreMap, queryBounds: GeoBounds): List<SearchResultPlace> {
         if (!useVectorTiles) return emptyList()
-
-        val source = map.style?.getSourceAs<VectorSource>(OPENMAPTILES_SOURCE_ID) ?: return emptyList()
+        val view = mapView ?: return emptyList()
         val reference = lastKnownLocation
         return runCatching {
-            source.querySourceFeatures(arrayOf(OPENMAPTILES_POI_LAYER), null)
+            val w = view.width.toFloat()
+            val h = view.height.toFloat()
+            if (w == 0f || h == 0f) return emptyList()
+            val screenBounds = RectF(0f, 0f, w, h)
+            map.queryRenderedFeatures(screenBounds, *VECTOR_POI_LAYER_IDS)
                 .mapNotNull { feature -> tileFeatureToPlace(feature, reference, queryBounds) }
                 .distinctBy { "${it.latitude},${it.longitude}" }
                 .take(MAX_POI_PINS)
@@ -2775,6 +2789,7 @@ class MapLibreEngineImpl(
 
     companion object {
         private const val TAG = "MapLibreEngineImpl"
+        private const val COMPASS_MARGIN_DP = 16f
         private const val DEFAULT_ZOOM = 15.0
         private const val DEFAULT_ZOOM_FALLBACK = 6.0
         private const val ROUTING_MIN_ZOOM = 10.0
@@ -2804,8 +2819,7 @@ class MapLibreEngineImpl(
         private const val ROUTE_SOURCE_ID = "mix-route-source"
         private const val ROUTE_CASING_LAYER_ID = "mix-route-casing-layer"
         private const val ROUTE_LAYER_ID = "mix-route-layer"
-        private const val OPENMAPTILES_SOURCE_ID = "openmaptiles"
-        private const val OPENMAPTILES_POI_LAYER = "poi"
+        private val VECTOR_POI_LAYER_IDS = arrayOf("poi_r1", "poi_r7", "poi_r20", "poi_transit")
         private const val POI_SOURCE_ID = "mix-poi-source"
         private const val POI_LAYER_ID = "mix-poi-layer"
         private const val CUSTOM_PIN_SOURCE_ID = "mix-custom-pin-source"

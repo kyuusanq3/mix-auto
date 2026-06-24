@@ -1,10 +1,14 @@
 package com.kyuusanq3.mixauto
 
 import android.Manifest
+import android.app.role.RoleManager
+import android.content.ActivityNotFoundException
 import android.content.ComponentName
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
+import android.provider.Settings
 import android.view.KeyEvent
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -59,6 +63,10 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    private val homeRoleRequestLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult(),
+    ) { /* Role dialog result; alias stays enabled until user changes setting */ }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         launcherPreferences = LauncherPreferences(this)
@@ -109,7 +117,6 @@ class MainActivity : ComponentActivity() {
                     onMediaSkipPrevious = mediaViewModel::skipToPrevious,
                     onMediaSkipNext = mediaViewModel::skipToNext,
                     onMediaToggleLike = mediaViewModel::toggleLike,
-                    onMediaToggleShuffle = mediaViewModel::toggleShuffle,
                     isLeftHandDrive = launcherViewModel.isLeftHandDrive,
                     isShortcutsHorizontal = launcherViewModel.isShortcutsHorizontal,
                     mapMediaRatio = launcherViewModel.mapMediaRatio,
@@ -158,6 +165,9 @@ class MainActivity : ComponentActivity() {
                     onToggleLauncherMode = {
                         launcherViewModel.toggleLauncherMode()
                         applyLauncherMode(launcherViewModel.isLauncherMode)
+                        if (launcherViewModel.isLauncherMode) {
+                            promptSetAsDefaultHome()
+                        }
                     },
                     onToggleLargeShortcutIcons = launcherViewModel::toggleLargeShortcutIcons,
                     onDrivingZoomChange = { value ->
@@ -257,6 +267,36 @@ class MainActivity : ComponentActivity() {
             },
             PackageManager.DONT_KILL_APP,
         )
+    }
+
+    private fun promptSetAsDefaultHome() {
+        // Wait for PackageManager to register the enabled alias before prompting.
+        window.decorView.postDelayed({
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                val roleManager = getSystemService(RoleManager::class.java)
+                if (roleManager.isRoleAvailable(RoleManager.ROLE_HOME) &&
+                    !roleManager.isRoleHeld(RoleManager.ROLE_HOME)
+                ) {
+                    homeRoleRequestLauncher.launch(
+                        roleManager.createRequestRoleIntent(RoleManager.ROLE_HOME),
+                    )
+                    return@postDelayed
+                }
+            }
+            openHomeAppSettings()
+        }, LAUNCHER_ALIAS_REGISTER_DELAY_MS)
+    }
+
+    private fun openHomeAppSettings() {
+        try {
+            startActivity(Intent(Settings.ACTION_HOME_SETTINGS))
+        } catch (_: ActivityNotFoundException) {
+            // No system UI for default home on this device; alias is still enabled.
+        }
+    }
+
+    companion object {
+        private const val LAUNCHER_ALIAS_REGISTER_DELAY_MS = 200L
     }
 
     private fun launchApkInstall(apkFile: File) {

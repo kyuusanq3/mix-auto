@@ -226,7 +226,7 @@ private fun AppDrawerItem(
 private fun loadLaunchableApps(packageManager: PackageManager): List<LaunchableApp> {
     val mainIntent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
     @Suppress("DEPRECATION")
-    val resolveInfos = packageManager.queryIntentActivities(mainIntent, 0)
+    val resolveInfos = packageManager.queryIntentActivities(mainIntent, PackageManager.MATCH_ALL)
 
     return resolveInfos
         .mapNotNull { resolveInfo ->

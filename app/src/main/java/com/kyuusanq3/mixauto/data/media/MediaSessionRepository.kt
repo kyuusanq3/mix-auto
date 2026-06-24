@@ -27,6 +27,8 @@ class MediaSessionRepository(context: Context) {
     private var activeController: MediaController? = null
     private var hasAutoPlayed = false
     private var likeCustomActionId: String? = null
+    private var shuffleCustomActionId: String? = null
+    private var cachedShuffleOn = false
     private var lastToggleLikeMs = 0L
     private val likedTrackCache = mutableMapOf<String, Boolean>()
     private val controllerCallback = object : MediaController.Callback() {
@@ -89,17 +91,25 @@ class MediaSessionRepository(context: Context) {
     fun toggleShuffle() {
         val controller = activeController ?: return
         val compat = compatController(controller) ?: return
-        val current = runCatching { compat.shuffleMode }
-            .getOrDefault(PlaybackStateCompat.SHUFFLE_MODE_NONE)
-        val next = if (
-            current == PlaybackStateCompat.SHUFFLE_MODE_ALL ||
-                current == PlaybackStateCompat.SHUFFLE_MODE_GROUP
-        ) {
-            PlaybackStateCompat.SHUFFLE_MODE_NONE
-        } else {
-            PlaybackStateCompat.SHUFFLE_MODE_ALL
+        val shuffleMode = runCatching { compat.shuffleMode }
+            .getOrDefault(PlaybackStateCompat.SHUFFLE_MODE_INVALID)
+        val currentlyOn = when {
+            isShuffleModeOn(shuffleMode) -> true
+            shuffleMode == PlaybackStateCompat.SHUFFLE_MODE_NONE -> false
+            else -> cachedShuffleOn
         }
-        compat.transportControls.setShuffleMode(next)
+        val customAction = shuffleCustomActionId
+        if (!isShuffleModeKnown(shuffleMode) && customAction != null) {
+            controller.transportControls.sendCustomAction(customAction, null)
+        } else {
+            val next = if (currentlyOn) {
+                PlaybackStateCompat.SHUFFLE_MODE_NONE
+            } else {
+                PlaybackStateCompat.SHUFFLE_MODE_ALL
+            }
+            compat.transportControls.setShuffleMode(next)
+        }
+        cachedShuffleOn = !currentlyOn
         publishControllerState(controller)
     }
 
@@ -190,6 +200,8 @@ class MediaSessionRepository(context: Context) {
         activeController?.unregisterCallback(controllerCallback)
         activeController = null
         likeCustomActionId = null
+        shuffleCustomActionId = null
+        cachedShuffleOn = false
     }
 
     private fun publishControllerState(controller: MediaController?) {
@@ -208,6 +220,7 @@ class MediaSessionRepository(context: Context) {
         val supportsSetRating = (playbackState?.actions ?: 0L) and PlaybackState.ACTION_SET_RATING != 0L
         val likeActions = parseLikeCustomActions(playbackState?.customActions.orEmpty())
         likeCustomActionId = likeActions
+        shuffleCustomActionId = parseShuffleCustomAction(playbackState?.customActions.orEmpty())
         val supportsLike = when {
             userRating?.ratingStyle == Rating.RATING_HEART -> true
             userRating?.ratingStyle == Rating.RATING_THUMB_UP_DOWN -> true
@@ -263,10 +276,41 @@ class MediaSessionRepository(context: Context) {
         val compat = compatController(controller) ?: return ShuffleState(false, false)
         val shuffleMode = runCatching { compat.shuffleMode }
             .getOrDefault(PlaybackStateCompat.SHUFFLE_MODE_INVALID)
-        val supportsShuffle = shuffleMode != PlaybackStateCompat.SHUFFLE_MODE_INVALID
-        val isShuffleOn = shuffleMode == PlaybackStateCompat.SHUFFLE_MODE_ALL ||
-            shuffleMode == PlaybackStateCompat.SHUFFLE_MODE_GROUP
+        // Fallback: some apps (e.g. YT Music) advertise shuffle via actions bit only
+        val actionsSupportsShuffle = (controller.playbackState?.actions ?: 0L) and
+            PlaybackStateCompat.ACTION_SET_SHUFFLE_MODE != 0L
+        val supportsShuffle = isShuffleModeKnown(shuffleMode) ||
+            actionsSupportsShuffle ||
+            shuffleCustomActionId != null
+        val isShuffleOn = when {
+            isShuffleModeOn(shuffleMode) -> true.also { cachedShuffleOn = true }
+            shuffleMode == PlaybackStateCompat.SHUFFLE_MODE_NONE -> false.also { cachedShuffleOn = false }
+            else -> cachedShuffleOn
+        }
         return ShuffleState(supportsShuffle, isShuffleOn)
+    }
+
+    private fun isShuffleModeOn(shuffleMode: Int): Boolean {
+        return shuffleMode == PlaybackStateCompat.SHUFFLE_MODE_ALL ||
+            shuffleMode == PlaybackStateCompat.SHUFFLE_MODE_GROUP
+    }
+
+    private fun isShuffleModeKnown(shuffleMode: Int): Boolean {
+        return shuffleMode != PlaybackStateCompat.SHUFFLE_MODE_INVALID
+    }
+
+    private fun parseShuffleCustomAction(
+        customActions: List<PlaybackState.CustomAction>,
+    ): String? {
+        for (action in customActions) {
+            val actionId = action.action
+            val id = actionId.lowercase()
+            val name = action.name?.toString()?.lowercase().orEmpty()
+            if (id.contains("shuffle") || name.contains("shuffle")) {
+                return actionId
+            }
+        }
+        return null
     }
 
     private fun selectController(controllers: List<MediaController>): MediaController? {

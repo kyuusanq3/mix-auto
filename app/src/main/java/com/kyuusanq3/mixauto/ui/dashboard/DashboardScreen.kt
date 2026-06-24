@@ -112,7 +112,6 @@ fun DashboardScreen(
     onMediaSkipPrevious: () -> Unit,
     onMediaSkipNext: () -> Unit,
     onMediaToggleLike: () -> Unit,
-    onMediaToggleShuffle: () -> Unit,
     isLeftHandDrive: Boolean,
     isShortcutsHorizontal: Boolean,
     mapMediaRatio: Float,
@@ -277,7 +276,6 @@ fun DashboardScreen(
                                     onMediaSkipPrevious = onMediaSkipPrevious,
                                     onMediaSkipNext = onMediaSkipNext,
                                     onMediaToggleLike = onMediaToggleLike,
-                                    onMediaToggleShuffle = onMediaToggleShuffle,
                                     isLeftHandDrive = isLeftHandDrive,
                                     isShortcutsHorizontal = isShortcutsHorizontal,
                                     limitSearchDistance = limitSearchDistance,
@@ -325,6 +323,7 @@ fun DashboardScreen(
                         isLeftHandDrive = isLeftHandDrive,
                         activePanel = activePanel,
                         musicPaneEnabled = musicPaneEnabled,
+                        sourcePackage = mediaState.sourcePackage,
                         onTogglePanel = onTogglePanel,
                         modifier = Modifier
                             .fillMaxWidth()
@@ -378,7 +377,6 @@ fun DashboardScreen(
                                     onMediaSkipPrevious = onMediaSkipPrevious,
                                     onMediaSkipNext = onMediaSkipNext,
                                     onMediaToggleLike = onMediaToggleLike,
-                                    onMediaToggleShuffle = onMediaToggleShuffle,
                                     isLeftHandDrive = isLeftHandDrive,
                                     isShortcutsHorizontal = isShortcutsHorizontal,
                                     limitSearchDistance = limitSearchDistance,
@@ -432,7 +430,6 @@ fun DashboardScreen(
                                     onMediaSkipPrevious = onMediaSkipPrevious,
                                     onMediaSkipNext = onMediaSkipNext,
                                     onMediaToggleLike = onMediaToggleLike,
-                                    onMediaToggleShuffle = onMediaToggleShuffle,
                                     isLeftHandDrive = isLeftHandDrive,
                                     isShortcutsHorizontal = isShortcutsHorizontal,
                                     limitSearchDistance = limitSearchDistance,
@@ -495,6 +492,7 @@ fun DashboardScreen(
                         isLeftHandDrive = isLeftHandDrive,
                         activePanel = activePanel,
                         musicPaneEnabled = musicPaneEnabled,
+                        sourcePackage = mediaState.sourcePackage,
                         onTogglePanel = onTogglePanel,
                         modifier = Modifier
                             .fillMaxWidth()
@@ -552,7 +550,6 @@ fun DashboardScreen(
                                         onMediaSkipPrevious = onMediaSkipPrevious,
                                         onMediaSkipNext = onMediaSkipNext,
                                         onMediaToggleLike = onMediaToggleLike,
-                                        onMediaToggleShuffle = onMediaToggleShuffle,
                                         isLeftHandDrive = isLeftHandDrive,
                                         isShortcutsHorizontal = isShortcutsHorizontal,
                                         limitSearchDistance = limitSearchDistance,
@@ -600,6 +597,7 @@ fun DashboardScreen(
                             isLeftHandDrive = isLeftHandDrive,
                             activePanel = activePanel,
                             musicPaneEnabled = musicPaneEnabled,
+                            sourcePackage = mediaState.sourcePackage,
                             onTogglePanel = onTogglePanel,
                             modifier = Modifier
                                 .wrapContentWidth()
@@ -613,6 +611,7 @@ fun DashboardScreen(
                             isLeftHandDrive = isLeftHandDrive,
                             activePanel = activePanel,
                             musicPaneEnabled = musicPaneEnabled,
+                            sourcePackage = mediaState.sourcePackage,
                             onTogglePanel = onTogglePanel,
                             modifier = Modifier
                                 .wrapContentWidth()
@@ -661,7 +660,6 @@ fun DashboardScreen(
                                         onMediaSkipPrevious = onMediaSkipPrevious,
                                         onMediaSkipNext = onMediaSkipNext,
                                         onMediaToggleLike = onMediaToggleLike,
-                                        onMediaToggleShuffle = onMediaToggleShuffle,
                                         isLeftHandDrive = isLeftHandDrive,
                                         isShortcutsHorizontal = isShortcutsHorizontal,
                                         limitSearchDistance = limitSearchDistance,
@@ -727,7 +725,6 @@ private fun DashboardSecondaryPane(
     onMediaSkipPrevious: () -> Unit,
     onMediaSkipNext: () -> Unit,
     onMediaToggleLike: () -> Unit,
-    onMediaToggleShuffle: () -> Unit,
     isLeftHandDrive: Boolean,
     isShortcutsHorizontal: Boolean,
     limitSearchDistance: Boolean,
@@ -776,7 +773,6 @@ private fun DashboardSecondaryPane(
         onMediaSkipPrevious = onMediaSkipPrevious,
         onMediaSkipNext = onMediaSkipNext,
         onMediaToggleLike = onMediaToggleLike,
-        onMediaToggleShuffle = onMediaToggleShuffle,
         isLeftHandDrive = isLeftHandDrive,
         isShortcutsHorizontal = isShortcutsHorizontal,
         limitSearchDistance = limitSearchDistance,
@@ -828,7 +824,6 @@ private fun MediaOrSettingsPane(
     onMediaSkipPrevious: () -> Unit,
     onMediaSkipNext: () -> Unit,
     onMediaToggleLike: () -> Unit,
-    onMediaToggleShuffle: () -> Unit,
     isLeftHandDrive: Boolean,
     isShortcutsHorizontal: Boolean,
     limitSearchDistance: Boolean,
@@ -959,7 +954,6 @@ private fun MediaOrSettingsPane(
                     onSkipPrevious = onMediaSkipPrevious,
                     onSkipNext = onMediaSkipNext,
                     onToggleLike = onMediaToggleLike,
-                    onToggleShuffle = onMediaToggleShuffle,
                     modifier = Modifier.fillMaxSize(),
                 )
             }
