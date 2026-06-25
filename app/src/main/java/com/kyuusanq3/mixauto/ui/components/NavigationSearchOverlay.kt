@@ -17,6 +17,7 @@ import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -26,6 +27,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Star
@@ -128,6 +130,7 @@ fun NavigationSearchContent(
     var isListening by remember { mutableStateOf(false) }
     var pendingVoiceStart by remember { mutableStateOf(false) }
     var selectedTab by remember { mutableStateOf(SuggestedTab.Suggestions) }
+    val listState = rememberLazyListState()
 
     val speechAvailable = remember(context) {
         SpeechRecognizer.isRecognitionAvailable(context)
@@ -420,10 +423,16 @@ fun NavigationSearchContent(
                                 style = MaterialTheme.typography.bodyLarge,
                             )
                         } else {
-                            LazyColumn(
-                                modifier = Modifier.weight(1f),
-                                verticalArrangement = Arrangement.spacedBy(CarDimensions.PaneGap / 2),
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .carLazyScrollbar(listState),
                             ) {
+                                LazyColumn(
+                                    state = listState,
+                                    modifier = Modifier.fillMaxSize(),
+                                    verticalArrangement = Arrangement.spacedBy(CarDimensions.PaneGap / 2),
+                                ) {
                                 if (selectedTab == SuggestedTab.Suggestions) {
                                     if (displayedRecents.isNotEmpty()) {
                                         item(key = "header-recent") {
@@ -489,6 +498,7 @@ fun NavigationSearchContent(
                                     }
                                 }
                             }
+                            }
                         }
                     }
                     hasSearched && !isLoading && !isLoadingRemote && results.isEmpty() -> {
@@ -498,20 +508,27 @@ fun NavigationSearchContent(
                         )
                     }
                     else -> {
-                        LazyColumn(
-                            modifier = Modifier.weight(1f),
-                            verticalArrangement = Arrangement.spacedBy(CarDimensions.PaneGap / 2),
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .carLazyScrollbar(listState),
                         ) {
-                            items(
-                                results,
-                                key = { "${it.latitude},${it.longitude},${it.name}" },
-                            ) { place ->
-                                SearchResultRow(
-                                    place = place,
-                                    isStarred = isPlaceSaved(place),
-                                    onClick = { previewPlace(place) },
-                                    onToggleStar = { onToggleSavedPlace(place) },
-                                )
+                            LazyColumn(
+                                state = listState,
+                                modifier = Modifier.fillMaxSize(),
+                                verticalArrangement = Arrangement.spacedBy(CarDimensions.PaneGap / 2),
+                            ) {
+                                items(
+                                    results,
+                                    key = { "${it.latitude},${it.longitude},${it.name}" },
+                                ) { place ->
+                                    SearchResultRow(
+                                        place = place,
+                                        isStarred = isPlaceSaved(place),
+                                        onClick = { previewPlace(place) },
+                                        onToggleStar = { onToggleSavedPlace(place) },
+                                    )
+                                }
                             }
                         }
                     }

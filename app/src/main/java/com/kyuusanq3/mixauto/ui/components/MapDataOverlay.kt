@@ -1,7 +1,5 @@
 package com.kyuusanq3.mixauto.ui.components
 
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -18,7 +16,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.CloudDownload
 import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ElevatedCard
@@ -91,17 +88,6 @@ fun MapDataPanelContent(
     modifier: Modifier = Modifier,
 ) {
     val uiState by viewModel.uiState.collectAsState()
-
-    val importLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.OpenDocument(),
-    ) { uri ->
-        if (uri != null) {
-            viewModel.importPhilippinesDatabase(uri)
-        }
-    }
-
-    val transferInProgress = uiState is MapDataUiState.Downloading ||
-        uiState is MapDataUiState.Importing
 
     Column(
         modifier = modifier
@@ -181,30 +167,6 @@ fun MapDataPanelContent(
                 )
             }
             MapDataUiState.Idle -> Unit
-        }
-
-        if (uiState !is MapDataUiState.LoadingCatalog && !transferInProgress) {
-            ActionRow(
-                text = "Import Philippines database (ph_places.db)",
-                icon = Icons.Filled.FolderOpen,
-                enabled = true,
-                onClick = {
-                    importLauncher.launch(
-                        arrayOf(
-                            "application/octet-stream",
-                            "application/x-sqlite3",
-                            "application/gzip",
-                            "*/*",
-                        ),
-                    )
-                },
-            )
-            ActionRow(
-                text = "Install Philippines sample (20 POIs)",
-                icon = Icons.Filled.FolderOpen,
-                enabled = true,
-                onClick = { viewModel.installSamplePhilippinesData() },
-            )
         }
 
         TomTomApiKeySection(
@@ -306,23 +268,28 @@ private fun CountryCatalogList(
     onDownload: (RemoteCountryPack) -> Unit,
     onDelete: (String) -> Unit,
 ) {
-    Column(
-        modifier = modifier.verticalScroll(rememberScrollState()),
-        verticalArrangement = Arrangement.spacedBy(CarDimensions.DockItemSpacing / 2),
-    ) {
-        if (packs.isEmpty()) {
-            CarBodyText(
-                text = "No countries in catalog.",
-                style = MaterialTheme.typography.bodyMedium,
-            )
-        } else {
-            packs.forEach { pack ->
-                CountryPackRow(
-                    pack = pack,
-                    uiState = uiState,
-                    onDownload = { onDownload(pack) },
-                    onDelete = { onDelete(pack.iso) },
+    val scrollState = rememberScrollState()
+    Box(modifier = modifier.carScrollbar(scrollState)) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .verticalScroll(scrollState),
+            verticalArrangement = Arrangement.spacedBy(CarDimensions.DockItemSpacing / 2),
+        ) {
+            if (packs.isEmpty()) {
+                CarBodyText(
+                    text = "No countries in catalog.",
+                    style = MaterialTheme.typography.bodyMedium,
                 )
+            } else {
+                packs.forEach { pack ->
+                    CountryPackRow(
+                        pack = pack,
+                        uiState = uiState,
+                        onDownload = { onDownload(pack) },
+                        onDelete = { onDelete(pack.iso) },
+                    )
+                }
             }
         }
     }

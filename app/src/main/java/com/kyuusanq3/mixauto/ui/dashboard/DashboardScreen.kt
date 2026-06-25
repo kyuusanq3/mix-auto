@@ -55,6 +55,7 @@ import com.kyuusanq3.mixauto.domain.map.CarMapEngine
 import com.kyuusanq3.mixauto.domain.map.SearchResultPlace
 import com.kyuusanq3.mixauto.domain.media.MediaPlaybackState
 import com.kyuusanq3.mixauto.ui.components.CarMapViewContainer
+import com.kyuusanq3.mixauto.ui.components.carScrollbar
 import com.kyuusanq3.mixauto.ui.components.MapDataPanelContent
 import com.kyuusanq3.mixauto.ui.components.NavigationSearchContent
 import com.kyuusanq3.mixauto.ui.components.OverlayCloseButton
@@ -163,8 +164,8 @@ fun DashboardScreen(
                     activePanel = ActivePanel.MEDIA
                 }
                 else -> {
-                    musicPaneEnabled = false
-                    activePanel = ActivePanel.HIDDEN
+                    musicPaneEnabled = true
+                    activePanel = ActivePanel.MEDIA
                 }
             }
             ActivePanel.SETTINGS -> when (activePanel) {
@@ -190,9 +191,14 @@ fun DashboardScreen(
     }
     val onDismissPanel = { activePanel = dismissToBasePanel(musicPaneEnabled) }
     val onDismissAppDrawer = { activePanel = dismissToBasePanel(musicPaneEnabled) }
-    val onOpenSearch = {
+    val isSearchOpen = activePanel == ActivePanel.SEARCH
+    val onToggleSearch = {
         musicPaneEnabled = true
-        activePanel = ActivePanel.SEARCH
+        activePanel = if (activePanel == ActivePanel.SEARCH) {
+            dismissToBasePanel(musicPaneEnabled)
+        } else {
+            ActivePanel.SEARCH
+        }
     }
     val mapUiState by mapEngine.uiState.collectAsStateWithLifecycle()
     val launcherViewModel: LauncherViewModel = viewModel()
@@ -200,9 +206,12 @@ fun DashboardScreen(
     val appUpdateState by appUpdateViewModel.uiState.collectAsStateWithLifecycle()
     val configuration = LocalConfiguration.current
     val isPortrait = configuration.orientation == Configuration.ORIENTATION_PORTRAIT
-    val mediaWeight = 1f - mapMediaRatio
-    val landscapeMapWeight = mapMediaRatio
-    val landscapeMediaWeight = mediaWeight
+    val isSplitLockedForOverlay =
+        activePanel == ActivePanel.SEARCH || activePanel == ActivePanel.POI_DETAIL
+    val effectiveMapMediaRatio =
+        if (isSplitLockedForOverlay) OVERLAY_MAP_MEDIA_RATIO else mapMediaRatio
+    val effectiveMediaWeight = 1f - effectiveMapMediaRatio
+    val showMapMediaDivider = showSecondaryPane && !isSplitLockedForOverlay
     var portraitMapMediaContainerPx by remember { mutableStateOf(0f) }
     var landscapeMapMediaContainerPx by remember { mutableStateOf(0f) }
     var verticalDockRowWidthPx by remember { mutableStateOf(0f) }
@@ -248,18 +257,21 @@ fun DashboardScreen(
                         ) {
                             CarMapViewContainer(
                                 engine = mapEngine,
-                                onOpenSearch = onOpenSearch,
+                                onToggleSearch = onToggleSearch,
+                                isSearchOpen = isSearchOpen,
                                 modifier = Modifier
-                                    .weight(if (showSecondaryPane) mapMediaRatio else 1f)
+                                    .weight(if (showSecondaryPane) effectiveMapMediaRatio else 1f)
                                     .fillMaxWidth(),
                             )
                             if (showSecondaryPane) {
-                                MapMediaDividerHandle(
-                                    isVertical = false,
-                                    containerSizePx = portraitMapMediaContainerPx,
-                                    mapMediaRatio = mapMediaRatio,
-                                    onMapMediaRatioChange = onMapMediaRatioChange,
-                                )
+                                if (showMapMediaDivider) {
+                                    MapMediaDividerHandle(
+                                        isVertical = false,
+                                        containerSizePx = portraitMapMediaContainerPx,
+                                        mapMediaRatio = mapMediaRatio,
+                                        onMapMediaRatioChange = onMapMediaRatioChange,
+                                    )
+                                }
                                 DashboardSecondaryPane(
                                     activePanel = activePanel,
                                     mapEngine = mapEngine,
@@ -307,7 +319,7 @@ fun DashboardScreen(
                                     onDownloadUpdate = appUpdateViewModel::downloadUpdate,
                                     onInstallApk = onInstallApk,
                                     modifier = Modifier
-                                        .weight(mediaWeight)
+                                        .weight(effectiveMediaWeight)
                                         .fillMaxWidth(),
                                 )
                             }
@@ -322,7 +334,6 @@ fun DashboardScreen(
                         isLargeIcons = isLargeShortcutIcons,
                         isLeftHandDrive = isLeftHandDrive,
                         activePanel = activePanel,
-                        musicPaneEnabled = musicPaneEnabled,
                         sourcePackage = mediaState.sourcePackage,
                         onTogglePanel = onTogglePanel,
                         modifier = Modifier
@@ -349,18 +360,21 @@ fun DashboardScreen(
                         if (isLeftHandDrive) {
                             CarMapViewContainer(
                                 engine = mapEngine,
-                                onOpenSearch = onOpenSearch,
+                                onToggleSearch = onToggleSearch,
+                                isSearchOpen = isSearchOpen,
                                 modifier = Modifier
-                                    .weight(if (showSecondaryPane) mapMediaRatio else 1f)
+                                    .weight(if (showSecondaryPane) effectiveMapMediaRatio else 1f)
                                     .fillMaxSize(),
                             )
                             if (showSecondaryPane) {
-                                MapMediaDividerHandle(
-                                    isVertical = true,
-                                    containerSizePx = landscapeMapMediaContainerPx,
-                                    mapMediaRatio = mapMediaRatio,
-                                    onMapMediaRatioChange = onMapMediaRatioChange,
-                                )
+                                if (showMapMediaDivider) {
+                                    MapMediaDividerHandle(
+                                        isVertical = true,
+                                        containerSizePx = landscapeMapMediaContainerPx,
+                                        mapMediaRatio = mapMediaRatio,
+                                        onMapMediaRatioChange = onMapMediaRatioChange,
+                                    )
+                                }
                                 DashboardSecondaryPane(
                                     activePanel = activePanel,
                                     mapEngine = mapEngine,
@@ -408,7 +422,7 @@ fun DashboardScreen(
                                     onDownloadUpdate = appUpdateViewModel::downloadUpdate,
                                     onInstallApk = onInstallApk,
                                     modifier = Modifier
-                                        .weight(mediaWeight)
+                                        .weight(effectiveMediaWeight)
                                         .fillMaxSize(),
                                 )
                             }
@@ -461,22 +475,25 @@ fun DashboardScreen(
                                     onDownloadUpdate = appUpdateViewModel::downloadUpdate,
                                     onInstallApk = onInstallApk,
                                     modifier = Modifier
-                                        .weight(mediaWeight)
+                                        .weight(effectiveMediaWeight)
                                         .fillMaxSize(),
                                 )
-                                MapMediaDividerHandle(
-                                    isVertical = true,
-                                    containerSizePx = landscapeMapMediaContainerPx,
-                                    mapMediaRatio = mapMediaRatio,
-                                    onMapMediaRatioChange = onMapMediaRatioChange,
-                                    invertDrag = true,
-                                )
+                                if (showMapMediaDivider) {
+                                    MapMediaDividerHandle(
+                                        isVertical = true,
+                                        containerSizePx = landscapeMapMediaContainerPx,
+                                        mapMediaRatio = mapMediaRatio,
+                                        onMapMediaRatioChange = onMapMediaRatioChange,
+                                        invertDrag = true,
+                                    )
+                                }
                             }
                             CarMapViewContainer(
                                 engine = mapEngine,
-                                onOpenSearch = onOpenSearch,
+                                onToggleSearch = onToggleSearch,
+                                isSearchOpen = isSearchOpen,
                                 modifier = Modifier
-                                    .weight(if (showSecondaryPane) mapMediaRatio else 1f)
+                                    .weight(if (showSecondaryPane) effectiveMapMediaRatio else 1f)
                                     .fillMaxSize(),
                             )
                         }
@@ -491,7 +508,6 @@ fun DashboardScreen(
                         isLargeIcons = isLargeShortcutIcons,
                         isLeftHandDrive = isLeftHandDrive,
                         activePanel = activePanel,
-                        musicPaneEnabled = musicPaneEnabled,
                         sourcePackage = mediaState.sourcePackage,
                         onTogglePanel = onTogglePanel,
                         modifier = Modifier
@@ -516,24 +532,27 @@ fun DashboardScreen(
                             Row(modifier = Modifier.fillMaxSize()) {
                                 CarMapViewContainer(
                                     engine = mapEngine,
-                                    onOpenSearch = onOpenSearch,
+                                    onToggleSearch = onToggleSearch,
+                                isSearchOpen = isSearchOpen,
                                     modifier = Modifier
                                         .weight(
                                             if (showSecondaryPane) {
-                                                landscapeMapWeight
+                                                effectiveMapMediaRatio
                                             } else {
-                                                landscapeMapWeight + landscapeMediaWeight
+                                                effectiveMapMediaRatio + effectiveMediaWeight
                                             },
                                         )
                                         .fillMaxSize(),
                                 )
                                 if (showSecondaryPane) {
-                                    MapMediaDividerHandle(
-                                        isVertical = true,
-                                        containerSizePx = verticalDockMapMediaContainerPx,
-                                        mapMediaRatio = mapMediaRatio,
-                                        onMapMediaRatioChange = onMapMediaRatioChange,
-                                    )
+                                    if (showMapMediaDivider) {
+                                        MapMediaDividerHandle(
+                                            isVertical = true,
+                                            containerSizePx = verticalDockMapMediaContainerPx,
+                                            mapMediaRatio = mapMediaRatio,
+                                            onMapMediaRatioChange = onMapMediaRatioChange,
+                                        )
+                                    }
                                     DashboardSecondaryPane(
                                         activePanel = activePanel,
                                         mapEngine = mapEngine,
@@ -581,7 +600,7 @@ fun DashboardScreen(
                                         onDownloadUpdate = appUpdateViewModel::downloadUpdate,
                                         onInstallApk = onInstallApk,
                                         modifier = Modifier
-                                            .weight(landscapeMediaWeight)
+                                            .weight(effectiveMediaWeight)
                                             .fillMaxSize(),
                                     )
                                 }
@@ -596,7 +615,6 @@ fun DashboardScreen(
                             isLargeIcons = isLargeShortcutIcons,
                             isLeftHandDrive = isLeftHandDrive,
                             activePanel = activePanel,
-                            musicPaneEnabled = musicPaneEnabled,
                             sourcePackage = mediaState.sourcePackage,
                             onTogglePanel = onTogglePanel,
                             modifier = Modifier
@@ -610,7 +628,6 @@ fun DashboardScreen(
                             isLargeIcons = isLargeShortcutIcons,
                             isLeftHandDrive = isLeftHandDrive,
                             activePanel = activePanel,
-                            musicPaneEnabled = musicPaneEnabled,
                             sourcePackage = mediaState.sourcePackage,
                             onTogglePanel = onTogglePanel,
                             modifier = Modifier
@@ -626,24 +643,27 @@ fun DashboardScreen(
                             Row(modifier = Modifier.fillMaxSize()) {
                                 CarMapViewContainer(
                                     engine = mapEngine,
-                                    onOpenSearch = onOpenSearch,
+                                    onToggleSearch = onToggleSearch,
+                                isSearchOpen = isSearchOpen,
                                     modifier = Modifier
                                         .weight(
                                             if (showSecondaryPane) {
-                                                landscapeMapWeight
+                                                effectiveMapMediaRatio
                                             } else {
-                                                landscapeMapWeight + landscapeMediaWeight
+                                                effectiveMapMediaRatio + effectiveMediaWeight
                                             },
                                         )
                                         .fillMaxSize(),
                                 )
                                 if (showSecondaryPane) {
-                                    MapMediaDividerHandle(
-                                        isVertical = true,
-                                        containerSizePx = verticalDockMapMediaContainerPx,
-                                        mapMediaRatio = mapMediaRatio,
-                                        onMapMediaRatioChange = onMapMediaRatioChange,
-                                    )
+                                    if (showMapMediaDivider) {
+                                        MapMediaDividerHandle(
+                                            isVertical = true,
+                                            containerSizePx = verticalDockMapMediaContainerPx,
+                                            mapMediaRatio = mapMediaRatio,
+                                            onMapMediaRatioChange = onMapMediaRatioChange,
+                                        )
+                                    }
                                     DashboardSecondaryPane(
                                         activePanel = activePanel,
                                         mapEngine = mapEngine,
@@ -691,7 +711,7 @@ fun DashboardScreen(
                                         onDownloadUpdate = appUpdateViewModel::downloadUpdate,
                                         onInstallApk = onInstallApk,
                                         modifier = Modifier
-                                            .weight(landscapeMediaWeight)
+                                            .weight(effectiveMediaWeight)
                                             .fillMaxSize(),
                                     )
                                 }
@@ -994,14 +1014,15 @@ private fun SettingsContent(
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val scrollState = rememberScrollState()
     Surface(
-        modifier = modifier,
+        modifier = modifier.carScrollbar(scrollState),
         color = OledBlack,
     ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .verticalScroll(rememberScrollState())
+                .verticalScroll(scrollState)
                 .padding(CarDimensions.PaneGap * 2),
             verticalArrangement = Arrangement.spacedBy(CarDimensions.DockItemSpacing),
         ) {
@@ -1324,6 +1345,8 @@ private fun AppUpdateSection(
         }
     }
 }
+
+private const val OVERLAY_MAP_MEDIA_RATIO = 0.3f
 
 @Composable
 private fun MapMediaDividerHandle(

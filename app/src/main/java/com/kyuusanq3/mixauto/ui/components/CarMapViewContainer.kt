@@ -49,7 +49,8 @@ import com.kyuusanq3.mixauto.ui.theme.OledBlack
 @Composable
 fun CarMapViewContainer(
     engine: CarMapEngine,
-    onOpenSearch: () -> Unit,
+    onToggleSearch: () -> Unit,
+    isSearchOpen: Boolean,
     modifier: Modifier = Modifier,
 ) {
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -123,15 +124,23 @@ fun CarMapViewContainer(
             horizontalAlignment = Alignment.End,
         ) {
             IconButton(
-                onClick = onOpenSearch,
+                onClick = onToggleSearch,
                 modifier = Modifier
                     .size(CarDimensions.MinTapTarget)
                     .background(OledBlack.copy(alpha = 0.72f), MaterialTheme.shapes.small),
             ) {
                 Icon(
                     imageVector = Icons.Filled.Search,
-                    contentDescription = "Search destination",
-                    tint = MaterialTheme.colorScheme.primary,
+                    contentDescription = if (isSearchOpen) {
+                        "Hide destination search"
+                    } else {
+                        "Show destination search"
+                    },
+                    tint = if (isSearchOpen) {
+                        ElectricCyan
+                    } else {
+                        MaterialTheme.colorScheme.primary
+                    },
                 )
             }
 

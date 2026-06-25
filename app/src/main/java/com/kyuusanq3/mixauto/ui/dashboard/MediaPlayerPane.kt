@@ -52,6 +52,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import com.kyuusanq3.mixauto.domain.media.MediaPlaybackState
+import com.kyuusanq3.mixauto.ui.components.AudioPlayerPickerOverlay
 import com.kyuusanq3.mixauto.ui.components.canLaunchApp
 import com.kyuusanq3.mixauto.ui.components.launchAppByPackage
 import com.kyuusanq3.mixauto.ui.components.rememberAppIcon
@@ -80,6 +81,7 @@ fun MediaPlayerPane(
     val artModeState = remember { mutableStateOf(AlbumArtMode.PLAIN) }
     val artMode by artModeState
     var isPickerOpen by remember { mutableStateOf(false) }
+    var showAudioPicker by remember { mutableStateOf(false) }
     var pickerIndex by remember { mutableIntStateOf(0) }
     val swipeThresholdPx = with(LocalDensity.current) { AlbumArtSwipeThreshold.toPx() }
     val onPlayPauseState = rememberUpdatedState(onPlayPause)
@@ -96,6 +98,7 @@ fun MediaPlayerPane(
             containerColor = DarkSurface,
         ),
     ) {
+        Box(modifier = Modifier.fillMaxSize()) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
@@ -269,6 +272,7 @@ fun MediaPlayerPane(
                     SourceAppButton(
                         sourcePackage = mediaState.sourcePackage,
                         hasActiveSession = mediaState.hasActiveSession,
+                        onOpenPicker = { showAudioPicker = true },
                         modifier = Modifier.weight(1f),
                     )
                     MediaControlButton(
@@ -304,6 +308,14 @@ fun MediaPlayerPane(
                 }
             }
         }
+
+            if (showAudioPicker) {
+                AudioPlayerPickerOverlay(
+                    onDismiss = { showAudioPicker = false },
+                    modifier = Modifier.fillMaxSize(),
+                )
+            }
+        }
     }
 }
 
@@ -311,12 +323,14 @@ fun MediaPlayerPane(
 private fun SourceAppButton(
     sourcePackage: String,
     hasActiveSession: Boolean,
+    onOpenPicker: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
     val appIcon = rememberAppIcon(sourcePackage)
     val canLaunch = remember(sourcePackage) { canLaunchApp(context, sourcePackage) }
-    val enabled = hasActiveSession && canLaunch
+    val canLaunchSource = hasActiveSession && canLaunch
+    val canOpenPicker = !hasActiveSession
     val iconSize = CarDimensions.AppIconSize - 8.dp
 
     Box(
@@ -327,17 +341,21 @@ private fun SourceAppButton(
             modifier = Modifier
                 .requiredSize(CarDimensions.MinTapTarget)
                 .then(
-                    if (enabled) {
-                        Modifier.clickable {
-                            launchAppByPackage(context, sourcePackage)
+                    when {
+                        canLaunchSource -> {
+                            Modifier.clickable {
+                                launchAppByPackage(context, sourcePackage)
+                            }
                         }
-                    } else {
-                        Modifier
+                        canOpenPicker -> {
+                            Modifier.clickable(onClick = onOpenPicker)
+                        }
+                        else -> Modifier
                     },
                 ),
             contentAlignment = Alignment.Center,
         ) {
-            if (appIcon != null && enabled) {
+            if (appIcon != null && canLaunchSource) {
                 Image(
                     bitmap = appIcon,
                     contentDescription = "Open audio source",
@@ -346,11 +364,13 @@ private fun SourceAppButton(
             } else {
                 Icon(
                     imageVector = Icons.Filled.MusicNote,
-                    contentDescription = "Audio source",
+                    contentDescription = if (canOpenPicker) "Choose audio player" else "Audio source",
                     modifier = Modifier.requiredSize(iconSize),
-                    tint = MaterialTheme.colorScheme.onSurface.copy(
-                        alpha = if (enabled) 1f else 0.38f,
-                    ),
+                    tint = when {
+                        canOpenPicker -> ElectricCyan
+                        canLaunchSource -> MaterialTheme.colorScheme.onSurface
+                        else -> MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
+                    },
                 )
             }
         }

@@ -174,7 +174,7 @@ class MapLibreEngineImpl(
             view.onStart()
             view.onResume()
             view.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
-                mapLibreMap?.let { map -> applyDrivingTrackingPadding(map) }
+                mapLibreMap?.let { map -> handleMapLayoutChange(map) }
             }
             view.getMapAsync { map ->
                 mapLibreMap = map
@@ -761,19 +761,54 @@ class MapLibreEngineImpl(
         if (component.isLocationComponentActivated && component.isLocationComponentEnabled) {
             component.cameraMode = CameraMode.NONE
         }
-        map.cancelTransitions()
-        map.animateCamera(
+        _uiState.update { it.copy(isCameraDetached = true, isInTopDownView = true) }
+        clearViewportPaddingForPreview(map)
+        val cameraUpdate = CameraUpdateFactory.newCameraPosition(
+            CameraPosition.Builder()
+                .target(LatLng(lat, lng))
+                .zoom(targetZoom)
+                .tilt(0.0)
+                .bearing(0.0)
+                .build(),
+        )
+        val runAnimation = {
+            map.cancelTransitions()
+            map.animateCamera(cameraUpdate, POI_PREVIEW_ANIMATION_MS)
+        }
+        // Defer until after Compose resizes the map pane (e.g. POI detail opens at 30/70 split).
+        mapView?.post { runAnimation() } ?: runAnimation()
+    }
+
+    private fun recenterOnSelectedPoi(map: MapLibreMap, place: SearchResultPlace) {
+        val targetZoom = map.cameraPosition.zoom.coerceAtLeast(POI_PREVIEW_ZOOM)
+        map.moveCamera(
             CameraUpdateFactory.newCameraPosition(
                 CameraPosition.Builder()
-                    .target(LatLng(lat, lng))
+                    .target(LatLng(place.latitude, place.longitude))
                     .zoom(targetZoom)
                     .tilt(0.0)
                     .bearing(0.0)
                     .build(),
             ),
-            POI_PREVIEW_ANIMATION_MS,
         )
-        _uiState.update { it.copy(isCameraDetached = true, isInTopDownView = true) }
+    }
+
+    private fun handleMapLayoutChange(map: MapLibreMap) {
+        val state = _uiState.value
+        if (state.isInTopDownView && state.selectedPoi != null) {
+            clearViewportPaddingForPreview(map)
+            recenterOnSelectedPoi(map, state.selectedPoi)
+        } else if (!state.isInTopDownView) {
+            applyDrivingTrackingPadding(map)
+        }
+    }
+
+    private fun clearViewportPaddingForPreview(map: MapLibreMap) {
+        map.setPadding(0, 0, 0, 0)
+        val component = map.locationComponent
+        if (component.isLocationComponentActivated && component.isLocationComponentEnabled) {
+            component.paddingWhileTracking(doubleArrayOf(0.0, 0.0, 0.0, 0.0))
+        }
     }
 
     override fun setSavedPlaces(places: List<SearchResultPlace>) {
@@ -1292,12 +1327,14 @@ class MapLibreEngineImpl(
     }
 
     private fun applyDrivingViewportPadding(map: MapLibreMap) {
+        if (_uiState.value.isInTopDownView) return
         val padding = computeDrivingViewportPadding(map)
         map.setPadding(padding.left, padding.top, padding.right, padding.bottom)
     }
 
     /** Map padding alone does not offset the puck during TRACKING_GPS — use paddingWhileTracking too. */
     private fun applyDrivingTrackingPadding(map: MapLibreMap) {
+        if (_uiState.value.isInTopDownView) return
         val padding = computeDrivingViewportPadding(map)
         map.setPadding(padding.left, padding.top, padding.right, padding.bottom)
         val component = map.locationComponent

@@ -1,0 +1,140 @@
+Mix Auto — Phone Bridge (Companion App + Head Unit Integration)
+
+Build a companion Android app ("MixAuto Bridge") that runs on the user's phone and forwards notifications to the Mix Auto head unit app over Bluetooth RFCOMM. The head unit displays incoming messages and notification banners in the dashboard UI.
+
+---
+
+Part 1 — Companion Phone App (new repo: mix-auto-bridge)
+
+Project setup
+- New Android project, package: com.kyuusanq3.mixautobridge
+- minSdk 26, targetSdk 34
+- Kotlin + Jetpack Compose (minimal UI — mostly a background service)
+- No Google Play Services dependency (must work on stock Android)
+
+Permissions (AndroidManifest.xml)
+- android.permission.BIND_NOTIFICATION_LISTENER_SERVICE
+- android.permission.BLUETOOTH (API < 31)
+- android.permission.BLUETOOTH_CONNECT (API 31+)
+- android.permission.BLUETOOTH_SCAN (API 31+)
+- android.permission.FOREGROUND_SERVICE
+- android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE
+
+NotificationListenerService — PhoneNotificationService.kt
+- Extend NotificationListenerService
+- On onNotificationPosted(sbn): extract package, app label, title, text, timestamp, and notification icon (as PNG bytes, max 64×64, compressed)
+- Filter out: own package, system UI, low-priority/silent notifications (use Notification.priority >= PRIORITY_DEFAULT)
+- Allowlist mode (optional toggle): user can restrict to selected apps only (WhatsApp, Messages, Telegram, etc.)
+- On capture, pass NotificationPayload to BluetoothBridgeService
+
+BluetoothBridgeService.kt — Foreground Service
+- Runs persistently as a foreground service (notification: "MixAuto Bridge active")
+- On start: scan for paired devices, find head unit by device name containing "MixAuto" or by a stored MAC address (user-selectable in settings)
+- Connect using BluetoothSocket (RFCOMM) with fixed UUID: "00001101-0000-1000-8000-00805F9B34FB" (SPP — Serial Port Profile)
+- Reconnect loop: if socket drops, retry every 10 seconds
+- Expose sendNotification(payload: NotificationPayload) — serialize to JSON, write to socket output stream with newline delimiter
+- sendHeartbeat() every 30 s so head unit knows bridge is alive
+
+NotificationPayload data class
+- id: String (package + notification ID)
+- appPackage: String
+- appLabel: String
+- title: String
+- text: String
+- timestamp: Long (epoch ms)
+- iconPngBase64: String? (optional, small icon)
+- category: String? (e.g. "msg", "call", "email", "other")
+
+JSON wire format (newline-delimited, UTF-8)
+  { "type": "notification", "payload": { ...NotificationPayload... } }
+  { "type": "heartbeat" }
+  { "type": "dismiss", "id": "..." }   ← head unit can send this back
+
+Simple UI — MainActivity (phone)
+- Show connection status: "Connected to [head unit name]" or "Searching..."
+- Toggle: Enable/Disable bridge
+- App filter list: checkboxes for installed apps (default all ON)
+- Button: "Forget head unit" (clear stored MAC)
+- On first launch: prompt user to enable Notification Access (deep-link to settings)
+
+---
+
+Part 2 — Head Unit integration (Mix Auto app changes)
+
+BluetoothBridgeServer.kt — new file in data/notifications/
+- BluetoothServerSocket listening on same UUID as companion app
+- Runs as a coroutine launched from MainActivity
+- Accepts one client connection (companion phone)
+- Reads newline-delimited JSON from socket input stream
+- Parses each line as BridgeMessage (type + payload)
+- On "notification": emit to PhoneNotificationRepository
+- On "heartbeat": update lastHeartbeatMs (used to show connected indicator)
+- On disconnect: update connection state, wait and re-listen
+
+PhoneNotificationRepository.kt — new file in data/notifications/
+- StateFlow<List<PhoneNotification>> — last 20 notifications, newest first
+- StateFlow<Boolean> isPhoneBridgeConnected
+- addNotification(n: PhoneNotification): prepend, trim to 20, emit
+- dismissNotification(id: String): remove from list, send dismiss message back over socket
+- clearAll()
+
+PhoneNotification data class
+- id, appPackage, appLabel, title, text, timestamp, iconPngBase64, category
+
+Manifest additions (mix-auto AndroidManifest.xml)
+- android.permission.BLUETOOTH (API < 31)
+- android.permission.BLUETOOTH_CONNECT (API 31+)
+- Runtime permission request for BLUETOOTH_CONNECT on API 31+ (add to OnboardingWizard as a new step with sinceVersion = 2)
+
+UI — PhoneNotificationBanner.kt (new composable)
+- Slide-in banner from top of DashboardScreen root Box (above map, below system bar)
+- Auto-dismiss after 6 seconds or on swipe-up gesture
+- Show: app label (small), title (CarBodyText bold), text (CarLabelText, max 2 lines)
+- Dismiss button (X icon, right side)
+- Background: DeepCharcoal card with 1dp ElectricCyan left border
+- One banner visible at a time; queue remaining — show next after dismiss/timeout
+- Tapping the banner opens PhoneNotificationDrawer
+
+UI — PhoneNotificationDrawer.kt (new composable)
+- Full-height right-side drawer (or bottom sheet in portrait) over map+media Box
+- Lists all PhoneNotification items, newest first
+- Each row: app label + relative time, title bold, text (2 lines), swipe-right to dismiss
+- Header row: "Phone Messages" title + "Clear All" button + bridge status dot (green = connected, red = disconnected)
+- Opened via new dock shortcut (phone/message icon) in ShortcutDock
+
+ShortcutDock additions
+- Add new ActivePanel.PHONE_NOTIFICATIONS to the panel enum
+- New dock icon: message bubble or phone icon
+- Badge: unread count (red circle) on dock icon when unread > 0
+- Reading/opening drawer marks all as read (clears badge)
+
+LauncherPreferences additions
+- phoneBridgeEnabled: Boolean (default true)
+- linkedHeadUnitBluetoothName: String (optional, for future pairing UI)
+
+OnboardingWizard additions
+- New step (sinceVersion = 2): "Phone Bridge — Bluetooth Notifications"
+  — explains the companion app, links to Play Store (or sideload instructions)
+  — requests BLUETOOTH_CONNECT runtime permission on API 31+
+  — Bump CURRENT_ONBOARDING_VERSION to 2
+
+---
+
+Part 3 — Nice-to-haves (post-MVP)
+
+- Call notifications: show caller name + Accept/Decline buttons that trigger phone-side broadcast via bridge (requires companion to hold CALL_PHONE permission and send back an "action" message type)
+- Per-app sound/vibration on head unit when notification arrives
+- DND (Do Not Disturb) mode: suppress banners while navigating (check MapUiState.isNavigating before showing banner)
+- QR code in phone app settings that encodes the head unit's Bluetooth MAC so the user doesn't have to type it manually
+- Wired USB fallback: ADB reverse port forward or Android Open Accessory (AOA) as transport if Bluetooth is unreliable
+
+---
+
+Implementation order (suggested)
+1. Companion app: NotificationListenerService + JSON serialization (Part 1, no BT yet)
+2. Companion app: BluetoothBridgeService + socket send (Part 1 complete)
+3. Head unit: BluetoothBridgeServer + PhoneNotificationRepository (Part 2 data layer)
+4. Head unit: PhoneNotificationBanner (auto-dismiss toast) (Part 2 UI, quick win)
+5. Head unit: PhoneNotificationDrawer + dock icon + badge (Part 2 UI, full feature)
+6. Head unit: OnboardingWizard step + permissions (Part 2 polish)
+7. Nice-to-haves

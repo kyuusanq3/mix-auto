@@ -150,7 +150,6 @@ Bundled sample asset: `python tools/build_sample_places_db.py` (writes to `mix-a
 
 - **Map Data** opens → `MapDataViewModel.loadCatalog()` fetches manifest → country list with **Installed** badge or download button.
 - Download uses `GZIPInputStream` when URL ends with `.gz`.
-- **Import** / **Sample** remain as fallbacks for Philippines.
 
 **On-device schema** (`filesDir/places/{iso}.db`):
 
@@ -220,7 +219,8 @@ After enabling Launcher Mode, press Home and select **Mix Auto** as the default 
 | UI cut off by status/nav bars on phone | `MainActivity` is edge-to-edge (`setDecorFitsSystemWindows(false)`); add `systemBarsPadding()` on `DashboardScreen` root `Box` |
 | Status bar hidden on Eonon / head unit | Remove `android:windowFullscreen` from `themes.xml` (day + night); `MainActivity` calls `WindowInsetsControllerCompat.show(systemBars())` — do not re-add fullscreen theme flag |
 | Media pane shows "Enable notification access" | Settings → Special app access → Notification access → enable MixAuto; start playback in YT Music/Spotify then return to launcher |
-| Transport row shows dim MusicNote instead of app icon | No active session or `sourcePackage` blank — enable notification access and start playback in YT Music/Spotify; first slot launches source app via `AppIconUtils.launchAppByPackage()` |
+| Transport row shows dim MusicNote instead of app icon | Active session: first slot shows source app icon and launches via `launchAppByPackage()`; no session: cyan `MusicNote` opens `AudioPlayerPickerOverlay` in media pane (tap row to launch YT Music/Spotify/etc.) |
+| Audio player list empty on API 30+ | Manifest `<queries>` must include `CATEGORY_APP_MUSIC` and `android.media.browse.MediaBrowserService`; discovery in `AudioPlayerUtils.loadAudioPlayerApps()` uses `MATCH_ALL` on both |
 | Music dock badge missing | Badge only shows when `rememberAppIcon(sourcePackage)` succeeds; no fallback icon — pan away and back after session attaches if package just changed |
 | Skip-next media button shrinks in narrow pane | `MediaPlayerPane.kt`: use `weight(1f)` slots + `requiredSize(MinTapTarget)` on all three controls |
 | `setMapMediaRatio` JVM signature clash | Use `updateMapMediaRatio()` in `LauncherViewModel` — property already generates `setMapMediaRatio` setter |
@@ -233,7 +233,7 @@ After enabling Launcher Mode, press Home and select **Mix Auto** as the default 
 | Search shows overseas / 5000 km destinations | Default 500 km cap is ON — disable **Nearby results only (within 500 km)** in Launcher Settings to include farther Photon results; routing still may fail for long/cross-water trips |
 | Empty search shows no Nearby rows | Nearby tab uses `poiCache` only — pan/zoom map (zoom ≥ 13) so camera-idle POI load runs; no network fetch for empty-query nearby list |
 | Vector tiles show POI labels but no teardrop pins | `queryTilePois()` must use `map.queryRenderedFeatures` on Liberty layer IDs (`poi_r1`, `poi_r7`, `poi_r20`, `poi_transit`) — `VectorSource.querySourceFeatures("poi")` misses rendered POIs; zoom ≥ 15 for Liberty POI labels |
-| Pin tap does not center map | `handleMapPointSelection()` should call `focusOnPoi(..., moveCamera = true)` → `animateTopDownCamera` at `POI_PREVIEW_ZOOM` |
+| Pin tap does not center map | `animateTopDownCamera()` must call `clearViewportPaddingForPreview()` (zero map + tracking padding), defer animation via `mapView.post { }` so it runs after POI detail 30/70 split resize, and `handleMapLayoutChange()` must re-center on `selectedPoi` when `isInTopDownView` — do not re-apply driving padding from `OnLayoutChangeListener` during POI preview |
 | Saved tab empty | Star a place from map tap drawer or search row star button — `LauncherPreferences.savedPlaces` persists up to 50 entries |
 | Map tap shows Dropped Pin instead of POI name | Short tap no longer drops pins — use **long press** on empty map; short tap on POI pin selects that POI |
 | Long press does not drop custom pin | Disabled during navigation; must long-press empty map (not on existing pin icon) |
@@ -267,6 +267,7 @@ After enabling Launcher Mode, press Home and select **Mix Auto** as the default 
 | Mic button missing in search overlay | `SpeechRecognizer.isRecognitionAvailable()` false on bare AOSP — install Google app or use typed search; mic hidden when no recognizer |
 | Onboarding wizard shows icon only, no title/body | `OnboardingWizard` root must be `Surface(color = OledBlack)` — bare `Box` leaves `LocalContentColor` black and `Car*Text` invisible on OLED background |
 | Re-test permission onboarding wizard | Clear app data or set `launcher_prefs` key `onboarding_version` to `0`; wizard shows when `onboardingVersion < CURRENT_ONBOARDING_VERSION` in `OnboardingWizard.kt` |
+| Search/POI pane too narrow or divider still draggable | Destination Search + POI Details lock split to 30% map / 70% secondary via `effectiveMapMediaRatio` in `DashboardScreen.kt`; `MapMediaDividerHandle` hidden (`showMapMediaDivider`); do NOT persist 0.3 to `LauncherPreferences` — closing restores saved ratio |
 
 ## Related agent resources
 

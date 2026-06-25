@@ -81,7 +81,6 @@ private fun dockItemOrder(isHorizontal: Boolean, isLeftHandDrive: Boolean): List
 private fun LazyListScope.dockItems(
     order: List<DockItem>,
     activePanel: ActivePanel,
-    musicPaneEnabled: Boolean,
     sourcePackage: String,
     tapTarget: Dp,
     iconSize: Dp,
@@ -101,7 +100,7 @@ private fun LazyListScope.dockItems(
             }
             DockItem.Music -> item(key = MUSIC_KEY) {
                 MusicDockItem(
-                    isActive = musicPaneEnabled,
+                    isActive = activePanel == ActivePanel.MEDIA,
                     sourcePackage = sourcePackage,
                     tapTarget = tapTarget,
                     iconSize = iconSize,
@@ -137,7 +136,6 @@ fun ShortcutDock(
     isLargeIcons: Boolean = false,
     isLeftHandDrive: Boolean = true,
     activePanel: ActivePanel,
-    musicPaneEnabled: Boolean,
     sourcePackage: String = "",
     onTogglePanel: (ActivePanel) -> Unit,
     modifier: Modifier = Modifier,
@@ -189,7 +187,6 @@ fun ShortcutDock(
                     dockItems(
                         order = itemOrder,
                         activePanel = activePanel,
-                        musicPaneEnabled = musicPaneEnabled,
                         sourcePackage = sourcePackage,
                         tapTarget = tapTarget,
                         iconSize = iconSize,
@@ -207,7 +204,6 @@ fun ShortcutDock(
                     dockItems(
                         order = itemOrder,
                         activePanel = activePanel,
-                        musicPaneEnabled = musicPaneEnabled,
                         sourcePackage = sourcePackage,
                         tapTarget = tapTarget,
                         iconSize = iconSize,
