@@ -43,4 +43,7 @@ interface CarMapEngine {
     fun resolveSearchOrigin(): Pair<Double, Double>
 
     fun setSavedPlaces(places: List<SearchResultPlace>)
+
+    /** Compose/host resized the map pane — engine should re-apply preview camera if needed. */
+    fun onMapHostLayoutChanged() {}
 }

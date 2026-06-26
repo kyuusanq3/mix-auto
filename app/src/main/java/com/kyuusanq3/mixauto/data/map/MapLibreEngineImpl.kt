@@ -61,6 +61,7 @@ import org.maplibre.android.style.layers.FillExtrusionLayer
 import org.maplibre.android.style.layers.LineLayer
 import org.maplibre.android.style.layers.Property
 import org.maplibre.android.style.layers.PropertyFactory
+import org.maplibre.android.style.layers.PropertyValue
 import org.maplibre.android.style.layers.RasterLayer
 import org.maplibre.android.style.layers.SymbolLayer
 import org.maplibre.android.style.sources.GeoJsonSource
@@ -154,6 +155,10 @@ class MapLibreEngineImpl(
     private var lastStableBearing: Float? = null
     private var deadReckoningJob: Job? = null
     private var lastDeadReckoningLocation: Location? = null
+    private var pendingPoiPreviewTarget: LatLng? = null
+    private var pendingPoiPreviewZoom: Double = POI_PREVIEW_ZOOM
+    private var poiPreviewRetryCount = 0
+    private var poiPreviewRetryRunnable: Runnable? = null
 
     override fun createMapView(context: Context): View {
         mapView?.let { existing ->
@@ -173,8 +178,11 @@ class MapLibreEngineImpl(
             view.onCreate(null)
             view.onStart()
             view.onResume()
-            view.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
-                mapLibreMap?.let { map -> handleMapLayoutChange(map) }
+            view.addOnLayoutChangeListener { v, _, _, _, _, _, _, _, _ ->
+                if (v.width <= 0 || v.height <= 0) return@addOnLayoutChangeListener
+                mapLibreMap?.let { map ->
+                    view.post { handleMapLayoutChange(map) }
+                }
             }
             view.getMapAsync { map ->
                 mapLibreMap = map
@@ -308,8 +316,7 @@ class MapLibreEngineImpl(
         }
 
         map.setStyle(builder) { style ->
-            val density = context.resources.displayMetrics.density
-            PoiIconFactory.createAllIcons(density).forEach { (id, bitmap) ->
+            PoiIconFactory.createAllIcons(context).forEach { (id, bitmap) ->
                 style.addImage(id, bitmap)
             }
             activateLocationTracking(map, style)
@@ -744,8 +751,17 @@ class MapLibreEngineImpl(
     }
 
     override fun dismissSelectedPoi() {
-        _uiState.update { it.copy(selectedPoi = null, nearbyPois = emptyList()) }
+        cancelPoiPreviewRetries()
+        pendingPoiPreviewTarget = null
+        _uiState.update {
+            it.copy(
+                selectedPoi = null,
+                nearbyPois = emptyList(),
+            )
+        }
         clearCustomPin()
+        updatePoiLayerFromCache()
+        mapLibreMap?.triggerRepaint()
     }
 
     override fun focusOnLocation(lat: Double, lng: Double) {
@@ -753,6 +769,9 @@ class MapLibreEngineImpl(
     }
 
     override fun focusOnPoi(place: SearchResultPlace, moveCamera: Boolean) {
+        if (moveCamera) {
+            _uiState.update { it.copy(isCameraDetached = true, isInTopDownView = true) }
+        }
         val distanceInMeters = computeDistanceFromReference(place.latitude, place.longitude)
         val nearbyPois = if (place.isDroppedPin) {
             getNearbyPois(place.latitude, place.longitude, limit = 10)
@@ -787,21 +806,56 @@ class MapLibreEngineImpl(
             clearCustomPin()
         }
         if (moveCamera) {
+            clearPoiOverlay()
             focusOnLocation(place.latitude, place.longitude)
+        }
+    }
+
+    override fun onMapHostLayoutChanged() {
+        val map = mapLibreMap ?: return
+        val view = mapView ?: return
+        if (view.width <= 0 || view.height <= 0) return
+        view.post {
+            handleMapLayoutChange(map)
+            if (pendingPoiPreviewTarget != null) {
+                schedulePoiPreviewCameraRetry(immediate = true)
+            } else {
+                val poi = _uiState.value.selectedPoi
+                if (_uiState.value.isInTopDownView && poi != null) {
+                    recenterOnSelectedPoi(map, poi)
+                } else if (_uiState.value.isInTopDownView) {
+                    refreshTopDownExploreCamera(map)
+                }
+            }
         }
     }
 
     override fun enterTopDownView() {
         val map = mapLibreMap ?: return
-        val target = map.cameraPosition.target ?: return
-        val zoom = map.cameraPosition.zoom.coerceAtLeast(POI_PREVIEW_ZOOM)
-        animateTopDownCamera(target.latitude, target.longitude, zoom)
+        val target = lastKnownLocation
+            ?: resolveFreeDriveTarget(map)
+            ?: map.cameraPosition.target
+            ?: return
+        animateTopDownCamera(
+            target.latitude,
+            target.longitude,
+            TOP_DOWN_EXPLORE_ZOOM,
+            exploreMode = true,
+        )
     }
 
-    private fun animateTopDownCamera(lat: Double, lng: Double, zoom: Double) {
+    private fun animateTopDownCamera(
+        lat: Double,
+        lng: Double,
+        zoom: Double,
+        exploreMode: Boolean = false,
+    ) {
         val map = mapLibreMap ?: return
-        val currentZoom = map.cameraPosition.zoom
-        val targetZoom = currentZoom.coerceAtLeast(zoom)
+        val targetZoom = if (exploreMode) {
+            zoom
+        } else {
+            map.cameraPosition.zoom.coerceAtLeast(zoom)
+        }
         deadReckoningJob?.cancel()
         deadReckoningJob = null
         val component = map.locationComponent
@@ -810,48 +864,170 @@ class MapLibreEngineImpl(
         }
         _uiState.update { it.copy(isCameraDetached = true, isInTopDownView = true) }
         clearViewportPaddingForPreview(map)
-        val cameraUpdate = CameraUpdateFactory.newCameraPosition(
-            CameraPosition.Builder()
-                .target(LatLng(lat, lng))
-                .zoom(targetZoom)
-                .tilt(0.0)
-                .bearing(0.0)
-                .build(),
-        )
-        val runAnimation = {
-            map.cancelTransitions()
-            map.animateCamera(cameraUpdate, POI_PREVIEW_ANIMATION_MS)
+        if (useVectorTiles) {
+            map.getStyle { showNativeVectorPoiLayers(it) }
         }
-        // Defer until after Compose resizes the map pane (e.g. POI detail opens at 30/70 split).
-        mapView?.post { runAnimation() } ?: runAnimation()
+        clearPoiOverlay()
+        pendingPoiPreviewTarget = LatLng(lat, lng)
+        pendingPoiPreviewZoom = targetZoom
+        poiPreviewRetryCount = 0
+        mapView?.requestLayout()
+        schedulePoiPreviewCameraRetry(immediate = true)
     }
 
-    private fun recenterOnSelectedPoi(map: MapLibreMap, place: SearchResultPlace) {
-        val targetZoom = map.cameraPosition.zoom.coerceAtLeast(POI_PREVIEW_ZOOM)
+    private fun cancelPoiPreviewRetries() {
+        poiPreviewRetryRunnable?.let { runnable ->
+            mapView?.removeCallbacks(runnable)
+        }
+        poiPreviewRetryRunnable = null
+        poiPreviewRetryCount = 0
+    }
+
+    private fun schedulePoiPreviewCameraRetry(immediate: Boolean = false) {
+        val map = mapLibreMap ?: return
+        val view = mapView ?: return
+        poiPreviewRetryRunnable?.let { view.removeCallbacks(it) }
+        poiPreviewRetryRunnable = null
+        val runnable = Runnable {
+            poiPreviewRetryRunnable = null
+            if (applyPoiPreviewCamera(map)) return@Runnable
+            if (poiPreviewRetryCount < POI_PREVIEW_MAX_RETRIES) {
+                poiPreviewRetryCount++
+                schedulePoiPreviewCameraRetry(immediate = false)
+            } else {
+                poiPreviewRetryCount = 0
+            }
+        }
+        poiPreviewRetryRunnable = runnable
+        if (immediate) {
+            view.post { view.post(runnable) }
+        } else {
+            view.postDelayed(runnable, POI_PREVIEW_RETRY_DELAY_MS * poiPreviewRetryCount.coerceAtLeast(1))
+        }
+    }
+
+    private fun applyPoiPreviewCamera(map: MapLibreMap): Boolean {
+        val view = mapView ?: return false
+        if (view.width <= 0 || view.height <= 0) return false
+        val target = pendingPoiPreviewTarget ?: return true
+
+        val component = map.locationComponent
+        if (component.isLocationComponentActivated && component.isLocationComponentEnabled) {
+            component.cameraMode = CameraMode.NONE
+        }
+        clearViewportPaddingForPreview(map)
+        if (useVectorTiles) {
+            map.getStyle { style -> showNativeVectorPoiLayers(style) }
+        }
+
+        val zoom = pendingPoiPreviewZoom
+        map.cancelTransitions()
         map.moveCamera(
             CameraUpdateFactory.newCameraPosition(
                 CameraPosition.Builder()
-                    .target(LatLng(place.latitude, place.longitude))
-                    .zoom(targetZoom)
+                    .target(target)
+                    .zoom(zoom)
                     .tilt(0.0)
                     .bearing(0.0)
                     .build(),
             ),
         )
+        pendingPoiPreviewTarget = null
+        map.triggerRepaint()
+        view.invalidate()
+        scheduleTopDownViewportSync(map, target, zoom)
+        return true
     }
 
-    private fun handleMapLayoutChange(map: MapLibreMap) {
-        val state = _uiState.value
-        if (state.isInTopDownView && state.selectedPoi != null) {
+    /** Re-apply zero padding + camera on the next frame so tiles fill the full MapView. */
+    private fun scheduleTopDownViewportSync(map: MapLibreMap, target: LatLng, zoom: Double) {
+        val view = mapView ?: return
+        view.post {
+            if (!_uiState.value.isInTopDownView) return@post
             clearViewportPaddingForPreview(map)
-            recenterOnSelectedPoi(map, state.selectedPoi)
-        } else if (!state.isInTopDownView) {
-            applyDrivingTrackingPadding(map)
+            map.cancelTransitions()
+            map.moveCamera(
+                CameraUpdateFactory.newCameraPosition(
+                    CameraPosition.Builder()
+                        .target(target)
+                        .zoom(zoom)
+                        .tilt(0.0)
+                        .bearing(0.0)
+                        .build(),
+                ),
+            )
+            map.triggerRepaint()
+            view.invalidate()
         }
     }
 
+    private fun recenterOnSelectedPoi(map: MapLibreMap, place: SearchResultPlace) {
+        refreshTopDownCamera(
+            map,
+            LatLng(place.latitude, place.longitude),
+            map.cameraPosition.zoom.coerceAtLeast(POI_PREVIEW_ZOOM),
+        )
+    }
+
+    private fun refreshTopDownExploreCamera(map: MapLibreMap) {
+        val target = lastKnownLocation
+            ?: map.cameraPosition.target
+            ?: return
+        refreshTopDownCamera(map, target, TOP_DOWN_EXPLORE_ZOOM)
+    }
+
+    private fun refreshTopDownCamera(map: MapLibreMap, target: LatLng, zoom: Double) {
+        val view = mapView ?: return
+        val component = map.locationComponent
+        if (component.isLocationComponentActivated && component.isLocationComponentEnabled) {
+            component.cameraMode = CameraMode.NONE
+        }
+        clearViewportPaddingForPreview(map)
+        map.cancelTransitions()
+        map.moveCamera(
+            CameraUpdateFactory.newCameraPosition(
+                CameraPosition.Builder()
+                    .target(target)
+                    .zoom(zoom)
+                    .tilt(0.0)
+                    .bearing(0.0)
+                    .build(),
+            ),
+        )
+        map.triggerRepaint()
+        view.invalidate()
+        scheduleTopDownViewportSync(map, target, zoom)
+    }
+
+    private fun handleMapLayoutChange(map: MapLibreMap) {
+        val view = mapView ?: return
+        if (view.width <= 0 || view.height <= 0) return
+
+        val state = _uiState.value
+        if (state.isInTopDownView) {
+            when {
+                pendingPoiPreviewTarget != null -> schedulePoiPreviewCameraRetry(immediate = true)
+                state.selectedPoi != null -> recenterOnSelectedPoi(map, state.selectedPoi)
+                else -> refreshTopDownExploreCamera(map)
+            }
+            return
+        }
+        applyDrivingTrackingPadding(map)
+    }
+
+    private fun applyMapPaddingImmediate(map: MapLibreMap, padding: ViewportPadding) {
+        map.moveCamera(
+            CameraUpdateFactory.paddingTo(
+                padding.left.toDouble(),
+                padding.top.toDouble(),
+                padding.right.toDouble(),
+                padding.bottom.toDouble(),
+            ),
+        )
+    }
+
     private fun clearViewportPaddingForPreview(map: MapLibreMap) {
-        map.setPadding(0, 0, 0, 0)
+        applyMapPaddingImmediate(map, ViewportPadding(0, 0, 0, 0))
         val component = map.locationComponent
         if (component.isLocationComponentActivated && component.isLocationComponentEnabled) {
             component.paddingWhileTracking(doubleArrayOf(0.0, 0.0, 0.0, 0.0))
@@ -1199,7 +1375,7 @@ class MapLibreEngineImpl(
             component.paddingWhileTracking(doubleArrayOf(0.0, 0.0, 0.0, 0.0))
         }
         map.cancelTransitions()
-        map.setPadding(0, 0, 0, 0)
+        applyMapPaddingImmediate(map, ViewportPadding(0, 0, 0, 0))
 
         val bounds = buildRouteOverviewBounds(origin, destination)
         val padding = computeRouteOverviewPadding(map)
@@ -1375,15 +1551,14 @@ class MapLibreEngineImpl(
 
     private fun applyDrivingViewportPadding(map: MapLibreMap) {
         if (_uiState.value.isInTopDownView) return
-        val padding = computeDrivingViewportPadding(map)
-        map.setPadding(padding.left, padding.top, padding.right, padding.bottom)
+        applyMapPaddingImmediate(map, computeDrivingViewportPadding(map))
     }
 
     /** Map padding alone does not offset the puck during TRACKING_GPS — use paddingWhileTracking too. */
     private fun applyDrivingTrackingPadding(map: MapLibreMap) {
         if (_uiState.value.isInTopDownView) return
         val padding = computeDrivingViewportPadding(map)
-        map.setPadding(padding.left, padding.top, padding.right, padding.bottom)
+        applyMapPaddingImmediate(map, padding)
         val component = map.locationComponent
         if (!component.isLocationComponentActivated || !component.isLocationComponentEnabled) return
         // Always store the tracking padding regardless of current camera mode — it will take
@@ -1421,13 +1596,9 @@ class MapLibreEngineImpl(
                     PropertyFactory.lineJoin(Property.LINE_JOIN_ROUND),
                     PropertyFactory.lineOpacity(0.9f),
                 )
-                val baseLayerId = if (style.getLayer(TRAFFIC_LAYER_ID) != null) {
-                    TRAFFIC_LAYER_ID
-                } else {
-                    RASTER_BASE_LAYER_ID
-                }
-                if (style.getLayer(baseLayerId) != null) {
-                    style.addLayerAbove(casingLayer, baseLayerId)
+                val anchor = resolveMapOverlayAnchorLayerId(style)
+                if (anchor != null) {
+                    style.addLayerAbove(casingLayer, anchor)
                     style.addLayerAbove(routeLayer, ROUTE_CASING_LAYER_ID)
                 } else {
                     style.addLayer(casingLayer)
@@ -1439,14 +1610,16 @@ class MapLibreEngineImpl(
 
     private fun registerPoiInteractions(map: MapLibreMap) {
         map.addOnCameraIdleListener {
-            if (_uiState.value.isNavigating) {
-                clearPoiLayer()
+            if (_uiState.value.isNavigating ||
+                _uiState.value.selectedPoi != null ||
+                _uiState.value.isInTopDownView
+            ) {
                 return@addOnCameraIdleListener
             }
 
             val zoom = map.cameraPosition.zoom
             if (zoom < MIN_POI_ZOOM) {
-                clearPoiLayer()
+                clearPoiOverlay()
                 return@addOnCameraIdleListener
             }
 
@@ -1479,12 +1652,8 @@ class MapLibreEngineImpl(
 
                 val dedupedFirstPass = mergePoiPins(localResults + tileResults, emptyList())
                 mergeIntoPoiCache(dedupedFirstPass)
-                evictPoiCacheOutsideBounds(bounds, padLat * 2, padLng * 2)
-                if (poiCache.isNotEmpty()) {
-                    updatePoiLayerFromCache()
-                } else {
-                    clearPoiLayer()
-                }
+                trimPoiCacheToMax(center)
+                refreshPoiOverlay()
 
                 val photonResults = withContext(Dispatchers.IO) {
                     if (shouldQueryPhoton(center)) {
@@ -1497,10 +1666,8 @@ class MapLibreEngineImpl(
 
                 if (photonResults.isNotEmpty()) {
                     mergeIntoPoiCache(mergePoiPins(localResults, photonResults))
-                    evictPoiCacheOutsideBounds(bounds, padLat * 2, padLng * 2)
-                    updatePoiLayerFromCache()
-                } else if (poiCache.isEmpty()) {
-                    clearPoiLayer()
+                    trimPoiCacheToMax(center)
+                    refreshPoiOverlay()
                 }
             }
         }
@@ -1561,6 +1728,27 @@ class MapLibreEngineImpl(
             val place = placeFromSymbolFeature(feature) ?: return false
             focusOnPoi(place, moveCamera = true)
             return true
+        }
+
+        if (useVectorTiles && !_uiState.value.isNavigating) {
+            val tapBounds = geoBoundsAround(latLng.latitude, latLng.longitude)
+            val place = map.queryRenderedFeatures(screenPoint, *VECTOR_POI_LAYER_IDS)
+                .firstNotNullOfOrNull { feature ->
+                    tileFeatureToPlace(feature, lastKnownLocation, tapBounds)
+                }
+            if (place != null) {
+                val enriched = poiCache.values.find { cached ->
+                    coordinatesNear(cached.latitude, cached.longitude, place.latitude, place.longitude)
+                }?.let { cached ->
+                    place.copy(
+                        subTitle = cached.subTitle.ifBlank { place.subTitle },
+                        category = cached.category.ifBlank { place.category },
+                    )
+                } ?: place
+                focusOnPoi(enriched, moveCamera = true)
+                mergeIntoPoiCache(listOf(enriched))
+                return true
+            }
         }
 
         return false
@@ -1849,6 +2037,15 @@ class MapLibreEngineImpl(
         val maxLng: Double,
     )
 
+    private fun geoBoundsAround(lat: Double, lng: Double, deltaDegrees: Double = 0.001): GeoBounds {
+        return GeoBounds(
+            minLat = lat - deltaDegrees,
+            maxLat = lat + deltaDegrees,
+            minLng = lng - deltaDegrees,
+            maxLng = lng + deltaDegrees,
+        )
+    }
+
     private fun expandGeoBounds(
         bounds: LatLngBounds,
         padLat: Double,
@@ -1882,21 +2079,67 @@ class MapLibreEngineImpl(
         }
     }
 
-    private fun evictPoiCacheOutsideBounds(
-        visibleBounds: LatLngBounds,
-        padLat: Double,
-        padLng: Double,
-    ) {
-        val evictBounds = expandGeoBounds(visibleBounds, padLat, padLng)
-        poiCache.entries.removeIf { (_, place) -> !placeInBounds(place, evictBounds) }
+    private fun trimPoiCacheToMax(center: LatLng) {
+        if (poiCache.size <= MAX_POI_PINS) return
+        val keepKeys = poiCache.values
+            .sortedBy { place ->
+                val distanceResults = FloatArray(1)
+                Location.distanceBetween(
+                    center.latitude,
+                    center.longitude,
+                    place.latitude,
+                    place.longitude,
+                    distanceResults,
+                )
+                distanceResults[0]
+            }
+            .take(MAX_POI_PINS)
+            .map { poiCacheKey(it) }
+            .toSet()
+        poiCache.entries.removeIf { it.key !in keepKeys }
     }
 
-    private fun updatePoiLayerFromCache() {
+    private fun refreshPoiOverlay() {
+        if (_uiState.value.selectedPoi != null || _uiState.value.isInTopDownView) return
+
         val pins = mergePoiPins(poiCache.values.toList(), emptyList())
         if (pins.isNotEmpty()) {
             updatePoiLayer(pins)
         } else {
-            clearPoiLayer()
+            clearPoiOverlay()
+        }
+    }
+
+    private fun updatePoiLayerFromCache() {
+        if (_uiState.value.selectedPoi != null || _uiState.value.isInTopDownView) return
+
+        val map = mapLibreMap
+        if (useVectorTiles && map != null) {
+            val bounds = map.projection.visibleRegion.latLngBounds
+            val latSpan = bounds.northEast.latitude - bounds.southWest.latitude
+            val lngSpan = bounds.northEast.longitude - bounds.southWest.longitude
+            val padLat = latSpan * BBOX_PADDING_FACTOR / 2
+            val padLng = lngSpan * BBOX_PADDING_FACTOR / 2
+            val queryBounds = expandGeoBounds(bounds, padLat, padLng)
+            mergeIntoPoiCache(queryTilePois(map, queryBounds))
+            map.cameraPosition.target?.let { trimPoiCacheToMax(it) }
+        }
+        refreshPoiOverlay()
+    }
+
+    private fun showNativeVectorPoiLayers(style: Style) {
+        VECTOR_POI_LAYER_IDS.forEach { id ->
+            style.getLayer(id)?.setProperties(PropertyFactory.visibility(Property.VISIBLE))
+        }
+    }
+
+    private fun resolveMapOverlayAnchorLayerId(style: Style): String? {
+        return when {
+            style.getLayer(TRAFFIC_LAYER_ID) != null -> TRAFFIC_LAYER_ID
+            style.getLayer(RASTER_BASE_LAYER_ID) != null -> RASTER_BASE_LAYER_ID
+            style.getLayer("poi_transit") != null -> "poi_transit"
+            style.getLayer("road_motorway") != null -> "road_motorway"
+            else -> null
         }
     }
 
@@ -1927,13 +2170,11 @@ class MapLibreEngineImpl(
             } else {
                 style.addSource(GeoJsonSource(POI_SOURCE_ID, geoJson))
                 val poiLayer = SymbolLayer(POI_LAYER_ID, POI_SOURCE_ID).withProperties(
-                    PropertyFactory.iconImage(poiCategoryIconExpression()),
-                    PropertyFactory.iconAllowOverlap(true),
-                    PropertyFactory.iconAnchor(Property.ICON_ANCHOR_BOTTOM),
-                    PropertyFactory.iconSize(1f),
+                    *poiLabelLayerProperties(mixPoiIconExpression()),
                 )
-                if (style.getLayer(RASTER_BASE_LAYER_ID) != null) {
-                    style.addLayerAbove(poiLayer, RASTER_BASE_LAYER_ID)
+                val anchor = resolveMapOverlayAnchorLayerId(style)
+                if (anchor != null) {
+                    style.addLayerAbove(poiLayer, anchor)
                 } else {
                     style.addLayer(poiLayer)
                 }
@@ -1941,8 +2182,7 @@ class MapLibreEngineImpl(
         }
     }
 
-    private fun clearPoiLayer() {
-        clearPoiCache()
+    private fun clearPoiOverlay() {
         val map = mapLibreMap ?: return
         map.getStyle { style ->
             val existing = style.getSource(POI_SOURCE_ID)
@@ -1950,6 +2190,12 @@ class MapLibreEngineImpl(
                 existing.setGeoJson(EMPTY_POI_GEOJSON)
             }
         }
+    }
+
+    /** Clears overlay GeoJSON and in-memory POI cache (navigation teardown, style reset). */
+    private fun clearPoiLayer() {
+        clearPoiCache()
+        clearPoiOverlay()
     }
 
     private fun placeCustomPin(lat: Double, lng: Double, pending: Boolean) {
@@ -1964,7 +2210,7 @@ class MapLibreEngineImpl(
                 val customPinLayer = SymbolLayer(CUSTOM_PIN_LAYER_ID, CUSTOM_PIN_SOURCE_ID).withProperties(
                     PropertyFactory.iconImage(customPinIconExpression()),
                     PropertyFactory.iconAllowOverlap(true),
-                    PropertyFactory.iconAnchor(Property.ICON_ANCHOR_BOTTOM),
+                    PropertyFactory.iconAnchor(Property.ICON_ANCHOR_CENTER),
                     PropertyFactory.iconSize(1f),
                 )
                 when {
@@ -1974,10 +2220,14 @@ class MapLibreEngineImpl(
                     style.getLayer(POI_LAYER_ID) != null -> {
                         style.addLayerAbove(customPinLayer, POI_LAYER_ID)
                     }
-                    style.getLayer(RASTER_BASE_LAYER_ID) != null -> {
-                        style.addLayerAbove(customPinLayer, RASTER_BASE_LAYER_ID)
+                    else -> {
+                        val anchor = resolveMapOverlayAnchorLayerId(style)
+                        if (anchor != null) {
+                            style.addLayerAbove(customPinLayer, anchor)
+                        } else {
+                            style.addLayer(customPinLayer)
+                        }
                     }
-                    else -> style.addLayer(customPinLayer)
                 }
             }
         }
@@ -2007,19 +2257,20 @@ class MapLibreEngineImpl(
             } else if (places.isNotEmpty()) {
                 style.addSource(GeoJsonSource(SAVED_PLACES_SOURCE_ID, geoJson))
                 val savedLayer = SymbolLayer(SAVED_PLACES_LAYER_ID, SAVED_PLACES_SOURCE_ID).withProperties(
-                    PropertyFactory.iconImage(starredCategoryIconExpression()),
-                    PropertyFactory.iconAllowOverlap(true),
-                    PropertyFactory.iconAnchor(Property.ICON_ANCHOR_BOTTOM),
-                    PropertyFactory.iconSize(1f),
+                    *poiLabelLayerProperties(poiCategoryIconExpression()),
                 )
                 when {
                     style.getLayer(POI_LAYER_ID) != null -> {
                         style.addLayerAbove(savedLayer, POI_LAYER_ID)
                     }
-                    style.getLayer(RASTER_BASE_LAYER_ID) != null -> {
-                        style.addLayerAbove(savedLayer, RASTER_BASE_LAYER_ID)
+                    else -> {
+                        val anchor = resolveMapOverlayAnchorLayerId(style)
+                        if (anchor != null) {
+                            style.addLayerAbove(savedLayer, anchor)
+                        } else {
+                            style.addLayer(savedLayer)
+                        }
                     }
-                    else -> style.addLayer(savedLayer)
                 }
             }
         }
@@ -2774,6 +3025,27 @@ class MapLibreEngineImpl(
         }
     }
 
+    private fun poiLabelLayerProperties(iconImageExpression: Expression): Array<PropertyValue<*>> {
+        return arrayOf(
+            PropertyFactory.iconImage(iconImageExpression),
+            PropertyFactory.iconAnchor(Property.ICON_ANCHOR_CENTER),
+            PropertyFactory.iconAllowOverlap(true),
+            PropertyFactory.iconSize(1f),
+            PropertyFactory.textField(Expression.get("name")),
+            PropertyFactory.textFont(arrayOf("Noto Sans Italic")),
+            PropertyFactory.textSize(12f),
+            PropertyFactory.textAnchor(Property.TEXT_ANCHOR_TOP),
+            PropertyFactory.textOffset(arrayOf(0f, 0.6f)),
+            PropertyFactory.textColor("#666666"),
+            PropertyFactory.textHaloColor("#ffffff"),
+            PropertyFactory.textHaloWidth(1f),
+            PropertyFactory.textHaloBlur(0.5f),
+            PropertyFactory.textAllowOverlap(true),
+            PropertyFactory.textIgnorePlacement(true),
+            PropertyFactory.textMaxWidth(9f),
+        )
+    }
+
     private fun customPinIconExpression(): Expression {
         return Expression.switchCase(
             Expression.eq(Expression.get("pending"), Expression.literal(true)),
@@ -2782,15 +3054,8 @@ class MapLibreEngineImpl(
         )
     }
 
-    private fun poiCategoryIconExpression(): Expression {
-        return Expression.switchCase(
-            Expression.eq(Expression.get("starred"), Expression.literal(true)),
-            starredCategoryIconExpression(),
-            normalCategoryIconExpression(),
-        )
-    }
-
-    private fun normalCategoryIconExpression(): Expression {
+    /** Mix overlay always uses registered bitmap teardrops, not Liberty style sprites. */
+    private fun mixPoiIconExpression(): Expression {
         return Expression.match(
             Expression.get("category"),
             Expression.literal("poi_icon_default"),
@@ -2803,6 +3068,16 @@ class MapLibreEngineImpl(
             Expression.stop("recreation", Expression.literal("poi_icon_recreation")),
         )
     }
+
+    private fun poiCategoryIconExpression(): Expression {
+        return Expression.switchCase(
+            Expression.eq(Expression.get("starred"), Expression.literal(true)),
+            starredCategoryIconExpression(),
+            normalCategoryIconExpression(),
+        )
+    }
+
+    private fun normalCategoryIconExpression(): Expression = mixPoiIconExpression()
 
     private fun starredCategoryIconExpression(): Expression {
         return Expression.match(
@@ -2881,7 +3156,10 @@ class MapLibreEngineImpl(
         private const val NAV_CAMERA_DURATION_MS = 2500
         private const val FREE_DRIVE_TILT = 50.0
         private const val POI_PREVIEW_ZOOM = 15.5
-        private const val POI_PREVIEW_ANIMATION_MS = 1000
+        /** Top-down explore view centered on puck (CropFree button). */
+        private const val TOP_DOWN_EXPLORE_ZOOM = 15.0
+        private const val POI_PREVIEW_MAX_RETRIES = 8
+        private const val POI_PREVIEW_RETRY_DELAY_MS = 50L
         private const val NEARBY_PIN_DEDUP_THRESHOLD_M = 50f
         private const val RASTER_BASE_LAYER_ID = "osm"
         private const val TRAFFIC_SOURCE_ID = "mix-traffic-source"
@@ -2927,8 +3205,8 @@ class MapLibreEngineImpl(
         private const val BBOX_PADDING_FACTOR = 1.5
         private const val PHOTON_MOVE_THRESHOLD_M = 300f
         private const val MAP_TAP_NEAREST_POI_MAX_M = 500f
-        /** Screen-space hit radius for teardrop pin icons (≈ half of 64 dp icon height). */
-        private const val MAP_PIN_ICON_HIT_RADIUS_DP = 38f
+        /** Screen-space hit radius for compact 24 dp circular POI icons. */
+        private const val MAP_PIN_ICON_HIT_RADIUS_DP = 20f
         private const val EMPTY_POI_GEOJSON = """{"type":"FeatureCollection","features":[]}"""
         private const val EMPTY_CUSTOM_PIN_GEOJSON = """{"type":"FeatureCollection","features":[]}"""
         private const val ROUTE_CASING_COLOR = "#CC000000"

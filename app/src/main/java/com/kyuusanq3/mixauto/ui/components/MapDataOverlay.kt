@@ -87,8 +87,6 @@ fun MapDataPanelContent(
     onTomTomApiKeyChange: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val uiState by viewModel.uiState.collectAsState()
-
     Column(
         modifier = modifier
             .padding(CarDimensions.PaneGap * 2),
@@ -110,6 +108,31 @@ fun MapDataPanelContent(
             )
         }
 
+        MapDataSectionContent(
+            viewModel = viewModel,
+            tomTomApiKey = tomTomApiKey,
+            onTomTomApiKeyChange = onTomTomApiKeyChange,
+            catalogModifier = Modifier.weight(1f),
+            useInternalCatalogScroll = true,
+        )
+    }
+}
+
+@Composable
+fun MapDataSectionContent(
+    viewModel: MapDataViewModel,
+    tomTomApiKey: String,
+    onTomTomApiKeyChange: (String) -> Unit,
+    modifier: Modifier = Modifier,
+    catalogModifier: Modifier = Modifier.fillMaxWidth(),
+    useInternalCatalogScroll: Boolean = false,
+) {
+    val uiState by viewModel.uiState.collectAsState()
+
+    Column(
+        modifier = modifier,
+        verticalArrangement = Arrangement.spacedBy(CarDimensions.DockItemSpacing),
+    ) {
         CarBodyText(
             text = "Download offline Overture POI packs from GitHub (~50 MB compressed per country).",
             style = MaterialTheme.typography.bodyMedium,
@@ -118,9 +141,7 @@ fun MapDataPanelContent(
         when (val state = uiState) {
             MapDataUiState.LoadingCatalog -> {
                 Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .weight(1f),
+                    modifier = catalogModifier,
                     contentAlignment = Alignment.Center,
                 ) {
                     CircularProgressIndicator(color = ElectricCyan)
@@ -150,20 +171,22 @@ fun MapDataPanelContent(
             }
             is MapDataUiState.Catalog -> {
                 CountryCatalogList(
-                    modifier = Modifier.weight(1f),
+                    modifier = catalogModifier,
                     packs = state.packs,
                     uiState = uiState,
                     onDownload = viewModel::downloadCountryData,
                     onDelete = viewModel::deleteDatabase,
+                    useInternalScroll = useInternalCatalogScroll,
                 )
             }
             is MapDataUiState.Downloading -> {
                 CountryCatalogList(
-                    modifier = Modifier.weight(1f),
+                    modifier = catalogModifier,
                     packs = state.packs,
                     uiState = uiState,
                     onDownload = viewModel::downloadCountryData,
                     onDelete = viewModel::deleteDatabase,
+                    useInternalScroll = useInternalCatalogScroll,
                 )
             }
             MapDataUiState.Idle -> Unit
@@ -267,13 +290,12 @@ private fun CountryCatalogList(
     uiState: MapDataUiState,
     onDownload: (RemoteCountryPack) -> Unit,
     onDelete: (String) -> Unit,
+    useInternalScroll: Boolean = true,
 ) {
     val scrollState = rememberScrollState()
-    Box(modifier = modifier.carScrollbar(scrollState)) {
+    val columnContent: @Composable () -> Unit = {
         Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .verticalScroll(scrollState),
+            modifier = Modifier.fillMaxWidth(),
             verticalArrangement = Arrangement.spacedBy(CarDimensions.DockItemSpacing / 2),
         ) {
             if (packs.isEmpty()) {
@@ -291,6 +313,22 @@ private fun CountryCatalogList(
                     )
                 }
             }
+        }
+    }
+
+    if (useInternalScroll) {
+        Box(modifier = modifier.carScrollbar(scrollState)) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(scrollState),
+            ) {
+                columnContent()
+            }
+        }
+    } else {
+        Box(modifier = modifier) {
+            columnContent()
         }
     }
 }

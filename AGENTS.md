@@ -275,6 +275,9 @@ After enabling Launcher Mode, press Home and select **Mix Auto** as the default 
 | Re-test permission onboarding wizard | Clear app data or set `launcher_prefs` key `onboarding_version` to `0`; wizard shows when `onboardingVersion < CURRENT_ONBOARDING_VERSION` in `OnboardingWizard.kt` |
 | Search/POI pane too narrow or divider still draggable | Destination Search + POI Details lock split to **40% map / 60% secondary** via `OVERLAY_MAP_MEDIA_RATIO` (0.4f) in `DashboardScreen.kt`; `MapMediaDividerHandle` hidden (`showMapMediaDivider`); do NOT persist 0.4 to `LauncherPreferences` — closing restores saved ratio |
 | Destination search empty after app update (PH DB installed) | Old builds used `(0,0)` before GPS — offline bbox missed PH; DB could show Installed but `active_iso`/open failure skipped search — fixed via `resolveSearchOrigin()`, `LocalPlacesRepository` auto-discover + WAL retry, `getNearbyPois()` offline fallback; sideload latest build |
+| Map blank when tapping search result | Do not `onDismiss()` before POI detail — use `onPreviewSearchPlace` to set `POI_DETAIL` + `focusOnPoi()`; engine retries preview camera via `onMapHostLayoutChanged()` |
+| Map partially blank (tiles in corner, beige elsewhere) | Lazy `setPadding` vs full MapView — use `CameraUpdateFactory.paddingTo()` in `applyMapPaddingImmediate()`; top-view needs `refreshTopDownExploreCamera()` on layout change; `scheduleTopDownViewportSync()` on next frame |
+| Top view too zoomed out / POI labels overlap | `TOP_DOWN_EXPLORE_ZOOM` is **15.0** (CropFree); mix POI overlay hidden in top-view — native Liberty labels only |
 
 ## Related agent resources
 

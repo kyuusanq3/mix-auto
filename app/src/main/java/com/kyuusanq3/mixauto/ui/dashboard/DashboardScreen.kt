@@ -29,9 +29,7 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Switch
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -41,7 +39,6 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.onSizeChanged
@@ -58,10 +55,11 @@ import com.kyuusanq3.mixauto.domain.map.SearchResultPlace
 import com.kyuusanq3.mixauto.domain.media.MediaPlaybackState
 import com.kyuusanq3.mixauto.ui.components.CarMapViewContainer
 import com.kyuusanq3.mixauto.ui.components.carScrollbar
-import com.kyuusanq3.mixauto.ui.components.MapDataPanelContent
+import com.kyuusanq3.mixauto.ui.components.MapSettingsPanelContent
 import com.kyuusanq3.mixauto.ui.components.NavigationSearchContent
 import com.kyuusanq3.mixauto.ui.components.OverlayCloseButton
 import com.kyuusanq3.mixauto.ui.components.PoiDetailPane
+import com.kyuusanq3.mixauto.ui.components.SettingsSwitchRow
 import com.kyuusanq3.mixauto.ui.settings.AppUpdateState
 import com.kyuusanq3.mixauto.ui.settings.AppUpdateViewModel
 import com.kyuusanq3.mixauto.ui.settings.LauncherViewModel
@@ -177,16 +175,13 @@ fun DashboardScreen(
                 ActivePanel.SETTINGS -> activePanel = dismissToBasePanel(musicPaneEnabled)
                 else -> activePanel = ActivePanel.SETTINGS
             }
-            ActivePanel.MAP_DATA -> when (activePanel) {
-                ActivePanel.MAP_DATA -> activePanel = dismissToBasePanel(musicPaneEnabled)
-                else -> activePanel = ActivePanel.MAP_DATA
-            }
             ActivePanel.APP_DRAWER -> when (activePanel) {
                 ActivePanel.APP_DRAWER -> activePanel = dismissToBasePanel(musicPaneEnabled)
                 else -> activePanel = ActivePanel.APP_DRAWER
             }
             ActivePanel.SEARCH,
             ActivePanel.POI_DETAIL,
+            ActivePanel.MAP_DATA,
             -> Unit
             ActivePanel.HIDDEN -> {
                 musicPaneEnabled = true
@@ -203,6 +198,7 @@ fun DashboardScreen(
     val onDismissAppDrawer = { activePanel = dismissToBasePanel(musicPaneEnabled) }
     val isDestinationPanelOpen =
         activePanel == ActivePanel.SEARCH || activePanel == ActivePanel.POI_DETAIL
+    val isMapSettingsPanelOpen = activePanel == ActivePanel.MAP_DATA
     val onToggleSearch = {
         musicPaneEnabled = true
         when (activePanel) {
@@ -215,6 +211,14 @@ fun DashboardScreen(
                 launcherViewModel.isDestinationSearchOpen = true
                 activePanel = ActivePanel.SEARCH
             }
+        }
+    }
+    val onToggleMapSettings = {
+        musicPaneEnabled = true
+        when (activePanel) {
+            ActivePanel.MAP_DATA -> activePanel = dismissToBasePanel(musicPaneEnabled)
+            ActivePanel.POI_DETAIL -> mapEngine.dismissSelectedPoi()
+            else -> activePanel = ActivePanel.MAP_DATA
         }
     }
     val onToggleVoiceSearch = {
@@ -232,6 +236,12 @@ fun DashboardScreen(
             }
         }
     }
+    val onPreviewSearchPlace: (SearchResultPlace) -> Unit = { place ->
+        mapEngine.focusOnPoi(place)
+        musicPaneEnabled = true
+        launcherViewModel.isDestinationSearchOpen = false
+        activePanel = ActivePanel.POI_DETAIL
+    }
     val mapUiState by mapEngine.uiState.collectAsStateWithLifecycle()
     val appUpdateViewModel: AppUpdateViewModel = viewModel()
     val appUpdateState by appUpdateViewModel.uiState.collectAsStateWithLifecycle()
@@ -242,7 +252,9 @@ fun DashboardScreen(
     }
     val isPortrait = configuration.orientation == Configuration.ORIENTATION_PORTRAIT
     val isSplitLockedForOverlay =
-        activePanel == ActivePanel.SEARCH || activePanel == ActivePanel.POI_DETAIL
+        activePanel == ActivePanel.SEARCH ||
+            activePanel == ActivePanel.POI_DETAIL ||
+            activePanel == ActivePanel.MAP_DATA
     val effectiveMapMediaRatio =
         if (isSplitLockedForOverlay) OVERLAY_MAP_MEDIA_RATIO else mapMediaRatio
     val effectiveMediaWeight = 1f - effectiveMapMediaRatio
@@ -271,6 +283,10 @@ fun DashboardScreen(
         }
     }
 
+    LaunchedEffect(activePanel, effectiveMapMediaRatio, mapUiState.selectedPoi) {
+        mapEngine.onMapHostLayoutChanged()
+    }
+
     Box(
         modifier = modifier
             .fillMaxSize()
@@ -294,6 +310,8 @@ fun DashboardScreen(
                                 engine = mapEngine,
                                 onToggleSearch = onToggleSearch,
                                 isDestinationPanelOpen = isDestinationPanelOpen,
+                                onToggleMapSettings = onToggleMapSettings,
+                                isMapSettingsPanelOpen = isMapSettingsPanelOpen,
                                 modifier = Modifier
                                     .weight(if (showSecondaryPane) effectiveMapMediaRatio else 1f)
                                     .fillMaxWidth(),
@@ -312,6 +330,7 @@ fun DashboardScreen(
                                     mapEngine = mapEngine,
                                     mapDataViewModel = mapDataViewModel,
                                     onDismissPanel = onDismissPanel,
+                                    onPreviewSearchPlace = onPreviewSearchPlace,
                                     recentDestinations = recentDestinations,
                                     savedPlaces = savedPlaces,
                                     onDestinationSelected = onDestinationSelected,
@@ -401,6 +420,8 @@ fun DashboardScreen(
                                 engine = mapEngine,
                                 onToggleSearch = onToggleSearch,
                                 isDestinationPanelOpen = isDestinationPanelOpen,
+                                onToggleMapSettings = onToggleMapSettings,
+                                isMapSettingsPanelOpen = isMapSettingsPanelOpen,
                                 modifier = Modifier
                                     .weight(if (showSecondaryPane) effectiveMapMediaRatio else 1f)
                                     .fillMaxSize(),
@@ -419,6 +440,7 @@ fun DashboardScreen(
                                     mapEngine = mapEngine,
                                     mapDataViewModel = mapDataViewModel,
                                     onDismissPanel = onDismissPanel,
+                                    onPreviewSearchPlace = onPreviewSearchPlace,
                                     recentDestinations = recentDestinations,
                                     savedPlaces = savedPlaces,
                                     onDestinationSelected = onDestinationSelected,
@@ -474,6 +496,7 @@ fun DashboardScreen(
                                     mapEngine = mapEngine,
                                     mapDataViewModel = mapDataViewModel,
                                     onDismissPanel = onDismissPanel,
+                                    onPreviewSearchPlace = onPreviewSearchPlace,
                                     recentDestinations = recentDestinations,
                                     savedPlaces = savedPlaces,
                                     onDestinationSelected = onDestinationSelected,
@@ -535,6 +558,8 @@ fun DashboardScreen(
                                 engine = mapEngine,
                                 onToggleSearch = onToggleSearch,
                                 isDestinationPanelOpen = isDestinationPanelOpen,
+                                onToggleMapSettings = onToggleMapSettings,
+                                isMapSettingsPanelOpen = isMapSettingsPanelOpen,
                                 modifier = Modifier
                                     .weight(if (showSecondaryPane) effectiveMapMediaRatio else 1f)
                                     .fillMaxSize(),
@@ -579,6 +604,8 @@ fun DashboardScreen(
                                     engine = mapEngine,
                                     onToggleSearch = onToggleSearch,
                                 isDestinationPanelOpen = isDestinationPanelOpen,
+                                onToggleMapSettings = onToggleMapSettings,
+                                isMapSettingsPanelOpen = isMapSettingsPanelOpen,
                                     modifier = Modifier
                                         .weight(
                                             if (showSecondaryPane) {
@@ -603,6 +630,7 @@ fun DashboardScreen(
                                         mapEngine = mapEngine,
                                         mapDataViewModel = mapDataViewModel,
                                         onDismissPanel = onDismissPanel,
+                                        onPreviewSearchPlace = onPreviewSearchPlace,
                                         recentDestinations = recentDestinations,
                                         savedPlaces = savedPlaces,
                                         onDestinationSelected = onDestinationSelected,
@@ -696,6 +724,8 @@ fun DashboardScreen(
                                     engine = mapEngine,
                                     onToggleSearch = onToggleSearch,
                                 isDestinationPanelOpen = isDestinationPanelOpen,
+                                onToggleMapSettings = onToggleMapSettings,
+                                isMapSettingsPanelOpen = isMapSettingsPanelOpen,
                                     modifier = Modifier
                                         .weight(
                                             if (showSecondaryPane) {
@@ -720,6 +750,7 @@ fun DashboardScreen(
                                         mapEngine = mapEngine,
                                         mapDataViewModel = mapDataViewModel,
                                         onDismissPanel = onDismissPanel,
+                                        onPreviewSearchPlace = onPreviewSearchPlace,
                                         recentDestinations = recentDestinations,
                                         savedPlaces = savedPlaces,
                                         onDestinationSelected = onDestinationSelected,
@@ -787,6 +818,7 @@ private fun DashboardSecondaryPane(
     mapEngine: CarMapEngine,
     mapDataViewModel: MapDataViewModel,
     onDismissPanel: () -> Unit,
+    onPreviewSearchPlace: (SearchResultPlace) -> Unit,
     recentDestinations: List<SearchResultPlace>,
     savedPlaces: List<SearchResultPlace>,
     onDestinationSelected: (SearchResultPlace) -> Unit,
@@ -837,6 +869,7 @@ private fun DashboardSecondaryPane(
         mapEngine = mapEngine,
         mapDataViewModel = mapDataViewModel,
         onDismissPanel = onDismissPanel,
+        onPreviewSearchPlace = onPreviewSearchPlace,
         recentDestinations = recentDestinations,
         savedPlaces = savedPlaces,
         onDestinationSelected = onDestinationSelected,
@@ -890,6 +923,7 @@ private fun MediaOrSettingsPane(
     mapEngine: CarMapEngine,
     mapDataViewModel: MapDataViewModel,
     onDismissPanel: () -> Unit,
+    onPreviewSearchPlace: (SearchResultPlace) -> Unit,
     recentDestinations: List<SearchResultPlace>,
     savedPlaces: List<SearchResultPlace>,
     onDestinationSelected: (SearchResultPlace) -> Unit,
@@ -947,6 +981,7 @@ private fun MediaOrSettingsPane(
                     recentDestinations = recentDestinations,
                     savedPlaces = savedPlaces,
                     onToggleSavedPlace = onToggleSavedPlace,
+                    onPreviewPlace = onPreviewSearchPlace,
                     onDismiss = onDismissPanel,
                     modifier = Modifier.fillMaxSize(),
                 )
@@ -979,28 +1014,12 @@ private fun MediaOrSettingsPane(
                 SettingsContent(
                     isLeftHandDrive = isLeftHandDrive,
                     isShortcutsHorizontal = isShortcutsHorizontal,
-                    limitSearchDistance = limitSearchDistance,
-                    useVectorTiles = useVectorTiles,
-                    show3dBuildings = show3dBuildings,
-                    showTraffic = showTraffic,
                     isLauncherMode = isLauncherMode,
                     isLargeShortcutIcons = isLargeShortcutIcons,
-                    drivingZoom = drivingZoom,
-                    puckHorizontalOffset = puckHorizontalOffset,
-                    puckVerticalOffset = puckVerticalOffset,
                     onToggleLhd = onToggleLhd,
                     onToggleShortcutsHorizontal = onToggleShortcutsHorizontal,
-                    onToggleLimitSearchDistance = onToggleLimitSearchDistance,
-                    onToggleVectorTiles = onToggleVectorTiles,
-                    onToggleShow3dBuildings = onToggleShow3dBuildings,
-                    onToggleTraffic = onToggleTraffic,
                     onToggleLauncherMode = onToggleLauncherMode,
                     onToggleLargeShortcutIcons = onToggleLargeShortcutIcons,
-                    onDrivingZoomChange = onDrivingZoomChange,
-                    onPuckHorizontalOffsetChange = onPuckHorizontalOffsetChange,
-                    onPuckVerticalOffsetChange = onPuckVerticalOffsetChange,
-                    puckScale = puckScale,
-                    onPuckScaleChange = onPuckScaleChange,
                     appUpdateState = appUpdateState,
                     onCheckForUpdate = onCheckForUpdate,
                     onDownloadUpdate = onDownloadUpdate,
@@ -1010,18 +1029,29 @@ private fun MediaOrSettingsPane(
                 )
             }
             ActivePanel.MAP_DATA -> {
-                Surface(
+                MapSettingsPanelContent(
+                    mapDataViewModel = mapDataViewModel,
+                    limitSearchDistance = limitSearchDistance,
+                    useVectorTiles = useVectorTiles,
+                    show3dBuildings = show3dBuildings,
+                    showTraffic = showTraffic,
+                    drivingZoom = drivingZoom,
+                    puckHorizontalOffset = puckHorizontalOffset,
+                    puckVerticalOffset = puckVerticalOffset,
+                    puckScale = puckScale,
+                    tomTomApiKey = tomTomApiKey,
+                    onToggleLimitSearchDistance = onToggleLimitSearchDistance,
+                    onToggleVectorTiles = onToggleVectorTiles,
+                    onToggleShow3dBuildings = onToggleShow3dBuildings,
+                    onToggleTraffic = onToggleTraffic,
+                    onDrivingZoomChange = onDrivingZoomChange,
+                    onPuckHorizontalOffsetChange = onPuckHorizontalOffsetChange,
+                    onPuckVerticalOffsetChange = onPuckVerticalOffsetChange,
+                    onPuckScaleChange = onPuckScaleChange,
+                    onTomTomApiKeyChange = onTomTomApiKeyChange,
+                    onDismiss = onDismissPanel,
                     modifier = Modifier.fillMaxSize(),
-                    color = OledBlack,
-                ) {
-                    MapDataPanelContent(
-                        viewModel = mapDataViewModel,
-                        onDismiss = onDismissPanel,
-                        tomTomApiKey = tomTomApiKey,
-                        onTomTomApiKeyChange = onTomTomApiKeyChange,
-                        modifier = Modifier.fillMaxSize(),
-                    )
-                }
+                )
             }
             ActivePanel.APP_DRAWER,
             ActivePanel.MEDIA,
@@ -1046,28 +1076,12 @@ private fun MediaOrSettingsPane(
 private fun SettingsContent(
     isLeftHandDrive: Boolean,
     isShortcutsHorizontal: Boolean,
-    limitSearchDistance: Boolean,
-    useVectorTiles: Boolean,
-    show3dBuildings: Boolean,
-    showTraffic: Boolean,
     isLauncherMode: Boolean,
     isLargeShortcutIcons: Boolean,
-    drivingZoom: Float,
-    puckHorizontalOffset: Float,
-    puckVerticalOffset: Float,
     onToggleLhd: () -> Unit,
     onToggleShortcutsHorizontal: () -> Unit,
-    onToggleLimitSearchDistance: () -> Unit,
-    onToggleVectorTiles: () -> Unit,
-    onToggleShow3dBuildings: () -> Unit,
-    onToggleTraffic: () -> Unit,
     onToggleLauncherMode: () -> Unit,
     onToggleLargeShortcutIcons: () -> Unit,
-    onDrivingZoomChange: (Float) -> Unit,
-    onPuckHorizontalOffsetChange: (Float) -> Unit,
-    onPuckVerticalOffsetChange: (Float) -> Unit,
-    puckScale: Float,
-    onPuckScaleChange: (Float) -> Unit,
     appUpdateState: AppUpdateState,
     onCheckForUpdate: () -> Unit,
     onDownloadUpdate: () -> Unit,
@@ -1134,47 +1148,6 @@ private fun SettingsContent(
                 )
 
                 SettingsSwitchRow(
-                    label = "Nearby results only (within 500 km)",
-                    checked = limitSearchDistance,
-                    onCheckedChange = { checked ->
-                        if (checked != limitSearchDistance) {
-                            onToggleLimitSearchDistance()
-                        }
-                    },
-                )
-
-                SettingsSwitchRow(
-                    label = "Vector Map Tiles (sharper 3D)",
-                    checked = useVectorTiles,
-                    onCheckedChange = { checked ->
-                        if (checked != useVectorTiles) {
-                            onToggleVectorTiles()
-                        }
-                    },
-                )
-
-                SettingsSwitchRow(
-                    label = "3D Buildings (vector tiles only)",
-                    checked = show3dBuildings,
-                    enabled = useVectorTiles,
-                    onCheckedChange = { checked ->
-                        if (checked != show3dBuildings) {
-                            onToggleShow3dBuildings()
-                        }
-                    },
-                )
-
-                SettingsSwitchRow(
-                    label = "Traffic Overlay",
-                    checked = showTraffic,
-                    onCheckedChange = { checked ->
-                        if (checked != showTraffic) {
-                            onToggleTraffic()
-                        }
-                    },
-                )
-
-                SettingsSwitchRow(
                     label = "Launcher Mode (replaces home screen)",
                     checked = isLauncherMode,
                     onCheckedChange = { checked ->
@@ -1183,105 +1156,6 @@ private fun SettingsContent(
                         }
                     },
                 )
-
-                Column(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalArrangement = Arrangement.spacedBy(CarDimensions.PaneGap),
-                ) {
-                    CarBodyText(
-                        text = "Driving View",
-                        style = MaterialTheme.typography.bodyLarge,
-                    )
-
-                    Column(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalArrangement = Arrangement.spacedBy(4.dp),
-                    ) {
-                        CarBodyText(
-                            text = "Puck Left / Right",
-                            style = MaterialTheme.typography.bodyLarge,
-                        )
-                        Slider(
-                            value = puckHorizontalOffset,
-                            onValueChange = onPuckHorizontalOffsetChange,
-                            valueRange = 0f..0.8f,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(CarDimensions.MinTapTarget),
-                        )
-                        CarLabelText(
-                            text = "Left ${(puckHorizontalOffset * 100).roundToInt()}%",
-                            style = MaterialTheme.typography.labelMedium,
-                        )
-                    }
-
-                    Column(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalArrangement = Arrangement.spacedBy(4.dp),
-                    ) {
-                        CarBodyText(
-                            text = "Puck Up / Down",
-                            style = MaterialTheme.typography.bodyLarge,
-                        )
-                        Slider(
-                            value = puckVerticalOffset,
-                            onValueChange = onPuckVerticalOffsetChange,
-                            valueRange = 0f..0.8f,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(CarDimensions.MinTapTarget),
-                        )
-                        CarLabelText(
-                            text = "Top ${(puckVerticalOffset * 100).roundToInt()}%",
-                            style = MaterialTheme.typography.labelMedium,
-                        )
-                    }
-
-                    Column(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalArrangement = Arrangement.spacedBy(4.dp),
-                    ) {
-                        CarBodyText(
-                            text = "Puck Size",
-                            style = MaterialTheme.typography.bodyLarge,
-                        )
-                        Slider(
-                            value = puckScale,
-                            onValueChange = onPuckScaleChange,
-                            valueRange = 0.5f..3.0f,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(CarDimensions.MinTapTarget),
-                        )
-                        CarLabelText(
-                            text = "${"%.1f".format(puckScale)}×",
-                            style = MaterialTheme.typography.labelMedium,
-                        )
-                    }
-
-                    Column(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalArrangement = Arrangement.spacedBy(4.dp),
-                    ) {
-                        CarBodyText(
-                            text = "Zoom",
-                            style = MaterialTheme.typography.bodyLarge,
-                        )
-                        Slider(
-                            value = drivingZoom,
-                            onValueChange = onDrivingZoomChange,
-                            valueRange = 15f..21f,
-                            steps = 12,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(CarDimensions.MinTapTarget),
-                        )
-                        CarLabelText(
-                            text = "Zoom ${"%.1f".format(drivingZoom)}",
-                            style = MaterialTheme.typography.labelMedium,
-                        )
-                    }
-                }
 
             AppUpdateSection(
                 state = appUpdateState,
@@ -1527,37 +1401,5 @@ private fun Modifier.seamTouchTarget(
         layout(placeable.width, layoutPx) {
             placeable.place(0, -((touchPx - layoutPx) / 2f).roundToInt())
         }
-    }
-}
-
-@Composable
-private fun SettingsSwitchRow(
-    label: String,
-    checked: Boolean,
-    onCheckedChange: (Boolean) -> Unit,
-    enabled: Boolean = true,
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(CarDimensions.MinTapTarget)
-            .then(if (!enabled) Modifier.alpha(0.38f) else Modifier),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        CarBodyText(
-            text = label,
-            modifier = Modifier
-                .weight(1f)
-                .widthIn(min = 0.dp),
-            style = MaterialTheme.typography.bodyLarge,
-            maxLines = 2,
-        )
-        Switch(
-            checked = checked,
-            onCheckedChange = onCheckedChange,
-            enabled = enabled,
-            modifier = Modifier.size(CarDimensions.MinTapTarget),
-        )
     }
 }

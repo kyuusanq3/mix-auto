@@ -21,10 +21,9 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Apps
-import androidx.compose.material.icons.filled.Map
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.MusicNote
-import androidx.compose.material.icons.filled.Tune
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.Icon
@@ -44,7 +43,6 @@ import com.kyuusanq3.mixauto.ui.theme.ElectricCyan
 private const val MUSIC_KEY = "music_player"
 private const val VOICE_SEARCH_KEY = "voice_search"
 private const val LAUNCHER_SETTINGS_KEY = "launcher_settings"
-private const val MAP_DATA_KEY = "map_data"
 private const val APP_DRAWER_KEY = "app_drawer"
 
 enum class ActivePanel {
@@ -67,7 +65,6 @@ private enum class DockItem {
     AppDrawer,
     Music,
     VoiceSearch,
-    MapData,
     Settings,
 }
 
@@ -82,7 +79,6 @@ private fun dockItemOrder(
         if (voiceSearchAvailable) {
             add(DockItem.VoiceSearch)
         }
-        add(DockItem.MapData)
         add(DockItem.Settings)
     }
     return when {
@@ -128,15 +124,6 @@ private fun LazyListScope.dockItems(
                     tapTarget = tapTarget,
                     iconSize = iconSize,
                     onClick = onToggleVoiceSearch,
-                )
-            }
-            DockItem.MapData -> item(key = MAP_DATA_KEY) {
-                MapDataDockItem(
-                    isActive = activePanel == ActivePanel.MAP_DATA,
-                    tapTarget = tapTarget,
-                    iconSize = iconSize,
-                    activeIndicatorPlacement = activeIndicatorPlacement,
-                    onClick = { onTogglePanel(ActivePanel.MAP_DATA) },
                 )
             }
             DockItem.Settings -> item(key = LAUNCHER_SETTINGS_KEY) {
@@ -350,31 +337,6 @@ private fun VoiceSearchDockItem(
 }
 
 @Composable
-private fun MapDataDockItem(
-    isActive: Boolean,
-    iconSize: Dp,
-    onClick: () -> Unit,
-    tapTarget: Dp = CarDimensions.DockHorizontalTapTarget,
-    activeIndicatorPlacement: DockActiveIndicatorPlacement = DockActiveIndicatorPlacement.Bottom,
-) {
-    val iconTint = if (isActive) ElectricCyan else MaterialTheme.colorScheme.primary
-    Box(
-        modifier = Modifier
-            .size(tapTarget)
-            .clickable(onClick = onClick),
-        contentAlignment = Alignment.Center,
-    ) {
-        Icon(
-            imageVector = Icons.Filled.Map,
-            contentDescription = "Map Data",
-            modifier = Modifier.size(iconSize),
-            tint = iconTint,
-        )
-        DockActiveIndicator(isActive, activeIndicatorPlacement)
-    }
-}
-
-@Composable
 private fun AppDrawerDockItem(
     isActive: Boolean,
     iconSize: Dp,
@@ -415,8 +377,8 @@ private fun SettingsDockItem(
         contentAlignment = Alignment.Center,
     ) {
         Icon(
-            imageVector = Icons.Filled.Tune,
-            contentDescription = "Launcher",
+            imageVector = Icons.Filled.Settings,
+            contentDescription = "Launcher settings",
             modifier = Modifier.size(iconSize),
             tint = iconTint,
         )

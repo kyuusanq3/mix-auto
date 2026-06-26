@@ -13,7 +13,9 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.CropFree
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.GpsFixed
+import androidx.compose.material.icons.filled.Map
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -28,6 +30,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
@@ -51,6 +54,8 @@ fun CarMapViewContainer(
     engine: CarMapEngine,
     onToggleSearch: () -> Unit,
     isDestinationPanelOpen: Boolean,
+    onToggleMapSettings: () -> Unit,
+    isMapSettingsPanelOpen: Boolean,
     modifier: Modifier = Modifier,
 ) {
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -76,7 +81,8 @@ fun CarMapViewContainer(
     Box(
         modifier = modifier
             .padding(CarDimensions.PaneGap)
-            .clip(MaterialTheme.shapes.medium),
+            .clip(MaterialTheme.shapes.medium)
+            .onSizeChanged { engine.onMapHostLayoutChanged() },
     ) {
         AndroidView(
             factory = { context -> engine.createMapView(context) },
@@ -149,6 +155,53 @@ fun CarMapViewContainer(
                         MaterialTheme.colorScheme.primary
                     },
                 )
+            }
+
+            Spacer(modifier = Modifier.height(CarDimensions.PaneGap))
+            IconButton(
+                onClick = onToggleMapSettings,
+                modifier = Modifier
+                    .size(CarDimensions.MinTapTarget)
+                    .background(
+                        if (isMapSettingsPanelOpen) {
+                            ElectricCyan
+                        } else {
+                            OledBlack.copy(alpha = 0.72f)
+                        },
+                        MaterialTheme.shapes.small,
+                    ),
+            ) {
+                Box(
+                    modifier = Modifier.size(CarDimensions.MinTapTarget * 0.55f),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.Map,
+                        contentDescription = null,
+                        modifier = Modifier.fillMaxSize(),
+                        tint = if (isMapSettingsPanelOpen) {
+                            OledBlack
+                        } else {
+                            MaterialTheme.colorScheme.primary
+                        },
+                    )
+                    Icon(
+                        imageVector = Icons.Filled.Edit,
+                        contentDescription = if (isMapSettingsPanelOpen) {
+                            "Hide map settings"
+                        } else {
+                            "Show map settings"
+                        },
+                        modifier = Modifier
+                            .align(Alignment.BottomEnd)
+                            .size(CarDimensions.MinTapTarget * 0.28f),
+                        tint = if (isMapSettingsPanelOpen) {
+                            OledBlack
+                        } else {
+                            MaterialTheme.colorScheme.primary
+                        },
+                    )
+                }
             }
 
             if (mapUiState.isNavigating) {

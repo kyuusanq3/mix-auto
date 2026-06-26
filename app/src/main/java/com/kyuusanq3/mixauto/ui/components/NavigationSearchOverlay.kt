@@ -117,6 +117,7 @@ fun NavigationSearchContent(
     recentDestinations: List<SearchResultPlace>,
     savedPlaces: List<SearchResultPlace>,
     onToggleSavedPlace: (SearchResultPlace) -> Unit,
+    onPreviewPlace: (SearchResultPlace) -> Unit,
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -310,10 +311,7 @@ fun NavigationSearchContent(
         savedPlaces.any { saved -> isWithinDedupThreshold(saved, place) }
     }
 
-    val previewPlace: (SearchResultPlace) -> Unit = { place ->
-        engine.focusOnPoi(place)
-        onDismiss()
-    }
+    val previewPlace: (SearchResultPlace) -> Unit = onPreviewPlace
 
     Surface(
         modifier = modifier.fillMaxSize(),
