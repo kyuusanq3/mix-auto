@@ -39,5 +39,8 @@ interface CarMapEngine {
 
     fun getNearbyPois(lat: Double, lng: Double, limit: Int): List<SearchResultPlace>
 
+    /** GPS when available, else last fix, else map camera center (zoom ≥ 10). */
+    fun resolveSearchOrigin(): Pair<Double, Double>
+
     fun setSavedPlaces(places: List<SearchResultPlace>)
 }

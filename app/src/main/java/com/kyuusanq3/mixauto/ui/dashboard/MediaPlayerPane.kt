@@ -2,8 +2,10 @@ package com.kyuusanq3.mixauto.ui.dashboard
 
 import android.content.Intent
 import android.provider.Settings
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
@@ -52,6 +54,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import com.kyuusanq3.mixauto.domain.media.MediaPlaybackState
+import com.kyuusanq3.mixauto.ui.components.AudioPlayerListContent
 import com.kyuusanq3.mixauto.ui.components.AudioPlayerPickerOverlay
 import com.kyuusanq3.mixauto.ui.components.canLaunchApp
 import com.kyuusanq3.mixauto.ui.components.launchAppByPackage
@@ -71,6 +74,8 @@ private val AlbumArtSwipeThreshold = 40.dp
 @Composable
 fun MediaPlayerPane(
     mediaState: MediaPlaybackState,
+    defaultAudioPackage: String,
+    onSetDefaultAudioPackage: (String) -> Unit,
     onPlayPause: () -> Unit,
     onSkipPrevious: () -> Unit,
     onSkipNext: () -> Unit,
@@ -78,6 +83,9 @@ fun MediaPlayerPane(
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
+    val needsDefaultSetup = defaultAudioPackage.isBlank() &&
+        !mediaState.hasActiveSession &&
+        !mediaState.needsNotificationAccess
     val artModeState = remember { mutableStateOf(AlbumArtMode.PLAIN) }
     val artMode by artModeState
     var isPickerOpen by remember { mutableStateOf(false) }
@@ -99,6 +107,22 @@ fun MediaPlayerPane(
         ),
     ) {
         Box(modifier = Modifier.fillMaxSize()) {
+        if (needsDefaultSetup) {
+            AudioPlayerListContent(
+                defaultAudioPackage = defaultAudioPackage,
+                headerTitle = null,
+                headerMessage = "Choose the default audio source",
+                showCloseButton = false,
+                showLongPressHint = false,
+                onDismiss = {},
+                onAppClick = { app ->
+                    onSetDefaultAudioPackage(app.packageName)
+                    launchAppByPackage(context, app.packageName)
+                },
+                onRequestSetDefault = {},
+                modifier = Modifier.fillMaxSize(),
+            )
+        } else {
         Column(
             modifier = Modifier
                 .fillMaxSize()
@@ -271,6 +295,7 @@ fun MediaPlayerPane(
                 ) {
                     SourceAppButton(
                         sourcePackage = mediaState.sourcePackage,
+                        defaultAudioPackage = defaultAudioPackage,
                         hasActiveSession = mediaState.hasActiveSession,
                         onOpenPicker = { showAudioPicker = true },
                         modifier = Modifier.weight(1f),
@@ -311,26 +336,33 @@ fun MediaPlayerPane(
 
             if (showAudioPicker) {
                 AudioPlayerPickerOverlay(
+                    defaultAudioPackage = defaultAudioPackage,
+                    onSetDefaultAudioPackage = onSetDefaultAudioPackage,
                     onDismiss = { showAudioPicker = false },
                     modifier = Modifier.fillMaxSize(),
                 )
             }
         }
+        }
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun SourceAppButton(
     sourcePackage: String,
+    defaultAudioPackage: String,
     hasActiveSession: Boolean,
     onOpenPicker: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
-    val appIcon = rememberAppIcon(sourcePackage)
-    val canLaunch = remember(sourcePackage) { canLaunchApp(context, sourcePackage) }
+    val displayPackage = if (hasActiveSession) sourcePackage else defaultAudioPackage
+    val appIcon = rememberAppIcon(displayPackage)
+    val canLaunch = remember(displayPackage) { canLaunchApp(context, displayPackage) }
     val canLaunchSource = hasActiveSession && canLaunch
     val canOpenPicker = !hasActiveSession
+    val showDefaultIcon = !hasActiveSession && defaultAudioPackage.isNotBlank() && appIcon != null
     val iconSize = CarDimensions.AppIconSize - 8.dp
 
     Box(
@@ -340,22 +372,18 @@ private fun SourceAppButton(
         Box(
             modifier = Modifier
                 .requiredSize(CarDimensions.MinTapTarget)
-                .then(
-                    when {
-                        canLaunchSource -> {
-                            Modifier.clickable {
-                                launchAppByPackage(context, sourcePackage)
-                            }
+                .combinedClickable(
+                    onClick = {
+                        when {
+                            canLaunchSource -> launchAppByPackage(context, sourcePackage)
+                            canOpenPicker -> onOpenPicker()
                         }
-                        canOpenPicker -> {
-                            Modifier.clickable(onClick = onOpenPicker)
-                        }
-                        else -> Modifier
                     },
+                    onLongClick = onOpenPicker,
                 ),
             contentAlignment = Alignment.Center,
         ) {
-            if (appIcon != null && canLaunchSource) {
+            if (appIcon != null && (canLaunchSource || showDefaultIcon)) {
                 Image(
                     bitmap = appIcon,
                     contentDescription = "Open audio source",

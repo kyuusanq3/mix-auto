@@ -1,6 +1,7 @@
 package com.kyuusanq3.mixauto.ui.dashboard
 
 import android.content.res.Configuration
+import android.speech.SpeechRecognizer
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
@@ -45,6 +46,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -109,6 +111,8 @@ fun DashboardScreen(
     mapEngine: CarMapEngine,
     mapDataViewModel: MapDataViewModel,
     mediaState: MediaPlaybackState,
+    defaultAudioPackage: String,
+    onSetDefaultAudioPackage: (String) -> Unit,
     onMediaPlayPause: () -> Unit,
     onMediaSkipPrevious: () -> Unit,
     onMediaSkipNext: () -> Unit,
@@ -151,6 +155,7 @@ fun DashboardScreen(
 ) {
     var activePanel by remember { mutableStateOf(ActivePanel.MEDIA) }
     var musicPaneEnabled by remember { mutableStateOf(true) }
+    val launcherViewModel: LauncherViewModel = viewModel()
     val showSecondaryPane = activePanel != ActivePanel.HIDDEN
     val onTogglePanel: (ActivePanel) -> Unit = { target ->
         when (target) {
@@ -189,22 +194,52 @@ fun DashboardScreen(
             }
         }
     }
-    val onDismissPanel = { activePanel = dismissToBasePanel(musicPaneEnabled) }
+    val onDismissPanel = {
+        if (activePanel == ActivePanel.SEARCH) {
+            launcherViewModel.isDestinationSearchOpen = false
+        }
+        activePanel = dismissToBasePanel(musicPaneEnabled)
+    }
     val onDismissAppDrawer = { activePanel = dismissToBasePanel(musicPaneEnabled) }
-    val isSearchOpen = activePanel == ActivePanel.SEARCH
+    val isDestinationPanelOpen =
+        activePanel == ActivePanel.SEARCH || activePanel == ActivePanel.POI_DETAIL
     val onToggleSearch = {
         musicPaneEnabled = true
-        activePanel = if (activePanel == ActivePanel.SEARCH) {
-            dismissToBasePanel(musicPaneEnabled)
-        } else {
-            ActivePanel.SEARCH
+        when (activePanel) {
+            ActivePanel.SEARCH -> {
+                launcherViewModel.isDestinationSearchOpen = false
+                activePanel = dismissToBasePanel(musicPaneEnabled)
+            }
+            ActivePanel.POI_DETAIL -> mapEngine.dismissSelectedPoi()
+            else -> {
+                launcherViewModel.isDestinationSearchOpen = true
+                activePanel = ActivePanel.SEARCH
+            }
+        }
+    }
+    val onToggleVoiceSearch = {
+        musicPaneEnabled = true
+        when (activePanel) {
+            ActivePanel.SEARCH -> {
+                launcherViewModel.isDestinationSearchOpen = false
+                activePanel = dismissToBasePanel(musicPaneEnabled)
+            }
+            ActivePanel.POI_DETAIL -> mapEngine.dismissSelectedPoi()
+            else -> {
+                launcherViewModel.setStartVoiceOnSearchOpen()
+                launcherViewModel.isDestinationSearchOpen = true
+                activePanel = ActivePanel.SEARCH
+            }
         }
     }
     val mapUiState by mapEngine.uiState.collectAsStateWithLifecycle()
-    val launcherViewModel: LauncherViewModel = viewModel()
     val appUpdateViewModel: AppUpdateViewModel = viewModel()
     val appUpdateState by appUpdateViewModel.uiState.collectAsStateWithLifecycle()
     val configuration = LocalConfiguration.current
+    val context = LocalContext.current
+    val voiceSearchAvailable = remember(context) {
+        SpeechRecognizer.isRecognitionAvailable(context)
+    }
     val isPortrait = configuration.orientation == Configuration.ORIENTATION_PORTRAIT
     val isSplitLockedForOverlay =
         activePanel == ActivePanel.SEARCH || activePanel == ActivePanel.POI_DETAIL
@@ -258,7 +293,7 @@ fun DashboardScreen(
                             CarMapViewContainer(
                                 engine = mapEngine,
                                 onToggleSearch = onToggleSearch,
-                                isSearchOpen = isSearchOpen,
+                                isDestinationPanelOpen = isDestinationPanelOpen,
                                 modifier = Modifier
                                     .weight(if (showSecondaryPane) effectiveMapMediaRatio else 1f)
                                     .fillMaxWidth(),
@@ -284,6 +319,8 @@ fun DashboardScreen(
                                     onUpdateSavedPlace = onUpdateSavedPlace,
                                     onDismissSelectedPoi = { mapEngine.dismissSelectedPoi() },
                                     mediaState = mediaState,
+                                    defaultAudioPackage = defaultAudioPackage,
+                                    onSetDefaultAudioPackage = onSetDefaultAudioPackage,
                                     onMediaPlayPause = onMediaPlayPause,
                                     onMediaSkipPrevious = onMediaSkipPrevious,
                                     onMediaSkipNext = onMediaSkipNext,
@@ -334,8 +371,10 @@ fun DashboardScreen(
                         isLargeIcons = isLargeShortcutIcons,
                         isLeftHandDrive = isLeftHandDrive,
                         activePanel = activePanel,
+                        voiceSearchAvailable = voiceSearchAvailable,
                         sourcePackage = mediaState.sourcePackage,
                         onTogglePanel = onTogglePanel,
+                        onToggleVoiceSearch = onToggleVoiceSearch,
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(bottom = CarDimensions.PaneGap)
@@ -361,7 +400,7 @@ fun DashboardScreen(
                             CarMapViewContainer(
                                 engine = mapEngine,
                                 onToggleSearch = onToggleSearch,
-                                isSearchOpen = isSearchOpen,
+                                isDestinationPanelOpen = isDestinationPanelOpen,
                                 modifier = Modifier
                                     .weight(if (showSecondaryPane) effectiveMapMediaRatio else 1f)
                                     .fillMaxSize(),
@@ -387,6 +426,8 @@ fun DashboardScreen(
                                 onUpdateSavedPlace = onUpdateSavedPlace,
                                     onDismissSelectedPoi = { mapEngine.dismissSelectedPoi() },
                                     mediaState = mediaState,
+                                    defaultAudioPackage = defaultAudioPackage,
+                                    onSetDefaultAudioPackage = onSetDefaultAudioPackage,
                                     onMediaPlayPause = onMediaPlayPause,
                                     onMediaSkipPrevious = onMediaSkipPrevious,
                                     onMediaSkipNext = onMediaSkipNext,
@@ -440,6 +481,8 @@ fun DashboardScreen(
                                 onUpdateSavedPlace = onUpdateSavedPlace,
                                     onDismissSelectedPoi = { mapEngine.dismissSelectedPoi() },
                                     mediaState = mediaState,
+                                    defaultAudioPackage = defaultAudioPackage,
+                                    onSetDefaultAudioPackage = onSetDefaultAudioPackage,
                                     onMediaPlayPause = onMediaPlayPause,
                                     onMediaSkipPrevious = onMediaSkipPrevious,
                                     onMediaSkipNext = onMediaSkipNext,
@@ -491,7 +534,7 @@ fun DashboardScreen(
                             CarMapViewContainer(
                                 engine = mapEngine,
                                 onToggleSearch = onToggleSearch,
-                                isSearchOpen = isSearchOpen,
+                                isDestinationPanelOpen = isDestinationPanelOpen,
                                 modifier = Modifier
                                     .weight(if (showSecondaryPane) effectiveMapMediaRatio else 1f)
                                     .fillMaxSize(),
@@ -508,8 +551,10 @@ fun DashboardScreen(
                         isLargeIcons = isLargeShortcutIcons,
                         isLeftHandDrive = isLeftHandDrive,
                         activePanel = activePanel,
+                        voiceSearchAvailable = voiceSearchAvailable,
                         sourcePackage = mediaState.sourcePackage,
                         onTogglePanel = onTogglePanel,
+                        onToggleVoiceSearch = onToggleVoiceSearch,
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(bottom = CarDimensions.PaneGap)
@@ -533,7 +578,7 @@ fun DashboardScreen(
                                 CarMapViewContainer(
                                     engine = mapEngine,
                                     onToggleSearch = onToggleSearch,
-                                isSearchOpen = isSearchOpen,
+                                isDestinationPanelOpen = isDestinationPanelOpen,
                                     modifier = Modifier
                                         .weight(
                                             if (showSecondaryPane) {
@@ -565,6 +610,8 @@ fun DashboardScreen(
                                         onUpdateSavedPlace = onUpdateSavedPlace,
                                         onDismissSelectedPoi = { mapEngine.dismissSelectedPoi() },
                                         mediaState = mediaState,
+                                        defaultAudioPackage = defaultAudioPackage,
+                                        onSetDefaultAudioPackage = onSetDefaultAudioPackage,
                                         onMediaPlayPause = onMediaPlayPause,
                                         onMediaSkipPrevious = onMediaSkipPrevious,
                                         onMediaSkipNext = onMediaSkipNext,
@@ -615,8 +662,10 @@ fun DashboardScreen(
                             isLargeIcons = isLargeShortcutIcons,
                             isLeftHandDrive = isLeftHandDrive,
                             activePanel = activePanel,
+                            voiceSearchAvailable = voiceSearchAvailable,
                             sourcePackage = mediaState.sourcePackage,
                             onTogglePanel = onTogglePanel,
+                            onToggleVoiceSearch = onToggleVoiceSearch,
                             modifier = Modifier
                                 .wrapContentWidth()
                                 .fillMaxHeight()
@@ -628,8 +677,10 @@ fun DashboardScreen(
                             isLargeIcons = isLargeShortcutIcons,
                             isLeftHandDrive = isLeftHandDrive,
                             activePanel = activePanel,
+                            voiceSearchAvailable = voiceSearchAvailable,
                             sourcePackage = mediaState.sourcePackage,
                             onTogglePanel = onTogglePanel,
+                            onToggleVoiceSearch = onToggleVoiceSearch,
                             modifier = Modifier
                                 .wrapContentWidth()
                                 .fillMaxHeight()
@@ -644,7 +695,7 @@ fun DashboardScreen(
                                 CarMapViewContainer(
                                     engine = mapEngine,
                                     onToggleSearch = onToggleSearch,
-                                isSearchOpen = isSearchOpen,
+                                isDestinationPanelOpen = isDestinationPanelOpen,
                                     modifier = Modifier
                                         .weight(
                                             if (showSecondaryPane) {
@@ -676,6 +727,8 @@ fun DashboardScreen(
                                         onUpdateSavedPlace = onUpdateSavedPlace,
                                         onDismissSelectedPoi = { mapEngine.dismissSelectedPoi() },
                                         mediaState = mediaState,
+                                        defaultAudioPackage = defaultAudioPackage,
+                                        onSetDefaultAudioPackage = onSetDefaultAudioPackage,
                                         onMediaPlayPause = onMediaPlayPause,
                                         onMediaSkipPrevious = onMediaSkipPrevious,
                                         onMediaSkipNext = onMediaSkipNext,
@@ -741,6 +794,8 @@ private fun DashboardSecondaryPane(
     onUpdateSavedPlace: (SearchResultPlace) -> Unit,
     onDismissSelectedPoi: () -> Unit,
     mediaState: MediaPlaybackState,
+    defaultAudioPackage: String,
+    onSetDefaultAudioPackage: (String) -> Unit,
     onMediaPlayPause: () -> Unit,
     onMediaSkipPrevious: () -> Unit,
     onMediaSkipNext: () -> Unit,
@@ -789,6 +844,8 @@ private fun DashboardSecondaryPane(
         onUpdateSavedPlace = onUpdateSavedPlace,
         onDismissSelectedPoi = onDismissSelectedPoi,
         mediaState = mediaState,
+        defaultAudioPackage = defaultAudioPackage,
+        onSetDefaultAudioPackage = onSetDefaultAudioPackage,
         onMediaPlayPause = onMediaPlayPause,
         onMediaSkipPrevious = onMediaSkipPrevious,
         onMediaSkipNext = onMediaSkipNext,
@@ -840,6 +897,8 @@ private fun MediaOrSettingsPane(
     onUpdateSavedPlace: (SearchResultPlace) -> Unit,
     onDismissSelectedPoi: () -> Unit,
     mediaState: MediaPlaybackState,
+    defaultAudioPackage: String,
+    onSetDefaultAudioPackage: (String) -> Unit,
     onMediaPlayPause: () -> Unit,
     onMediaSkipPrevious: () -> Unit,
     onMediaSkipNext: () -> Unit,
@@ -970,6 +1029,8 @@ private fun MediaOrSettingsPane(
             -> {
                 MediaPlayerPane(
                     mediaState = mediaState,
+                    defaultAudioPackage = defaultAudioPackage,
+                    onSetDefaultAudioPackage = onSetDefaultAudioPackage,
                     onPlayPause = onMediaPlayPause,
                     onSkipPrevious = onMediaSkipPrevious,
                     onSkipNext = onMediaSkipNext,
@@ -1346,7 +1407,7 @@ private fun AppUpdateSection(
     }
 }
 
-private const val OVERLAY_MAP_MEDIA_RATIO = 0.3f
+private const val OVERLAY_MAP_MEDIA_RATIO = 0.4f
 
 @Composable
 private fun MapMediaDividerHandle(

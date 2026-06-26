@@ -419,6 +419,8 @@ class MapLibreEngineImpl(
     ): List<SearchResultPlace> = withContext(Dispatchers.IO) {
         if (query.isBlank()) return@withContext emptyList()
 
+        val (searchLat, searchLng) = resolveSearchOrigin(currentLat, currentLng)
+
         fun applyDistanceLimit(places: List<SearchResultPlace>): List<SearchResultPlace> =
             if (limitDistance) {
                 places.filter { it.distanceInMeters <= MAX_SEARCH_RADIUS_M }
@@ -428,12 +430,12 @@ class MapLibreEngineImpl(
 
         val hasOfflineData = localPlaces?.hasInstalledDatabase == true
         val local = if (hasOfflineData) {
-            localPlaces?.searchPlaces(query, currentLat, currentLng).orEmpty()
+            localPlaces?.searchPlaces(query, searchLat, searchLng).orEmpty()
         } else {
             emptyList()
         }
         val cacheResults = withContext(Dispatchers.Main) {
-            searchPoiCache(query, currentLat, currentLng)
+            searchPoiCache(query, searchLat, searchLng)
         }
         val localAndCache = mergeAndDeduplicate(local, cacheResults)
         val localAndCacheFiltered = applyDistanceLimit(localAndCache)
@@ -443,7 +445,7 @@ class MapLibreEngineImpl(
             }
         }
 
-        val photon = fetchPhoton(query, currentLat, currentLng)
+        val photon = fetchPhoton(query, searchLat, searchLng)
         val finalResults = applyDistanceLimit(mergeAndDeduplicate(localAndCache, photon))
         if (finalResults.isNotEmpty()) {
             withContext(Dispatchers.Main) {
@@ -456,12 +458,14 @@ class MapLibreEngineImpl(
 
     override fun getNearbyPois(lat: Double, lng: Double, limit: Int): List<SearchResultPlace> {
         if (limit <= 0) return emptyList()
-        return poiCache.values
+
+        val (searchLat, searchLng) = resolveSearchOrigin(lat, lng)
+        val cacheResults = poiCache.values
             .map { place ->
                 val distanceResults = FloatArray(1)
                 Location.distanceBetween(
-                    lat,
-                    lng,
+                    searchLat,
+                    searchLng,
                     place.latitude,
                     place.longitude,
                     distanceResults,
@@ -470,6 +474,49 @@ class MapLibreEngineImpl(
             }
             .sortedBy { it.distanceInMeters }
             .take(limit)
+
+        if (cacheResults.isNotEmpty()) return cacheResults
+
+        val repo = localPlaces ?: return emptyList()
+        if (!repo.hasInstalledDatabase) return emptyList()
+
+        return repo.getPlacesInBounds(
+            minLat = searchLat - NEARBY_SEARCH_BBOX_DELTA,
+            maxLat = searchLat + NEARBY_SEARCH_BBOX_DELTA,
+            minLng = searchLng - NEARBY_SEARCH_BBOX_DELTA,
+            maxLng = searchLng + NEARBY_SEARCH_BBOX_DELTA,
+            limit = limit,
+        ).map { place ->
+            val distanceResults = FloatArray(1)
+            Location.distanceBetween(
+                searchLat,
+                searchLng,
+                place.latitude,
+                place.longitude,
+                distanceResults,
+            )
+            place.copy(
+                distanceInMeters = distanceResults[0],
+                category = normalizeOvertureCategory(place.category),
+            )
+        }.sortedBy { it.distanceInMeters }
+    }
+
+    override fun resolveSearchOrigin(): Pair<Double, Double> {
+        return resolveSearchOrigin(0.0, 0.0)
+    }
+
+    private fun resolveSearchOrigin(fallbackLat: Double, fallbackLng: Double): Pair<Double, Double> {
+        val state = _uiState.value
+        if (state.currentLat != null && state.currentLng != null) {
+            return state.currentLat to state.currentLng
+        }
+        lastKnownLocation?.let { return it.latitude to it.longitude }
+        resolveMapViewOrigin()?.let { return it.latitude to it.longitude }
+        if (fallbackLat != 0.0 || fallbackLng != 0.0) {
+            return fallbackLat to fallbackLng
+        }
+        return 0.0 to 0.0
     }
 
     private suspend fun fetchPhoton(
@@ -2876,6 +2923,7 @@ class MapLibreEngineImpl(
         private const val MAX_POI_PINS = 100
         private const val POI_CACHE_SEARCH_LIMIT = 15
         private const val POI_DEBOUNCE_MS = 400L
+        private const val NEARBY_SEARCH_BBOX_DELTA = 0.08
         private const val BBOX_PADDING_FACTOR = 1.5
         private const val PHOTON_MOVE_THRESHOLD_M = 300f
         private const val MAP_TAP_NEAREST_POI_MAX_M = 500f

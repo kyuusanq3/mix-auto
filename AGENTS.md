@@ -91,12 +91,13 @@ Swap map provider: change one line in `MainActivity.kt` to a new `CarMapEngine` 
 
 ## Shortcut dock behavior
 
-`ShortcutDock.kt` provides four dock toggles (no fixed system app shortcuts):
+`ShortcutDock.kt` provides five dock shortcuts (no fixed system app shortcuts):
 
 | Icon | Panel / action |
 |------|----------------|
 | App Drawer | `ActivePanel.APP_DRAWER` — full map+media overlay (`AppDrawerOverlay.kt`) |
 | Music | Toggle media pane / collapse to map-only |
+| Mic (Voice Search) | Toggle destination search — opens search + starts voice when closed; closes search or POI detail when open; hidden when no speech recognizer |
 | Map Data | Offline Overture POI download panel |
 | Launcher (Tune) | Launcher layout settings |
 
@@ -162,6 +163,8 @@ Bundled sample asset: `python tools/build_sample_places_db.py` (writes to `mix-a
 **Recent destinations:** Up to 10 saved in `LauncherPreferences.recentDestinations` (JSON in SharedPreferences). `LauncherViewModel.addRecentDestination()` prepends, dedupes within 50 m, persists. Flow: `MainActivity` → `DashboardScreen` → `CarMapViewContainer` → `NavigationSearchOverlay`; any selection calls `onDestinationSelected` before `navigateToCoordinates`.
 
 **Saved places:** Up to 50 in `LauncherPreferences.savedPlaces` (same JSON schema + `isDroppedPin`). `LauncherViewModel.toggleSavedPlace()` dedupes at 50 m. Starred POIs show gold teardrop icons on map via `mapEngine.setSavedPlaces()` synced from `DashboardScreen`. Empty search field shows **Recent | Saved | Nearby** tabs; each row has a star button. **Short map tap** selects saved pin, active custom pin, or POI pin (`handleMapPointSelection()`). **Long press** on empty map drops a custom pin (`startCustomPinDraft()`); long press in free-drive GPS tracking exits to top-down view at the drop point. POI detail opens in media pane via `ActivePanel.POI_DETAIL`.
+
+**Default audio source:** `LauncherPreferences.defaultAudioPackage` — first launch with no default shows inline app list in media pane; tap sets default and launches app. Boot: `MainActivity.refreshMediaSessionsAndBootAudio()` → `ensureDefaultPlayerIfNeeded()` launches default when no active session. Overlay picker: tap launches app; long-press row sets default. Source button: tap launches active app or opens picker when idle; **long-press always opens picker**.
 
 ## Manifest / launcher setup
 
@@ -233,7 +236,7 @@ After enabling Launcher Mode, press Home and select **Mix Auto** as the default 
 | Search shows overseas / 5000 km destinations | Default 500 km cap is ON — disable **Nearby results only (within 500 km)** in Launcher Settings to include farther Photon results; routing still may fail for long/cross-water trips |
 | Empty search shows no Nearby rows | Nearby tab uses `poiCache` only — pan/zoom map (zoom ≥ 13) so camera-idle POI load runs; no network fetch for empty-query nearby list |
 | Vector tiles show POI labels but no teardrop pins | `queryTilePois()` must use `map.queryRenderedFeatures` on Liberty layer IDs (`poi_r1`, `poi_r7`, `poi_r20`, `poi_transit`) — `VectorSource.querySourceFeatures("poi")` misses rendered POIs; zoom ≥ 15 for Liberty POI labels |
-| Pin tap does not center map | `animateTopDownCamera()` must call `clearViewportPaddingForPreview()` (zero map + tracking padding), defer animation via `mapView.post { }` so it runs after POI detail 30/70 split resize, and `handleMapLayoutChange()` must re-center on `selectedPoi` when `isInTopDownView` — do not re-apply driving padding from `OnLayoutChangeListener` during POI preview |
+| Pin tap does not center map | `animateTopDownCamera()` must call `clearViewportPaddingForPreview()` (zero map + tracking padding), defer animation via `mapView.post { }` so it runs after POI detail 40/60 split resize, and `handleMapLayoutChange()` must re-center on `selectedPoi` when `isInTopDownView` — do not re-apply driving padding from `OnLayoutChangeListener` during POI preview |
 | Saved tab empty | Star a place from map tap drawer or search row star button — `LauncherPreferences.savedPlaces` persists up to 50 entries |
 | Map tap shows Dropped Pin instead of POI name | Short tap no longer drops pins — use **long press** on empty map; short tap on POI pin selects that POI |
 | Long press does not drop custom pin | Disabled during navigation; must long-press empty map (not on existing pin icon) |
@@ -250,7 +253,9 @@ After enabling Launcher Mode, press Home and select **Mix Auto** as the default 
 | Puck size slider jolts camera | `setPuckScale(scale)` is style-only via `applyStyle()` — do NOT call `forceLocationUpdateForImmediateRender()` for scale changes (unlike viewport padding) |
 | Compass hidden under search icon | `MapLibreEngineImpl.configureCompassPosition()` moves compass to bottom-right via `setCompassGravity(BOTTOM \| END)` |
 | Nav doesn't re-route after wrong turn | Off-route reroute needs 2 GPS fixes >75 m from `routeGeometryPoints`; 5 s cooldown between reroutes; check Logcat for `Off route` / `Re-routing` |
-| Music doesn't auto-play on launch | Enable notification access; `maybeAutoPlay()` runs once per process when paused session has metadata — also retried from `onMetadataChanged()` (late metadata) and same-token `attachController()` re-attach; Logcat `MediaSessionRepository`: `Auto-playing paused media session on launch` |
+| Music doesn't auto-play on launch | Enable notification access; set **default audio source** in media pane (first-run list or long-press source icon → picker); `MainActivity.refreshMediaSessionsAndBootAudio()` launches default when no session; `maybeAutoPlay()` runs once per process when paused session has metadata — Logcat `MediaSessionRepository`: `Launching default audio app on boot` / `Auto-playing paused media session on launch` |
+| No audio on cold boot until car Next pressed | YT Music not running yet — passive `getActiveSessions()` empty; set default in Mix Auto so boot launch runs; car media keys use OS pipeline, not Mix Auto |
+| Can't open audio source list after default set | **Long-press** source app icon in transport row (tap launches active app when session exists); short tap opens picker only when no session |
 | Shortcut bar too small on head unit | Settings → **Large Shortcut Icons** doubles tap target and icon size in both horizontal and vertical dock (uses `DockHorizontalTapTarget` / `DockHorizontalIconSize`) |
 | Vertical shortcut bar too wide / large side padding | Vertical dock must use `wrapContentWidth()` in `ShortcutDock` + `DashboardScreen` — not `.weight(DockVerticalWeight)`; icon-only, no labels |
 | App drawer malforms vertical shortcut bar (floating dock, black gap) | Do NOT stack `AppDrawerOverlay` above `ShortcutDock` in a side Column — overlay map+media `Box` only via `SplitScreenAppDrawerSlot`; dock stays `wrapContentWidth().fillMaxHeight()` sibling |
@@ -263,11 +268,13 @@ After enabling Launcher Mode, press Home and select **Mix Auto** as the default 
 | Album art too small in tall portrait pane | Size via `BoxWithConstraints`: `(if (maxWidth < maxHeight) maxWidth else maxHeight) * 0.92f` |
 | Unlike skips track in YT Music | `MediaSessionRepository.toggleLike()` never sends dislike/thumb_down — use unrated or re-toggle like action only |
 | Like heart not lit when returning to song | Per-track `likedTrackCache` in `MediaSessionRepository` keyed by media ID / title\|artist |
-| Voice button opens Assistant instead of search | Voice key only intercepted when destination search overlay is open — open map search first; grant **Microphone** permission on first use; Eonon may send `KEYCODE_SEARCH` instead of `KEYCODE_VOICE_ASSIST` (both handled in `MainActivity.onKeyDown`) |
-| Mic button missing in search overlay | `SpeechRecognizer.isRecognitionAvailable()` false on bare AOSP — install Google app or use typed search; mic hidden when no recognizer |
+| Voice button opens Assistant instead of search | Hardware key is often wired to Gemini and never reaches the app — use **shortcut dock mic** (Voice destination search); grant **Microphone** permission; Eonon may send `KEYCODE_SEARCH` instead of `KEYCODE_VOICE_ASSIST` (both handled in `MainActivity.onKeyDown` when search already open) |
+| Mic listening stops immediately | Gemini may hold the speech engine — use dock mic only; check mic permission; `SpeechRecognizer.onError` is silent — conflicts show as brief “Listening…” flash |
+| Mic button missing in search overlay / dock | `SpeechRecognizer.isRecognitionAvailable()` false on bare AOSP — install Google app; mic hidden in overlay and dock when no recognizer |
 | Onboarding wizard shows icon only, no title/body | `OnboardingWizard` root must be `Surface(color = OledBlack)` — bare `Box` leaves `LocalContentColor` black and `Car*Text` invisible on OLED background |
 | Re-test permission onboarding wizard | Clear app data or set `launcher_prefs` key `onboarding_version` to `0`; wizard shows when `onboardingVersion < CURRENT_ONBOARDING_VERSION` in `OnboardingWizard.kt` |
-| Search/POI pane too narrow or divider still draggable | Destination Search + POI Details lock split to 30% map / 70% secondary via `effectiveMapMediaRatio` in `DashboardScreen.kt`; `MapMediaDividerHandle` hidden (`showMapMediaDivider`); do NOT persist 0.3 to `LauncherPreferences` — closing restores saved ratio |
+| Search/POI pane too narrow or divider still draggable | Destination Search + POI Details lock split to **40% map / 60% secondary** via `OVERLAY_MAP_MEDIA_RATIO` (0.4f) in `DashboardScreen.kt`; `MapMediaDividerHandle` hidden (`showMapMediaDivider`); do NOT persist 0.4 to `LauncherPreferences` — closing restores saved ratio |
+| Destination search empty after app update (PH DB installed) | Old builds used `(0,0)` before GPS — offline bbox missed PH; DB could show Installed but `active_iso`/open failure skipped search — fixed via `resolveSearchOrigin()`, `LocalPlacesRepository` auto-discover + WAL retry, `getNearbyPois()` offline fallback; sideload latest build |
 
 ## Related agent resources
 

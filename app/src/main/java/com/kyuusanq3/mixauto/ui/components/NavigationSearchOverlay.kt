@@ -67,6 +67,8 @@ import com.kyuusanq3.mixauto.ui.theme.CarLabelText
 import com.kyuusanq3.mixauto.ui.theme.ElectricCyan
 import com.kyuusanq3.mixauto.ui.theme.OledBlack
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlin.math.roundToInt
 
 private const val DEDUP_THRESHOLD_M = 50f
@@ -133,11 +135,11 @@ fun NavigationSearchContent(
     val listState = rememberLazyListState()
 
     val speechAvailable = remember(context) {
-        SpeechRecognizer.isRecognitionAvailable(context)
+        SpeechRecognizer.isRecognitionAvailable(context.applicationContext)
     }
     val speechRecognizer = remember(context, speechAvailable) {
         if (speechAvailable) {
-            SpeechRecognizer.createSpeechRecognizer(context)
+            SpeechRecognizer.createSpeechRecognizer(context.applicationContext)
         } else {
             null
         }
@@ -156,6 +158,7 @@ fun NavigationSearchContent(
             putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
             putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
         }
+        recognizer.cancel()
         recognizer.setRecognitionListener(object : RecognitionListener {
             override fun onReadyForSpeech(params: Bundle?) = Unit
 
@@ -214,6 +217,12 @@ fun NavigationSearchContent(
         startListeningRef.value(recognizer)
     }
 
+    LaunchedEffect(Unit) {
+        if (launcherViewModel.consumeStartVoiceOnSearchOpen()) {
+            tryStartVoiceSearch.value()
+        }
+    }
+
     LaunchedEffect(launcherViewModel) {
         launcherViewModel.voiceSearchTrigger.collect {
             tryStartVoiceSearch.value()
@@ -232,10 +241,11 @@ fun NavigationSearchContent(
     )
     val micPulseAlpha = if (isListening) pulsingAlpha else 1f
 
-    val currentLat = uiState.currentLat ?: 0.0
-    val currentLng = uiState.currentLng ?: 0.0
+    val searchOrigin = engine.resolveSearchOrigin()
+    val currentLat = searchOrigin.first
+    val currentLng = searchOrigin.second
 
-    LaunchedEffect(query, currentLat, currentLng, limitSearchDistance) {
+    LaunchedEffect(query, uiState.currentLat, uiState.currentLng, currentLat, currentLng, limitSearchDistance) {
         if (query.length < 2) {
             results = emptyList()
             hasSearched = false
@@ -265,13 +275,14 @@ fun NavigationSearchContent(
         }
     }
 
-    LaunchedEffect(query, currentLat, currentLng, recentDestinations, savedPlaces) {
+    LaunchedEffect(query, uiState.currentLat, uiState.currentLng, currentLat, currentLng, recentDestinations, savedPlaces) {
         if (query.length >= 2) {
             nearbyPois = emptyList()
             return@LaunchedEffect
         }
-        nearbyPois = engine.getNearbyPois(currentLat, currentLng, LauncherPreferences.MAX_RECENT_DESTINATIONS)
-            .filterNot { nearby ->
+        nearbyPois = withContext(Dispatchers.IO) {
+            engine.getNearbyPois(currentLat, currentLng, LauncherPreferences.MAX_RECENT_DESTINATIONS)
+        }.filterNot { nearby ->
                 recentDestinations.any { recent -> isWithinDedupThreshold(recent, nearby) } ||
                     savedPlaces.any { saved -> isWithinDedupThreshold(saved, nearby) }
             }
@@ -330,11 +341,6 @@ fun NavigationSearchContent(
                     )
                 }
 
-                CarBodyText(
-                    text = "Point A: your current location",
-                    style = MaterialTheme.typography.bodyMedium,
-                )
-
                 OutlinedTextField(
                     value = query,
                     onValueChange = { query = it },
@@ -343,7 +349,7 @@ fun NavigationSearchContent(
                         .height(CarDimensions.PrimaryTapTarget + CarDimensions.PaneGap),
                     label = {
                         CarLabelText(
-                            text = "Destination (Point B)",
+                            text = "Destination",
                             style = MaterialTheme.typography.labelMedium,
                         )
                     },

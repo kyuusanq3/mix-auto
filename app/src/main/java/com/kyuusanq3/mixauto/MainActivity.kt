@@ -113,6 +113,8 @@ class MainActivity : ComponentActivity() {
                     mapEngine = mapEngine,
                     mapDataViewModel = mapDataViewModel,
                     mediaState = mediaState,
+                    defaultAudioPackage = launcherViewModel.defaultAudioPackage,
+                    onSetDefaultAudioPackage = launcherViewModel::updateDefaultAudioPackage,
                     onMediaPlayPause = mediaViewModel::playPause,
                     onMediaSkipPrevious = mediaViewModel::skipToPrevious,
                     onMediaSkipNext = mediaViewModel::skipToNext,
@@ -202,7 +204,7 @@ class MainActivity : ComponentActivity() {
                                 launcherPreferences.onboardingVersion = CURRENT_ONBOARDING_VERSION
                                 showOnboarding = false
                                 requestLocationPermissionIfNeeded()
-                                MediaSessionRepository.getInstance(this@MainActivity).refreshSessions()
+                                refreshMediaSessionsAndBootAudio()
                             },
                         )
                     }
@@ -217,7 +219,17 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
-        MediaSessionRepository.getInstance(this).refreshSessions()
+        refreshMediaSessionsAndBootAudio()
+    }
+
+    private fun refreshMediaSessionsAndBootAudio() {
+        val repository = MediaSessionRepository.getInstance(this)
+        repository.refreshSessions()
+        if (::launcherViewModel.isInitialized) {
+            repository.ensureDefaultPlayerIfNeeded(
+                launcherViewModel.defaultAudioPackage.takeIf { it.isNotBlank() },
+            )
+        }
     }
 
     override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {

@@ -124,6 +124,12 @@ class LauncherPreferences(context: Context) {
             prefs.edit().putInt(KEY_ONBOARDING_VERSION, value).apply()
         }
 
+    var defaultAudioPackage: String
+        get() = prefs.getString(KEY_DEFAULT_AUDIO_PACKAGE, "") ?: ""
+        set(value) {
+            prefs.edit().putString(KEY_DEFAULT_AUDIO_PACKAGE, value).apply()
+        }
+
     companion object {
         private const val PREFS_NAME = "launcher_prefs"
         private const val KEY_LEFT_HAND_DRIVE = "lhd"
@@ -143,6 +149,7 @@ class LauncherPreferences(context: Context) {
         private const val KEY_RECENT_DESTINATIONS = "recent_destinations"
         private const val KEY_SAVED_PLACES = "saved_places"
         private const val KEY_ONBOARDING_VERSION = "onboarding_version"
+        private const val KEY_DEFAULT_AUDIO_PACKAGE = "default_audio_package"
         const val MAX_RECENT_DESTINATIONS = 10
         const val MAX_SAVED_PLACES = 50
         const val DEFAULT_MAP_MEDIA_RATIO = 0.6f

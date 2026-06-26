@@ -22,6 +22,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Apps
 import androidx.compose.material.icons.filled.Map
+import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.CardDefaults
@@ -41,6 +42,7 @@ import com.kyuusanq3.mixauto.ui.theme.DeepCharcoal
 import com.kyuusanq3.mixauto.ui.theme.ElectricCyan
 
 private const val MUSIC_KEY = "music_player"
+private const val VOICE_SEARCH_KEY = "voice_search"
 private const val LAUNCHER_SETTINGS_KEY = "launcher_settings"
 private const val MAP_DATA_KEY = "map_data"
 private const val APP_DRAWER_KEY = "app_drawer"
@@ -64,13 +66,25 @@ private enum class DockActiveIndicatorPlacement {
 private enum class DockItem {
     AppDrawer,
     Music,
+    VoiceSearch,
     MapData,
     Settings,
 }
 
 /** Vertical dock: app drawer first (top). Horizontal LHD: left; horizontal RHD: right. */
-private fun dockItemOrder(isHorizontal: Boolean, isLeftHandDrive: Boolean): List<DockItem> {
-    val core = listOf(DockItem.Music, DockItem.MapData, DockItem.Settings)
+private fun dockItemOrder(
+    isHorizontal: Boolean,
+    isLeftHandDrive: Boolean,
+    voiceSearchAvailable: Boolean,
+): List<DockItem> {
+    val core = buildList {
+        add(DockItem.Music)
+        if (voiceSearchAvailable) {
+            add(DockItem.VoiceSearch)
+        }
+        add(DockItem.MapData)
+        add(DockItem.Settings)
+    }
     return when {
         !isHorizontal -> listOf(DockItem.AppDrawer) + core
         isLeftHandDrive -> listOf(DockItem.AppDrawer) + core
@@ -86,6 +100,7 @@ private fun LazyListScope.dockItems(
     iconSize: Dp,
     activeIndicatorPlacement: DockActiveIndicatorPlacement,
     onTogglePanel: (ActivePanel) -> Unit,
+    onToggleVoiceSearch: () -> Unit,
 ) {
     order.forEach { dockItem ->
         when (dockItem) {
@@ -106,6 +121,13 @@ private fun LazyListScope.dockItems(
                     iconSize = iconSize,
                     activeIndicatorPlacement = activeIndicatorPlacement,
                     onClick = { onTogglePanel(ActivePanel.MEDIA) },
+                )
+            }
+            DockItem.VoiceSearch -> item(key = VOICE_SEARCH_KEY) {
+                VoiceSearchDockItem(
+                    tapTarget = tapTarget,
+                    iconSize = iconSize,
+                    onClick = onToggleVoiceSearch,
                 )
             }
             DockItem.MapData -> item(key = MAP_DATA_KEY) {
@@ -136,8 +158,10 @@ fun ShortcutDock(
     isLargeIcons: Boolean = false,
     isLeftHandDrive: Boolean = true,
     activePanel: ActivePanel,
+    voiceSearchAvailable: Boolean = true,
     sourcePackage: String = "",
     onTogglePanel: (ActivePanel) -> Unit,
+    onToggleVoiceSearch: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val tapTarget = if (isLargeIcons) {
@@ -157,7 +181,7 @@ fun ShortcutDock(
     } else {
         DockActiveIndicatorPlacement.Start
     }
-    val itemOrder = dockItemOrder(isHorizontal, isLeftHandDrive)
+    val itemOrder = dockItemOrder(isHorizontal, isLeftHandDrive, voiceSearchAvailable)
 
     ElevatedCard(
         modifier = if (isHorizontal) {
@@ -192,6 +216,7 @@ fun ShortcutDock(
                         iconSize = iconSize,
                         activeIndicatorPlacement = activeIndicatorPlacement,
                         onTogglePanel = onTogglePanel,
+                        onToggleVoiceSearch = onToggleVoiceSearch,
                     )
                 }
             } else {
@@ -209,6 +234,7 @@ fun ShortcutDock(
                         iconSize = iconSize,
                         activeIndicatorPlacement = activeIndicatorPlacement,
                         onTogglePanel = onTogglePanel,
+                        onToggleVoiceSearch = onToggleVoiceSearch,
                     )
                 }
             }
@@ -299,6 +325,27 @@ private fun MusicDockItem(
             )
         }
         DockActiveIndicator(isActive, activeIndicatorPlacement)
+    }
+}
+
+@Composable
+private fun VoiceSearchDockItem(
+    iconSize: Dp,
+    onClick: () -> Unit,
+    tapTarget: Dp = CarDimensions.DockHorizontalTapTarget,
+) {
+    Box(
+        modifier = Modifier
+            .size(tapTarget)
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            imageVector = Icons.Filled.Mic,
+            contentDescription = "Voice destination search",
+            modifier = Modifier.size(iconSize),
+            tint = MaterialTheme.colorScheme.primary,
+        )
     }
 }
 

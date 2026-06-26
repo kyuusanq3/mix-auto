@@ -14,18 +14,29 @@ import android.support.v4.media.session.PlaybackStateCompat
 import android.util.Log
 import com.kyuusanq3.mixauto.domain.media.MediaPlaybackState
 import com.kyuusanq3.mixauto.service.MixAutoNotificationListenerService
+import com.kyuusanq3.mixauto.ui.components.launchAppByPackage
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
 
 class MediaSessionRepository(context: Context) {
     private val appContext = context.applicationContext
     private val _state = MutableStateFlow(MediaPlaybackState())
     val state: StateFlow<MediaPlaybackState> = _state.asStateFlow()
+    val hasActiveSession: Boolean
+        get() = _state.value.hasActiveSession
 
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private var activeController: MediaController? = null
     private var hasAutoPlayed = false
+    private var hasAttemptedBootLaunch = false
+    private var activeSessionsListenerRegistered = false
     private var likeCustomActionId: String? = null
     private var shuffleCustomActionId: String? = null
     private var cachedShuffleOn = false
@@ -46,6 +57,10 @@ class MediaSessionRepository(context: Context) {
         }
     }
 
+    private val activeSessionsListener = MediaSessionManager.OnActiveSessionsChangedListener {
+        refreshSessions()
+    }
+
     fun refreshSessions() {
         if (!isNotificationListenerEnabled(appContext)) {
             detachController()
@@ -58,6 +73,10 @@ class MediaSessionRepository(context: Context) {
         runCatching {
             val sessionManager = appContext.getSystemService(MediaSessionManager::class.java)
             val listenerComponent = ComponentName(appContext, MixAutoNotificationListenerService::class.java)
+            if (!activeSessionsListenerRegistered) {
+                sessionManager.addOnActiveSessionsChangedListener(activeSessionsListener, listenerComponent)
+                activeSessionsListenerRegistered = true
+            }
             val controllers = sessionManager.getActiveSessions(listenerComponent)
             val selected = selectController(controllers)
             attachController(selected)
@@ -66,6 +85,23 @@ class MediaSessionRepository(context: Context) {
             detachController()
             _state.update {
                 MediaPlaybackState(needsNotificationAccess = false)
+            }
+        }
+    }
+
+    fun ensureDefaultPlayerIfNeeded(defaultPackage: String?) {
+        if (defaultPackage.isNullOrBlank()) return
+        if (hasAttemptedBootLaunch) return
+        if (_state.value.hasActiveSession) return
+        hasAttemptedBootLaunch = true
+        Log.i(TAG, "Launching default audio app on boot: $defaultPackage")
+        launchAppByPackage(appContext, defaultPackage)
+        for (delayMs in BOOT_REFRESH_DELAYS_MS) {
+            scope.launch {
+                delay(delayMs)
+                if (!_state.value.hasActiveSession) {
+                    refreshSessions()
+                }
             }
         }
     }
@@ -410,6 +446,7 @@ class MediaSessionRepository(context: Context) {
 
     companion object {
         private const val TAG = "MediaSessionRepository"
+        private val BOOT_REFRESH_DELAYS_MS = listOf(2_000L, 5_000L, 10_000L)
 
         @Volatile
         private var instance: MediaSessionRepository? = null
