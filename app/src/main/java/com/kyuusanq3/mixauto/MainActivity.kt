@@ -115,6 +115,10 @@ class MainActivity : ComponentActivity() {
                     mediaState = mediaState,
                     defaultAudioPackage = launcherViewModel.defaultAudioPackage,
                     onSetDefaultAudioPackage = launcherViewModel::updateDefaultAudioPackage,
+                    onSelectAudioSource = { packageName ->
+                        launcherViewModel.updateDefaultAudioPackage(packageName)
+                        mediaViewModel.selectAudioSource(packageName)
+                    },
                     onMediaPlayPause = mediaViewModel::playPause,
                     onMediaSkipPrevious = mediaViewModel::skipToPrevious,
                     onMediaSkipNext = mediaViewModel::skipToNext,
@@ -134,6 +138,8 @@ class MainActivity : ComponentActivity() {
                     tomTomApiKey = launcherViewModel.tomTomApiKey,
                     isLauncherMode = launcherViewModel.isLauncherMode,
                     isLargeShortcutIcons = launcherViewModel.isLargeShortcutIcons,
+                    dockPinnedPackages = launcherViewModel.dockPinnedPackages,
+                    onToggleDockPin = launcherViewModel::toggleDockPinnedPackage,
                     drivingZoom = launcherViewModel.drivingZoom,
                     puckHorizontalOffset = launcherViewModel.puckHorizontalOffset,
                     puckVerticalOffset = launcherViewModel.puckVerticalOffset,

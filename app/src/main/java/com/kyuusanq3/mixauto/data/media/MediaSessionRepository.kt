@@ -41,6 +41,7 @@ class MediaSessionRepository(context: Context) {
     private var shuffleCustomActionId: String? = null
     private var cachedShuffleOn = false
     private var lastToggleLikeMs = 0L
+    private var preferredPackage: String? = null
     private val likedTrackCache = mutableMapOf<String, Boolean>()
     private val controllerCallback = object : MediaController.Callback() {
         override fun onMetadataChanged(metadata: MediaMetadata?) {
@@ -104,6 +105,11 @@ class MediaSessionRepository(context: Context) {
                 }
             }
         }
+    }
+
+    fun setPreferredAudioSource(packageName: String) {
+        preferredPackage = packageName
+        refreshSessions()
     }
 
     fun playPause() {
@@ -351,6 +357,10 @@ class MediaSessionRepository(context: Context) {
 
     private fun selectController(controllers: List<MediaController>): MediaController? {
         if (controllers.isEmpty()) return null
+
+        preferredPackage?.let { preferred ->
+            return controllers.firstOrNull { it.packageName == preferred }
+        }
 
         controllers.firstOrNull { it.playbackState?.state == PlaybackState.STATE_PLAYING }
             ?.let { return it }

@@ -10,6 +10,7 @@ import androidx.lifecycle.viewModelScope
 import com.kyuusanq3.mixauto.data.map.TomTomKeyCheckResult
 import com.kyuusanq3.mixauto.data.map.TomTomTrafficClient
 import com.kyuusanq3.mixauto.domain.map.SearchResultPlace
+import com.kyuusanq3.mixauto.BuildConfig
 import com.kyuusanq3.mixauto.ui.components.canLaunchApp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -28,6 +29,9 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     private val preferences = LauncherPreferences(application)
 
     var defaultAudioPackage by mutableStateOf(loadValidatedDefaultAudioPackage())
+        private set
+
+    var dockPinnedPackages by mutableStateOf(loadValidatedDockPinnedPackages())
         private set
 
     var isLeftHandDrive by mutableStateOf(preferences.isLeftHandDrive)
@@ -179,6 +183,22 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         preferences.defaultAudioPackage = packageName
     }
 
+    fun isDockPinned(packageName: String): Boolean {
+        return dockPinnedPackages.contains(packageName)
+    }
+
+    fun toggleDockPinnedPackage(packageName: String) {
+        if (packageName.isBlank() || packageName == BuildConfig.APPLICATION_ID) return
+        dockPinnedPackages = if (packageName in dockPinnedPackages) {
+            dockPinnedPackages.filterNot { it == packageName }
+        } else if (dockPinnedPackages.size < LauncherPreferences.MAX_DOCK_PINNED_APPS) {
+            dockPinnedPackages + packageName
+        } else {
+            return
+        }
+        preferences.dockPinnedPackages = dockPinnedPackages
+    }
+
     fun addRecentDestination(place: SearchResultPlace) {
         val filtered = recentDestinations.filterNot { existing ->
             isWithinDedupThreshold(existing, place)
@@ -232,6 +252,18 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
             return ""
         }
         return stored
+    }
+
+    private fun loadValidatedDockPinnedPackages(): List<String> {
+        val app = getApplication<Application>()
+        val validated = preferences.dockPinnedPackages
+            .distinct()
+            .filter { pkg -> canLaunchApp(app, pkg) }
+            .take(LauncherPreferences.MAX_DOCK_PINNED_APPS)
+        if (validated != preferences.dockPinnedPackages) {
+            preferences.dockPinnedPackages = validated
+        }
+        return validated
     }
 
     private fun isWithinDedupThreshold(a: SearchResultPlace, b: SearchResultPlace): Boolean {

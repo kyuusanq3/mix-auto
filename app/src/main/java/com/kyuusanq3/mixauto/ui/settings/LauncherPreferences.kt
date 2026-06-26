@@ -130,6 +130,19 @@ class LauncherPreferences(context: Context) {
             prefs.edit().putString(KEY_DEFAULT_AUDIO_PACKAGE, value).apply()
         }
 
+    var dockPinnedPackages: List<String>
+        get() {
+            val json = prefs.getString(KEY_DOCK_PINNED_PACKAGES, null) ?: return emptyList()
+            return parsePackageListJson(json)
+        }
+        set(value) {
+            val array = JSONArray()
+            value.take(MAX_DOCK_PINNED_APPS).forEach { pkg ->
+                array.put(pkg)
+            }
+            prefs.edit().putString(KEY_DOCK_PINNED_PACKAGES, array.toString()).apply()
+        }
+
     companion object {
         private const val PREFS_NAME = "launcher_prefs"
         private const val KEY_LEFT_HAND_DRIVE = "lhd"
@@ -150,8 +163,10 @@ class LauncherPreferences(context: Context) {
         private const val KEY_SAVED_PLACES = "saved_places"
         private const val KEY_ONBOARDING_VERSION = "onboarding_version"
         private const val KEY_DEFAULT_AUDIO_PACKAGE = "default_audio_package"
+        private const val KEY_DOCK_PINNED_PACKAGES = "dock_pinned_packages"
         const val MAX_RECENT_DESTINATIONS = 10
         const val MAX_SAVED_PLACES = 50
+        const val MAX_DOCK_PINNED_APPS = 5
         const val DEFAULT_MAP_MEDIA_RATIO = 0.6f
         const val DEFAULT_DRIVING_ZOOM = 17.5f
         const val DEFAULT_PUCK_H_OFFSET = 0.3f
@@ -168,6 +183,20 @@ class LauncherPreferences(context: Context) {
                 put("category", place.category)
                 put("isDroppedPin", place.isDroppedPin)
             }
+
+        private fun parsePackageListJson(json: String): List<String> {
+            return try {
+                val array = JSONArray(json)
+                buildList {
+                    for (i in 0 until array.length()) {
+                        val pkg = array.optString(i, "").trim()
+                        if (pkg.isNotEmpty()) add(pkg)
+                    }
+                }
+            } catch (_: Exception) {
+                emptyList()
+            }
+        }
 
         private fun parsePlacesJson(json: String): List<SearchResultPlace> {
             return try {

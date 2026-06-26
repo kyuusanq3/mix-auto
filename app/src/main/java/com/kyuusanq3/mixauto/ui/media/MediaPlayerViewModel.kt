@@ -41,4 +41,8 @@ class MediaPlayerViewModel(application: Application) : AndroidViewModel(applicat
     fun toggleShuffle() {
         repository.toggleShuffle()
     }
+
+    fun selectAudioSource(packageName: String) {
+        repository.setPreferredAudioSource(packageName)
+    }
 }

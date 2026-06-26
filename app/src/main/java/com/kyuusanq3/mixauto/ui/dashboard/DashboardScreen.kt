@@ -62,6 +62,7 @@ import com.kyuusanq3.mixauto.ui.components.PoiDetailPane
 import com.kyuusanq3.mixauto.ui.components.SettingsSwitchRow
 import com.kyuusanq3.mixauto.ui.settings.AppUpdateState
 import com.kyuusanq3.mixauto.ui.settings.AppUpdateViewModel
+import com.kyuusanq3.mixauto.ui.settings.LauncherPreferences
 import com.kyuusanq3.mixauto.ui.settings.LauncherViewModel
 import com.kyuusanq3.mixauto.ui.settings.MapDataViewModel
 import com.kyuusanq3.mixauto.ui.theme.CarBodyText
@@ -93,10 +94,17 @@ private fun dismissToBasePanel(musicPaneEnabled: Boolean): ActivePanel =
 @Composable
 private fun BoxScope.SplitScreenAppDrawerSlot(
     visible: Boolean,
+    dockPinnedPackages: List<String>,
+    onToggleDockPin: (String) -> Unit,
+    onSelectAudioSource: (String) -> Unit,
     onDismiss: () -> Unit,
 ) {
     if (!visible) return
     AppDrawerOverlay(
+        dockPinnedPackages = dockPinnedPackages,
+        maxDockPinnedApps = LauncherPreferences.MAX_DOCK_PINNED_APPS,
+        onToggleDockPin = onToggleDockPin,
+        onSelectAudioSource = onSelectAudioSource,
         onDismiss = onDismiss,
         modifier = Modifier
             .fillMaxSize()
@@ -111,6 +119,7 @@ fun DashboardScreen(
     mediaState: MediaPlaybackState,
     defaultAudioPackage: String,
     onSetDefaultAudioPackage: (String) -> Unit,
+    onSelectAudioSource: (String) -> Unit,
     onMediaPlayPause: () -> Unit,
     onMediaSkipPrevious: () -> Unit,
     onMediaSkipNext: () -> Unit,
@@ -130,6 +139,8 @@ fun DashboardScreen(
     tomTomApiKey: String,
     isLauncherMode: Boolean,
     isLargeShortcutIcons: Boolean,
+    dockPinnedPackages: List<String>,
+    onToggleDockPin: (String) -> Unit,
     drivingZoom: Float,
     puckHorizontalOffset: Float,
     puckVerticalOffset: Float,
@@ -153,6 +164,8 @@ fun DashboardScreen(
 ) {
     var activePanel by remember { mutableStateOf(ActivePanel.MEDIA) }
     var musicPaneEnabled by remember { mutableStateOf(true) }
+    var poiReturnToSearch by remember { mutableStateOf(false) }
+    val onClearPoiReturnToSearch = { poiReturnToSearch = false }
     val launcherViewModel: LauncherViewModel = viewModel()
     val showSecondaryPane = activePanel != ActivePanel.HIDDEN
     val onTogglePanel: (ActivePanel) -> Unit = { target ->
@@ -189,6 +202,25 @@ fun DashboardScreen(
             }
         }
     }
+    val handleSelectAudioSource: (String) -> Unit = { packageName ->
+        val isActiveSource = if (mediaState.hasActiveSession) {
+            mediaState.sourcePackage == packageName
+        } else {
+            defaultAudioPackage == packageName
+        }
+        if (isActiveSource) {
+            onTogglePanel(ActivePanel.MEDIA)
+        } else {
+            onSelectAudioSource(packageName)
+            musicPaneEnabled = true
+            activePanel = ActivePanel.MEDIA
+        }
+    }
+    val openAudioSource: (String) -> Unit = { packageName ->
+        onSelectAudioSource(packageName)
+        musicPaneEnabled = true
+        activePanel = ActivePanel.MEDIA
+    }
     val onDismissPanel = {
         if (activePanel == ActivePanel.SEARCH) {
             launcherViewModel.isDestinationSearchOpen = false
@@ -221,22 +253,21 @@ fun DashboardScreen(
             else -> activePanel = ActivePanel.MAP_DATA
         }
     }
-    val onToggleVoiceSearch = {
+    val onVoiceSearch = {
         musicPaneEnabled = true
-        when (activePanel) {
-            ActivePanel.SEARCH -> {
-                launcherViewModel.isDestinationSearchOpen = false
-                activePanel = dismissToBasePanel(musicPaneEnabled)
-            }
-            ActivePanel.POI_DETAIL -> mapEngine.dismissSelectedPoi()
-            else -> {
-                launcherViewModel.setStartVoiceOnSearchOpen()
-                launcherViewModel.isDestinationSearchOpen = true
-                activePanel = ActivePanel.SEARCH
-            }
+        if (activePanel == ActivePanel.POI_DETAIL) {
+            mapEngine.dismissSelectedPoi()
+        }
+        if (activePanel == ActivePanel.SEARCH) {
+            launcherViewModel.triggerVoiceSearch()
+        } else {
+            launcherViewModel.setStartVoiceOnSearchOpen()
+            launcherViewModel.isDestinationSearchOpen = true
+            activePanel = ActivePanel.SEARCH
         }
     }
     val onPreviewSearchPlace: (SearchResultPlace) -> Unit = { place ->
+        poiReturnToSearch = true
         mapEngine.focusOnPoi(place)
         musicPaneEnabled = true
         launcherViewModel.isDestinationSearchOpen = false
@@ -279,7 +310,12 @@ fun DashboardScreen(
             musicPaneEnabled = true
             activePanel = ActivePanel.POI_DETAIL
         } else if (activePanel == ActivePanel.POI_DETAIL) {
-            activePanel = dismissToBasePanel(musicPaneEnabled)
+            if (poiReturnToSearch) {
+                poiReturnToSearch = false
+                activePanel = ActivePanel.SEARCH
+            } else {
+                activePanel = dismissToBasePanel(musicPaneEnabled)
+            }
         }
     }
 
@@ -337,6 +373,7 @@ fun DashboardScreen(
                                     onToggleSavedPlace = onToggleSavedPlace,
                                     onUpdateSavedPlace = onUpdateSavedPlace,
                                     onDismissSelectedPoi = { mapEngine.dismissSelectedPoi() },
+                                    onClearPoiReturnToSearch = onClearPoiReturnToSearch,
                                     mediaState = mediaState,
                                     defaultAudioPackage = defaultAudioPackage,
                                     onSetDefaultAudioPackage = onSetDefaultAudioPackage,
@@ -382,6 +419,9 @@ fun DashboardScreen(
                         }
                         SplitScreenAppDrawerSlot(
                             visible = activePanel == ActivePanel.APP_DRAWER,
+                            dockPinnedPackages = dockPinnedPackages,
+                            onToggleDockPin = onToggleDockPin,
+                            onSelectAudioSource = openAudioSource,
                             onDismiss = onDismissAppDrawer,
                         )
                     }
@@ -391,9 +431,12 @@ fun DashboardScreen(
                         isLeftHandDrive = isLeftHandDrive,
                         activePanel = activePanel,
                         voiceSearchAvailable = voiceSearchAvailable,
-                        sourcePackage = mediaState.sourcePackage,
+                        defaultAudioPackage = defaultAudioPackage,
+                        dockPinnedPackages = dockPinnedPackages,
+                        onToggleDockPin = onToggleDockPin,
+                        onSelectAudioSource = handleSelectAudioSource,
                         onTogglePanel = onTogglePanel,
-                        onToggleVoiceSearch = onToggleVoiceSearch,
+                        onVoiceSearch = onVoiceSearch,
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(bottom = CarDimensions.PaneGap)
@@ -447,6 +490,7 @@ fun DashboardScreen(
                                     onToggleSavedPlace = onToggleSavedPlace,
                                 onUpdateSavedPlace = onUpdateSavedPlace,
                                     onDismissSelectedPoi = { mapEngine.dismissSelectedPoi() },
+                                    onClearPoiReturnToSearch = onClearPoiReturnToSearch,
                                     mediaState = mediaState,
                                     defaultAudioPackage = defaultAudioPackage,
                                     onSetDefaultAudioPackage = onSetDefaultAudioPackage,
@@ -503,6 +547,7 @@ fun DashboardScreen(
                                     onToggleSavedPlace = onToggleSavedPlace,
                                 onUpdateSavedPlace = onUpdateSavedPlace,
                                     onDismissSelectedPoi = { mapEngine.dismissSelectedPoi() },
+                                    onClearPoiReturnToSearch = onClearPoiReturnToSearch,
                                     mediaState = mediaState,
                                     defaultAudioPackage = defaultAudioPackage,
                                     onSetDefaultAudioPackage = onSetDefaultAudioPackage,
@@ -568,6 +613,9 @@ fun DashboardScreen(
                         }
                         SplitScreenAppDrawerSlot(
                             visible = activePanel == ActivePanel.APP_DRAWER,
+                            dockPinnedPackages = dockPinnedPackages,
+                            onToggleDockPin = onToggleDockPin,
+                            onSelectAudioSource = openAudioSource,
                             onDismiss = onDismissAppDrawer,
                         )
                     }
@@ -577,9 +625,12 @@ fun DashboardScreen(
                         isLeftHandDrive = isLeftHandDrive,
                         activePanel = activePanel,
                         voiceSearchAvailable = voiceSearchAvailable,
-                        sourcePackage = mediaState.sourcePackage,
+                        defaultAudioPackage = defaultAudioPackage,
+                        dockPinnedPackages = dockPinnedPackages,
+                        onToggleDockPin = onToggleDockPin,
+                        onSelectAudioSource = handleSelectAudioSource,
                         onTogglePanel = onTogglePanel,
-                        onToggleVoiceSearch = onToggleVoiceSearch,
+                        onVoiceSearch = onVoiceSearch,
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(bottom = CarDimensions.PaneGap)
@@ -637,6 +688,7 @@ fun DashboardScreen(
                                         onToggleSavedPlace = onToggleSavedPlace,
                                         onUpdateSavedPlace = onUpdateSavedPlace,
                                         onDismissSelectedPoi = { mapEngine.dismissSelectedPoi() },
+                                        onClearPoiReturnToSearch = onClearPoiReturnToSearch,
                                         mediaState = mediaState,
                                         defaultAudioPackage = defaultAudioPackage,
                                         onSetDefaultAudioPackage = onSetDefaultAudioPackage,
@@ -682,6 +734,9 @@ fun DashboardScreen(
                             }
                             SplitScreenAppDrawerSlot(
                                 visible = activePanel == ActivePanel.APP_DRAWER,
+                                dockPinnedPackages = dockPinnedPackages,
+                                onToggleDockPin = onToggleDockPin,
+                                onSelectAudioSource = openAudioSource,
                                 onDismiss = onDismissAppDrawer,
                             )
                         }
@@ -691,9 +746,12 @@ fun DashboardScreen(
                             isLeftHandDrive = isLeftHandDrive,
                             activePanel = activePanel,
                             voiceSearchAvailable = voiceSearchAvailable,
-                            sourcePackage = mediaState.sourcePackage,
+                            defaultAudioPackage = defaultAudioPackage,
+                            dockPinnedPackages = dockPinnedPackages,
+                            onToggleDockPin = onToggleDockPin,
+                            onSelectAudioSource = handleSelectAudioSource,
                             onTogglePanel = onTogglePanel,
-                            onToggleVoiceSearch = onToggleVoiceSearch,
+                            onVoiceSearch = onVoiceSearch,
                             modifier = Modifier
                                 .wrapContentWidth()
                                 .fillMaxHeight()
@@ -706,9 +764,12 @@ fun DashboardScreen(
                             isLeftHandDrive = isLeftHandDrive,
                             activePanel = activePanel,
                             voiceSearchAvailable = voiceSearchAvailable,
-                            sourcePackage = mediaState.sourcePackage,
+                            defaultAudioPackage = defaultAudioPackage,
+                            dockPinnedPackages = dockPinnedPackages,
+                            onToggleDockPin = onToggleDockPin,
+                            onSelectAudioSource = handleSelectAudioSource,
                             onTogglePanel = onTogglePanel,
-                            onToggleVoiceSearch = onToggleVoiceSearch,
+                            onVoiceSearch = onVoiceSearch,
                             modifier = Modifier
                                 .wrapContentWidth()
                                 .fillMaxHeight()
@@ -757,6 +818,7 @@ fun DashboardScreen(
                                         onToggleSavedPlace = onToggleSavedPlace,
                                         onUpdateSavedPlace = onUpdateSavedPlace,
                                         onDismissSelectedPoi = { mapEngine.dismissSelectedPoi() },
+                                        onClearPoiReturnToSearch = onClearPoiReturnToSearch,
                                         mediaState = mediaState,
                                         defaultAudioPackage = defaultAudioPackage,
                                         onSetDefaultAudioPackage = onSetDefaultAudioPackage,
@@ -802,6 +864,9 @@ fun DashboardScreen(
                             }
                             SplitScreenAppDrawerSlot(
                                 visible = activePanel == ActivePanel.APP_DRAWER,
+                                dockPinnedPackages = dockPinnedPackages,
+                                onToggleDockPin = onToggleDockPin,
+                                onSelectAudioSource = openAudioSource,
                                 onDismiss = onDismissAppDrawer,
                             )
                         }
@@ -825,6 +890,7 @@ private fun DashboardSecondaryPane(
     onToggleSavedPlace: (SearchResultPlace) -> Unit,
     onUpdateSavedPlace: (SearchResultPlace) -> Unit,
     onDismissSelectedPoi: () -> Unit,
+    onClearPoiReturnToSearch: () -> Unit,
     mediaState: MediaPlaybackState,
     defaultAudioPackage: String,
     onSetDefaultAudioPackage: (String) -> Unit,
@@ -876,6 +942,7 @@ private fun DashboardSecondaryPane(
         onToggleSavedPlace = onToggleSavedPlace,
         onUpdateSavedPlace = onUpdateSavedPlace,
         onDismissSelectedPoi = onDismissSelectedPoi,
+        onClearPoiReturnToSearch = onClearPoiReturnToSearch,
         mediaState = mediaState,
         defaultAudioPackage = defaultAudioPackage,
         onSetDefaultAudioPackage = onSetDefaultAudioPackage,
@@ -930,6 +997,7 @@ private fun MediaOrSettingsPane(
     onToggleSavedPlace: (SearchResultPlace) -> Unit,
     onUpdateSavedPlace: (SearchResultPlace) -> Unit,
     onDismissSelectedPoi: () -> Unit,
+    onClearPoiReturnToSearch: () -> Unit,
     mediaState: MediaPlaybackState,
     defaultAudioPackage: String,
     onSetDefaultAudioPackage: (String) -> Unit,
@@ -997,6 +1065,7 @@ private fun MediaOrSettingsPane(
                             onToggleSavedPlace(namedPoi)
                         },
                         onNavigate = { customName ->
+                            onClearPoiReturnToSearch()
                             val namedPoi = poi.copy(name = customName)
                             onDestinationSelected(namedPoi)
                             if (savedPlaces.any { saved -> isSavedPlaceMatch(saved, poi) }) {

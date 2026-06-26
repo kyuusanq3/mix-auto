@@ -159,6 +159,7 @@ class MapLibreEngineImpl(
     private var pendingPoiPreviewZoom: Double = POI_PREVIEW_ZOOM
     private var poiPreviewRetryCount = 0
     private var poiPreviewRetryRunnable: Runnable? = null
+    private var topDownViewportSyncRunnable: Runnable? = null
 
     override fun createMapView(context: Context): View {
         mapView?.let { existing ->
@@ -190,6 +191,12 @@ class MapLibreEngineImpl(
                 map.addOnCameraMoveStartedListener { reason ->
                     if (reason == MapLibreMap.OnCameraMoveStartedListener.REASON_API_GESTURE) {
                         _uiState.update { it.copy(isCameraDetached = true) }
+                        if (_uiState.value.isInTopDownView) {
+                            cancelTopDownViewportSync()
+                            cancelPoiPreviewRetries()
+                            pendingPoiPreviewTarget = null
+                            ensureTopDownCameraDetached(map)
+                        }
                     }
                 }
                 registerPoiInteractions(map)
@@ -399,6 +406,8 @@ class MapLibreEngineImpl(
         locationRetryJob = null
         poiRefreshJob?.cancel()
         poiRefreshJob = null
+        cancelPoiPreviewRetries()
+        cancelTopDownViewportSync()
         lastPhotonQueryCenter = null
         clearPoiCache()
         pendingLocationFix = null
@@ -815,19 +824,7 @@ class MapLibreEngineImpl(
         val map = mapLibreMap ?: return
         val view = mapView ?: return
         if (view.width <= 0 || view.height <= 0) return
-        view.post {
-            handleMapLayoutChange(map)
-            if (pendingPoiPreviewTarget != null) {
-                schedulePoiPreviewCameraRetry(immediate = true)
-            } else {
-                val poi = _uiState.value.selectedPoi
-                if (_uiState.value.isInTopDownView && poi != null) {
-                    recenterOnSelectedPoi(map, poi)
-                } else if (_uiState.value.isInTopDownView) {
-                    refreshTopDownExploreCamera(map)
-                }
-            }
-        }
+        view.post { handleMapLayoutChange(map) }
     }
 
     override fun enterTopDownView() {
@@ -935,30 +932,42 @@ class MapLibreEngineImpl(
         pendingPoiPreviewTarget = null
         map.triggerRepaint()
         view.invalidate()
-        scheduleTopDownViewportSync(map, target, zoom)
+        scheduleTopDownViewportSync(map)
         return true
     }
 
-    /** Re-apply zero padding + camera on the next frame so tiles fill the full MapView. */
-    private fun scheduleTopDownViewportSync(map: MapLibreMap, target: LatLng, zoom: Double) {
-        val view = mapView ?: return
-        view.post {
-            if (!_uiState.value.isInTopDownView) return@post
-            clearViewportPaddingForPreview(map)
-            map.cancelTransitions()
-            map.moveCamera(
-                CameraUpdateFactory.newCameraPosition(
-                    CameraPosition.Builder()
-                        .target(target)
-                        .zoom(zoom)
-                        .tilt(0.0)
-                        .bearing(0.0)
-                        .build(),
-                ),
-            )
-            map.triggerRepaint()
-            view.invalidate()
+    private fun ensureTopDownCameraDetached(map: MapLibreMap) {
+        val component = map.locationComponent
+        if (component.isLocationComponentActivated && component.isLocationComponentEnabled) {
+            component.cameraMode = CameraMode.NONE
         }
+    }
+
+    /** Re-apply zero padding on the next frame so tiles fill the full MapView. */
+    private fun syncTopDownViewportPaddingOnly(map: MapLibreMap) {
+        ensureTopDownCameraDetached(map)
+        clearViewportPaddingForPreview(map)
+        map.triggerRepaint()
+        mapView?.invalidate()
+    }
+
+    private fun cancelTopDownViewportSync() {
+        topDownViewportSyncRunnable?.let { runnable ->
+            mapView?.removeCallbacks(runnable)
+        }
+        topDownViewportSyncRunnable = null
+    }
+
+    private fun scheduleTopDownViewportSync(map: MapLibreMap) {
+        val view = mapView ?: return
+        cancelTopDownViewportSync()
+        val runnable = Runnable {
+            topDownViewportSyncRunnable = null
+            if (!_uiState.value.isInTopDownView) return@Runnable
+            syncTopDownViewportPaddingOnly(map)
+        }
+        topDownViewportSyncRunnable = runnable
+        view.post(runnable)
     }
 
     private fun recenterOnSelectedPoi(map: MapLibreMap, place: SearchResultPlace) {
@@ -967,13 +976,6 @@ class MapLibreEngineImpl(
             LatLng(place.latitude, place.longitude),
             map.cameraPosition.zoom.coerceAtLeast(POI_PREVIEW_ZOOM),
         )
-    }
-
-    private fun refreshTopDownExploreCamera(map: MapLibreMap) {
-        val target = lastKnownLocation
-            ?: map.cameraPosition.target
-            ?: return
-        refreshTopDownCamera(map, target, TOP_DOWN_EXPLORE_ZOOM)
     }
 
     private fun refreshTopDownCamera(map: MapLibreMap, target: LatLng, zoom: Double) {
@@ -996,7 +998,7 @@ class MapLibreEngineImpl(
         )
         map.triggerRepaint()
         view.invalidate()
-        scheduleTopDownViewportSync(map, target, zoom)
+        scheduleTopDownViewportSync(map)
     }
 
     private fun handleMapLayoutChange(map: MapLibreMap) {
@@ -1008,7 +1010,7 @@ class MapLibreEngineImpl(
             when {
                 pendingPoiPreviewTarget != null -> schedulePoiPreviewCameraRetry(immediate = true)
                 state.selectedPoi != null -> recenterOnSelectedPoi(map, state.selectedPoi)
-                else -> refreshTopDownExploreCamera(map)
+                else -> syncTopDownViewportPaddingOnly(map)
             }
             return
         }
@@ -1079,7 +1081,7 @@ class MapLibreEngineImpl(
     }
 
     private fun activateFreeDriveTrackingMode(map: MapLibreMap) {
-        if (_uiState.value.isNavigating) return
+        if (_uiState.value.isNavigating || _uiState.value.isInTopDownView) return
 
         val component = map.locationComponent
         if (!component.isLocationComponentActivated || !component.isLocationComponentEnabled) return
@@ -1094,6 +1096,7 @@ class MapLibreEngineImpl(
     }
 
     private fun snapCameraToGpsIfNeeded(latLng: LatLng) {
+        if (_uiState.value.isInTopDownView) return
         lastKnownLocation = latLng
         val map = mapLibreMap ?: return
         if (!needsFreeDriveCameraSnap(map)) {
@@ -2588,6 +2591,7 @@ class MapLibreEngineImpl(
             // Pass the raw bearing-enriched fix to step/off-route logic so actual GPS deviation
             // is measured — the snapped display location would always appear on the route.
             _uiState.value.isNavigating -> evaluateStepAdvancement(locationWithBearing)
+            _uiState.value.isInTopDownView -> mapLibreMap?.let { ensureTopDownCameraDetached(it) }
             !hasSnappedCameraToGps -> snapCameraToGpsIfNeeded(latLng)
             else -> _uiState.update { it.copy(streetName = "Free Drive") }
         }

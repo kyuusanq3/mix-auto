@@ -91,21 +91,20 @@ Swap map provider: change one line in `MainActivity.kt` to a new `CarMapEngine` 
 
 ## Shortcut dock behavior
 
-`ShortcutDock.kt` provides five dock shortcuts (no fixed system app shortcuts):
+`ShortcutDock.kt` dock layout: driver cluster (App Drawer + Mic) | **pinned apps (up to 5)** in center | overflow (Music player + Launcher settings). Map Data is on the map toolbar, not the dock.
 
 | Icon | Panel / action |
 |------|----------------|
 | App Drawer | `ActivePanel.APP_DRAWER` — full map+media overlay (`AppDrawerOverlay.kt`) |
-| Music | Toggle media pane / collapse to map-only |
-| Mic (Voice Search) | Toggle destination search — opens search + starts voice when closed; closes search or POI detail when open; hidden when no speech recognizer |
-| Map Data | Offline Overture POI download panel |
-| Launcher (Tune) | Launcher layout settings |
+| Pinned apps (0–5) | User-added from app drawer long-press; **audio apps** show music-note badge — tap sets source (or toggles media pane if already active); other apps tap launch; long-press → Add/Remove shortcut bar, App Info, Uninstall |
+| Mic (Voice Search) | Opens destination search + voice when closed; closes search or POI detail when open; hidden when no speech recognizer |
+| Launcher (MoreVert) | **Music player** toggles media pane; **Launcher settings** opens settings |
 
 **App Drawer icon position** (via `dockItemOrder()`): vertical side dock → **top** (first item); horizontal bottom dock LHD → **left** (first); RHD → **right** (last).
 
-**App Drawer overlay** lists all launchable apps (`queryIntentActivities`), sorted by name, with search. Tap launches; long-press → App Info or Uninstall. Overlay covers map+media split only — shortcut bar remains visible and unchanged in position.
+**App Drawer overlay** lists all launchable apps (`queryIntentActivities`), sorted by name, with search. **Audio apps** show trailing music-note icon; tap sets default/preferred audio source and opens media pane (no launch). Other apps tap launch. Long-press → **Add/Remove from shortcut bar** (up to 5 pinned), App Info, or Uninstall. Overlay covers map+media split only — shortcut bar remains visible and unchanged in position.
 
-Dock also includes **Map Data** and **Launcher** settings shortcuts.
+**Pinned shortcut bar apps:** `LauncherPreferences.dockPinnedPackages` (JSON, max 5). Long-press in drawer to pin; icons appear in dock center. Audio apps get scaled music-note badge (`iconSize * 0.55f`); tap → `handleSelectAudioSource` (toggle media pane if already active, else set default + `setPreferredAudioSource` + open pane). App drawer uses `openAudioSource` (always set + open). Long-press pinned icon for same menu. `LauncherViewModel.toggleDockPinnedPackage()`.
 
 ## Offline Overture POI data
 
@@ -188,7 +187,7 @@ After enabling Launcher Mode, press Home and select **Mix Auto** as the default 
 ## Planned / not yet implemented
 
 - Route re-routing when driver deviates from the drawn path — **implemented** (75 m threshold, OSRM re-fetch)
-- Dynamic discovery of all launchable apps (currently fixed shortcut list)
+- Dynamic discovery of all launchable apps (currently fixed shortcut list) — **app drawer implemented**; user can pin up to 5 apps to dock center
 - Release signing / Play Store config
 - Vector map style (OpenFreeMap Liberty) is the first-launch default; OSM raster remains available via Settings toggle
 
@@ -224,7 +223,7 @@ After enabling Launcher Mode, press Home and select **Mix Auto** as the default 
 | Media pane shows "Enable notification access" | Settings → Special app access → Notification access → enable MixAuto; start playback in YT Music/Spotify then return to launcher |
 | Transport row shows dim MusicNote instead of app icon | Active session: first slot shows source app icon and launches via `launchAppByPackage()`; no session: cyan `MusicNote` opens `AudioPlayerPickerOverlay` in media pane (tap row to launch YT Music/Spotify/etc.) |
 | Audio player list empty on API 30+ | Manifest `<queries>` must include `CATEGORY_APP_MUSIC` and `android.media.browse.MediaBrowserService`; discovery in `AudioPlayerUtils.loadAudioPlayerApps()` uses `MATCH_ALL` on both |
-| Music dock badge missing | Badge only shows when `rememberAppIcon(sourcePackage)` succeeds; no fallback icon — pan away and back after session attaches if package just changed |
+| Music dock badge missing | Removed — Music player moved to overflow menu; pinned audio apps show music-note badge instead |
 | Skip-next media button shrinks in narrow pane | `MediaPlayerPane.kt`: use `weight(1f)` slots + `requiredSize(MinTapTarget)` on all three controls |
 | `setMapMediaRatio` JVM signature clash | Use `updateMapMediaRatio()` in `LauncherViewModel` — property already generates `setMapMediaRatio` setter |
 | Map/media divider only moves on repeated swipes | Do not include `mapMediaRatio` in `pointerInput` keys in `MapMediaDividerHandle` — use `rememberUpdatedState` + accumulate drag from `onDragStart` |
@@ -259,6 +258,7 @@ After enabling Launcher Mode, press Home and select **Mix Auto** as the default 
 | Shortcut bar too small on head unit | Settings → **Large Shortcut Icons** doubles tap target and icon size in both horizontal and vertical dock (uses `DockHorizontalTapTarget` / `DockHorizontalIconSize`) |
 | Vertical shortcut bar too wide / large side padding | Vertical dock must use `wrapContentWidth()` in `ShortcutDock` + `DashboardScreen` — not `.weight(DockVerticalWeight)`; icon-only, no labels |
 | App drawer malforms vertical shortcut bar (floating dock, black gap) | Do NOT stack `AppDrawerOverlay` above `ShortcutDock` in a side Column — overlay map+media `Box` only via `SplitScreenAppDrawerSlot`; dock stays `wrapContentWidth().fillMaxHeight()` sibling |
+| App drawer long-press menu at top-left / app names missing | Per-item `Box` + `DropdownMenu` in `AppDrawerItem` — not hoisted to overlay root; anchor `Box` = `fillMaxWidth()` only (no `wrapContentSize` on grid cells) |
 | TomTom traffic HTTP 400 `Invalid style: relative-delay` | Orbis v2 raster tiles only accept `style=light` or `style=dark` — not legacy styles (`relative`, `relative-delay`, etc.); see `MapLibreEngineImpl.applyTrafficOverlay()` |
 | TomTom traffic not showing / key unknown | Map Data shortcut → paste key from developer.tomtom.com → **Test TomTom API Key**; enable **Traffic Overlay** in Launcher Settings; enable Traffic Flow product on key; Logcat tag `TomTomTrafficClient` |
 | Traffic tiles fail with HTTP 403 | Invalid key or Traffic Flow API not enabled for that TomTom developer key |
@@ -276,8 +276,13 @@ After enabling Launcher Mode, press Home and select **Mix Auto** as the default 
 | Search/POI pane too narrow or divider still draggable | Destination Search + POI Details lock split to **40% map / 60% secondary** via `OVERLAY_MAP_MEDIA_RATIO` (0.4f) in `DashboardScreen.kt`; `MapMediaDividerHandle` hidden (`showMapMediaDivider`); do NOT persist 0.4 to `LauncherPreferences` — closing restores saved ratio |
 | Destination search empty after app update (PH DB installed) | Old builds used `(0,0)` before GPS — offline bbox missed PH; DB could show Installed but `active_iso`/open failure skipped search — fixed via `resolveSearchOrigin()`, `LocalPlacesRepository` auto-discover + WAL retry, `getNearbyPois()` offline fallback; sideload latest build |
 | Map blank when tapping search result | Do not `onDismiss()` before POI detail — use `onPreviewSearchPlace` to set `POI_DETAIL` + `focusOnPoi()`; engine retries preview camera via `onMapHostLayoutChanged()` |
-| Map partially blank (tiles in corner, beige elsewhere) | Lazy `setPadding` vs full MapView — use `CameraUpdateFactory.paddingTo()` in `applyMapPaddingImmediate()`; top-view needs `refreshTopDownExploreCamera()` on layout change; `scheduleTopDownViewportSync()` on next frame |
+| Close POI after search preview returns to media not search | Fixed via `poiReturnToSearch` in `DashboardScreen.kt` — set in `onPreviewSearchPlace`, branch `LaunchedEffect(selectedPoi)` on dismiss; clear flag on Navigate |
+| Two close buttons on POI details | Use header `OverlayCloseButton` only — no Close in `PoiDetailCardContent` action row |
+| Map partially blank (tiles in corner, beige elsewhere) | Lazy `setPadding` vs full MapView — use `CameraUpdateFactory.paddingTo()` in `applyMapPaddingImmediate()`; top-view layout change → `syncTopDownViewportPaddingOnly()` (padding only, preserve pan/zoom); `scheduleTopDownViewportSync()` on next frame — padding only, not camera |
+| Top view snaps back to puck on pan/zoom | Do NOT recenter on `lastKnownLocation` during top-view explore — removed `refreshTopDownExploreCamera()`; guard `snapCameraToGpsIfNeeded`/`activateFreeDriveTrackingMode` when `isInTopDownView`; cancel pending viewport sync on user gesture |
 | Top view too zoomed out / POI labels overlap | `TOP_DOWN_EXPLORE_ZOOM` is **15.0** (CropFree); mix POI overlay hidden in top-view — native Liberty labels only |
+| Can't pin more than 5 apps to shortcut bar | Max **5** pinned apps (`LauncherPreferences.MAX_DOCK_PINNED_APPS`); Add to shortcut bar is disabled in long-press menu when full |
+| Pinned shortcut missing after app uninstall | `LauncherViewModel.loadValidatedDockPinnedPackages()` removes unlaunchable packages on init |
 
 ## Related agent resources
 

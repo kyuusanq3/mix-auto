@@ -16,7 +16,7 @@ data class AudioPlayerApp(
     val icon: ImageBitmap?,
 )
 
-fun loadAudioPlayerApps(context: Context): List<AudioPlayerApp> {
+fun loadAudioPlayerPackageNames(context: Context): Set<String> {
     val packageManager = context.packageManager
     val ownPackage = context.packageName
     val packageNames = linkedSetOf<String>()
@@ -33,8 +33,14 @@ fun loadAudioPlayerApps(context: Context): List<AudioPlayerApp> {
         packageNames.add(resolveInfo.serviceInfo.packageName)
     }
 
+    return packageNames.filter { it != ownPackage }.toSet()
+}
+
+fun loadAudioPlayerApps(context: Context): List<AudioPlayerApp> {
+    val packageManager = context.packageManager
+    val packageNames = loadAudioPlayerPackageNames(context)
+
     return packageNames
-        .filter { it != ownPackage }
         .mapNotNull { packageName ->
             val launchIntent = packageManager.getLaunchIntentForPackage(packageName) ?: return@mapNotNull null
             if (launchIntent.component == null) return@mapNotNull null
