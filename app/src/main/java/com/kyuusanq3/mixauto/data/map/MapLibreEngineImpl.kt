@@ -7,7 +7,9 @@ import android.location.Location
 import android.location.LocationListener
 import android.location.LocationManager
 import android.os.Looper
+import android.graphics.RectF
 import android.util.Log
+import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
 import androidx.core.content.ContextCompat
@@ -55,6 +57,7 @@ import org.maplibre.android.maps.MapView
 import org.maplibre.android.maps.MapLibreMap
 import org.maplibre.android.maps.Style
 import org.maplibre.android.style.expressions.Expression
+import org.maplibre.android.style.layers.FillExtrusionLayer
 import org.maplibre.android.style.layers.LineLayer
 import org.maplibre.android.style.layers.Property
 import org.maplibre.android.style.layers.PropertyFactory
@@ -63,8 +66,8 @@ import org.maplibre.android.style.layers.SymbolLayer
 import org.maplibre.android.style.sources.GeoJsonSource
 import org.maplibre.android.style.sources.RasterSource
 import org.maplibre.android.style.sources.TileSet
-import org.maplibre.android.style.sources.VectorSource
 import kotlin.math.cos
+import kotlin.math.hypot
 import kotlin.math.max
 import kotlin.math.roundToInt
 import kotlin.math.sin
@@ -96,7 +99,8 @@ private data class ResolvedLocation(
 
 class MapLibreEngineImpl(
     private val localPlaces: LocalPlacesRepository? = null,
-    initialUseVectorTiles: Boolean = false,
+    initialUseVectorTiles: Boolean = true,
+    initialShow3dBuildings: Boolean = false,
     initialDrivingZoom: Double = 17.5,
     initialPuckHOffset: Float = 0.3f,
     initialPuckVOffset: Float = 0.4f,
@@ -109,6 +113,7 @@ class MapLibreEngineImpl(
     private val engineScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
 
     private var useVectorTiles = initialUseVectorTiles
+    private var show3dBuildings = initialShow3dBuildings
     private var trafficEnabled = false
     private var tomTomApiKey = ""
     private var freeDriveZoom = initialDrivingZoom
@@ -140,6 +145,7 @@ class MapLibreEngineImpl(
     private var lastPhotonQueryCenter: LatLng? = null
     private val poiCache = mutableMapOf<String, SearchResultPlace>()
     private var savedPlacesKeys = emptySet<String>()
+    private var savedPlacesCache = emptyList<SearchResultPlace>()
     private var routeGeometryPoints: List<LatLng> = emptyList()
     private var offRouteCount: Int = 0
     private var rerouteCooldownUntilMs: Long = 0L
@@ -168,10 +174,11 @@ class MapLibreEngineImpl(
             view.onStart()
             view.onResume()
             view.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
-                mapLibreMap?.let { map -> applyDrivingTrackingPadding(map) }
+                mapLibreMap?.let { map -> handleMapLayoutChange(map) }
             }
             view.getMapAsync { map ->
                 mapLibreMap = map
+                configureCompassPosition(map, context)
                 map.addOnCameraMoveStartedListener { reason ->
                     if (reason == MapLibreMap.OnCameraMoveStartedListener.REASON_API_GESTURE) {
                         _uiState.update { it.copy(isCameraDetached = true) }
@@ -181,6 +188,14 @@ class MapLibreEngineImpl(
                 applyMapStyle(map, context)
             }
             mapView = view
+        }
+    }
+
+    private fun configureCompassPosition(map: MapLibreMap, context: Context) {
+        val marginPx = (COMPASS_MARGIN_DP * context.resources.displayMetrics.density).toInt()
+        map.uiSettings.apply {
+            setCompassGravity(Gravity.BOTTOM or Gravity.END)
+            setCompassMargins(marginPx, marginPx, marginPx, marginPx)
         }
     }
 
@@ -207,11 +222,27 @@ class MapLibreEngineImpl(
                 isNavigating = false,
                 streetName = "Loading map...",
                 selectedPoi = null,
+                nearbyPois = emptyList(),
                 routeOverviewProgress = 0f,
             )
         }
 
         applyMapStyle(map, ctx)
+    }
+
+    override fun setShow3dBuildings(show: Boolean) {
+        show3dBuildings = show
+        val map = mapLibreMap ?: return
+        map.getStyle { style -> apply3dBuildingVisibility(style) }
+    }
+
+    private fun apply3dBuildingVisibility(style: Style) {
+        val visibility = if (show3dBuildings) Property.VISIBLE else Property.NONE
+        style.layers.forEach { layer ->
+            if (layer is FillExtrusionLayer) {
+                layer.setProperties(PropertyFactory.visibility(visibility))
+            }
+        }
     }
 
     override fun setTrafficEnabled(enabled: Boolean, apiKey: String) {
@@ -249,7 +280,6 @@ class MapLibreEngineImpl(
             .minZoomIconScale(scale)
             .build()
         component.applyStyle(updated)
-        forceLocationUpdateForImmediateRender(mapLibreMap ?: return)
     }
 
     /**
@@ -290,6 +320,8 @@ class MapLibreEngineImpl(
             hasSnappedCameraToGps = false
             startFreeDrive()
             applyTrafficOverlay()
+            apply3dBuildingVisibility(style)
+            updateSavedPlacesLayer(savedPlacesCache)
         }
     }
 
@@ -387,6 +419,8 @@ class MapLibreEngineImpl(
     ): List<SearchResultPlace> = withContext(Dispatchers.IO) {
         if (query.isBlank()) return@withContext emptyList()
 
+        val (searchLat, searchLng) = resolveSearchOrigin(currentLat, currentLng)
+
         fun applyDistanceLimit(places: List<SearchResultPlace>): List<SearchResultPlace> =
             if (limitDistance) {
                 places.filter { it.distanceInMeters <= MAX_SEARCH_RADIUS_M }
@@ -396,12 +430,12 @@ class MapLibreEngineImpl(
 
         val hasOfflineData = localPlaces?.hasInstalledDatabase == true
         val local = if (hasOfflineData) {
-            localPlaces?.searchPlaces(query, currentLat, currentLng).orEmpty()
+            localPlaces?.searchPlaces(query, searchLat, searchLng).orEmpty()
         } else {
             emptyList()
         }
         val cacheResults = withContext(Dispatchers.Main) {
-            searchPoiCache(query, currentLat, currentLng)
+            searchPoiCache(query, searchLat, searchLng)
         }
         val localAndCache = mergeAndDeduplicate(local, cacheResults)
         val localAndCacheFiltered = applyDistanceLimit(localAndCache)
@@ -411,7 +445,7 @@ class MapLibreEngineImpl(
             }
         }
 
-        val photon = fetchPhoton(query, currentLat, currentLng)
+        val photon = fetchPhoton(query, searchLat, searchLng)
         val finalResults = applyDistanceLimit(mergeAndDeduplicate(localAndCache, photon))
         if (finalResults.isNotEmpty()) {
             withContext(Dispatchers.Main) {
@@ -424,12 +458,14 @@ class MapLibreEngineImpl(
 
     override fun getNearbyPois(lat: Double, lng: Double, limit: Int): List<SearchResultPlace> {
         if (limit <= 0) return emptyList()
-        return poiCache.values
+
+        val (searchLat, searchLng) = resolveSearchOrigin(lat, lng)
+        val cacheResults = poiCache.values
             .map { place ->
                 val distanceResults = FloatArray(1)
                 Location.distanceBetween(
-                    lat,
-                    lng,
+                    searchLat,
+                    searchLng,
                     place.latitude,
                     place.longitude,
                     distanceResults,
@@ -438,6 +474,49 @@ class MapLibreEngineImpl(
             }
             .sortedBy { it.distanceInMeters }
             .take(limit)
+
+        if (cacheResults.isNotEmpty()) return cacheResults
+
+        val repo = localPlaces ?: return emptyList()
+        if (!repo.hasInstalledDatabase) return emptyList()
+
+        return repo.getPlacesInBounds(
+            minLat = searchLat - NEARBY_SEARCH_BBOX_DELTA,
+            maxLat = searchLat + NEARBY_SEARCH_BBOX_DELTA,
+            minLng = searchLng - NEARBY_SEARCH_BBOX_DELTA,
+            maxLng = searchLng + NEARBY_SEARCH_BBOX_DELTA,
+            limit = limit,
+        ).map { place ->
+            val distanceResults = FloatArray(1)
+            Location.distanceBetween(
+                searchLat,
+                searchLng,
+                place.latitude,
+                place.longitude,
+                distanceResults,
+            )
+            place.copy(
+                distanceInMeters = distanceResults[0],
+                category = normalizeOvertureCategory(place.category),
+            )
+        }.sortedBy { it.distanceInMeters }
+    }
+
+    override fun resolveSearchOrigin(): Pair<Double, Double> {
+        return resolveSearchOrigin(0.0, 0.0)
+    }
+
+    private fun resolveSearchOrigin(fallbackLat: Double, fallbackLng: Double): Pair<Double, Double> {
+        val state = _uiState.value
+        if (state.currentLat != null && state.currentLng != null) {
+            return state.currentLat to state.currentLng
+        }
+        lastKnownLocation?.let { return it.latitude to it.longitude }
+        resolveMapViewOrigin()?.let { return it.latitude to it.longitude }
+        if (fallbackLat != 0.0 || fallbackLng != 0.0) {
+            return fallbackLat to fallbackLng
+        }
+        return 0.0 to 0.0
     }
 
     private suspend fun fetchPhoton(
@@ -623,7 +702,7 @@ class MapLibreEngineImpl(
                 snapCameraToGpsIfNeeded(target)
             } else {
                 activateFreeDriveTrackingMode(map)
-                _uiState.update { it.copy(isCameraDetached = false) }
+                _uiState.update { it.copy(isCameraDetached = false, isInTopDownView = false) }
             }
         }
     }
@@ -654,21 +733,136 @@ class MapLibreEngineImpl(
         if (map != null) {
             applyFreeDriveToMap(map)
             clearPoiLayer()
+            clearCustomPin()
         } else {
             mapView?.getMapAsync { loadedMap ->
                 applyFreeDriveToMap(loadedMap)
                 clearPoiLayer()
+                clearCustomPin()
             }
         }
     }
 
     override fun dismissSelectedPoi() {
-        _uiState.update { it.copy(selectedPoi = null) }
+        _uiState.update { it.copy(selectedPoi = null, nearbyPois = emptyList()) }
+        clearCustomPin()
+    }
+
+    override fun focusOnLocation(lat: Double, lng: Double) {
+        animateTopDownCamera(lat, lng, POI_PREVIEW_ZOOM)
+    }
+
+    override fun focusOnPoi(place: SearchResultPlace, moveCamera: Boolean) {
+        val distanceInMeters = computeDistanceFromReference(place.latitude, place.longitude)
+        val nearbyPois = if (place.isDroppedPin) {
+            getNearbyPois(place.latitude, place.longitude, limit = 10)
+                .filter { nearby ->
+                    val distanceResults = FloatArray(1)
+                    Location.distanceBetween(
+                        place.latitude,
+                        place.longitude,
+                        nearby.latitude,
+                        nearby.longitude,
+                        distanceResults,
+                    )
+                    distanceResults[0] >= NEARBY_PIN_DEDUP_THRESHOLD_M
+                }
+                .take(2)
+        } else {
+            emptyList()
+        }
+        _uiState.update {
+            it.copy(
+                selectedPoi = place.copy(distanceInMeters = distanceInMeters),
+                nearbyPois = nearbyPois,
+            )
+        }
+        if (place.isDroppedPin) {
+            if (isSavedPlace(place)) {
+                clearCustomPin()
+            } else {
+                placeCustomPin(place.latitude, place.longitude, pending = false)
+            }
+        } else {
+            clearCustomPin()
+        }
+        if (moveCamera) {
+            focusOnLocation(place.latitude, place.longitude)
+        }
+    }
+
+    override fun enterTopDownView() {
+        val map = mapLibreMap ?: return
+        val target = map.cameraPosition.target ?: return
+        val zoom = map.cameraPosition.zoom.coerceAtLeast(POI_PREVIEW_ZOOM)
+        animateTopDownCamera(target.latitude, target.longitude, zoom)
+    }
+
+    private fun animateTopDownCamera(lat: Double, lng: Double, zoom: Double) {
+        val map = mapLibreMap ?: return
+        val currentZoom = map.cameraPosition.zoom
+        val targetZoom = currentZoom.coerceAtLeast(zoom)
+        deadReckoningJob?.cancel()
+        deadReckoningJob = null
+        val component = map.locationComponent
+        if (component.isLocationComponentActivated && component.isLocationComponentEnabled) {
+            component.cameraMode = CameraMode.NONE
+        }
+        _uiState.update { it.copy(isCameraDetached = true, isInTopDownView = true) }
+        clearViewportPaddingForPreview(map)
+        val cameraUpdate = CameraUpdateFactory.newCameraPosition(
+            CameraPosition.Builder()
+                .target(LatLng(lat, lng))
+                .zoom(targetZoom)
+                .tilt(0.0)
+                .bearing(0.0)
+                .build(),
+        )
+        val runAnimation = {
+            map.cancelTransitions()
+            map.animateCamera(cameraUpdate, POI_PREVIEW_ANIMATION_MS)
+        }
+        // Defer until after Compose resizes the map pane (e.g. POI detail opens at 30/70 split).
+        mapView?.post { runAnimation() } ?: runAnimation()
+    }
+
+    private fun recenterOnSelectedPoi(map: MapLibreMap, place: SearchResultPlace) {
+        val targetZoom = map.cameraPosition.zoom.coerceAtLeast(POI_PREVIEW_ZOOM)
+        map.moveCamera(
+            CameraUpdateFactory.newCameraPosition(
+                CameraPosition.Builder()
+                    .target(LatLng(place.latitude, place.longitude))
+                    .zoom(targetZoom)
+                    .tilt(0.0)
+                    .bearing(0.0)
+                    .build(),
+            ),
+        )
+    }
+
+    private fun handleMapLayoutChange(map: MapLibreMap) {
+        val state = _uiState.value
+        if (state.isInTopDownView && state.selectedPoi != null) {
+            clearViewportPaddingForPreview(map)
+            recenterOnSelectedPoi(map, state.selectedPoi)
+        } else if (!state.isInTopDownView) {
+            applyDrivingTrackingPadding(map)
+        }
+    }
+
+    private fun clearViewportPaddingForPreview(map: MapLibreMap) {
+        map.setPadding(0, 0, 0, 0)
+        val component = map.locationComponent
+        if (component.isLocationComponentActivated && component.isLocationComponentEnabled) {
+            component.paddingWhileTracking(doubleArrayOf(0.0, 0.0, 0.0, 0.0))
+        }
     }
 
     override fun setSavedPlaces(places: List<SearchResultPlace>) {
+        savedPlacesCache = places
         savedPlacesKeys = places.map { savedPlaceKey(it) }.toSet()
         updatePoiLayerFromCache()
+        updateSavedPlacesLayer(places)
     }
 
     private fun applyFreeDriveToMap(map: MapLibreMap) {
@@ -768,7 +962,9 @@ class MapLibreEngineImpl(
         }
 
         hasSnappedCameraToGps = true
-        _uiState.update { it.copy(streetName = "Free Drive", isCameraDetached = false) }
+        _uiState.update {
+            it.copy(streetName = "Free Drive", isCameraDetached = false, isInTopDownView = false)
+        }
     }
 
     override fun navigateToCoordinates(lat: Double, lng: Double) {
@@ -837,12 +1033,14 @@ class MapLibreEngineImpl(
             poiRefreshJob?.cancel()
             poiRefreshJob = null
             clearPoiLayer()
+            clearCustomPin()
         }
         _uiState.update {
             it.copy(
                 isNavigating = true,
                 streetName = if (isReroute) "Re-routing..." else "Calculating route...",
                 selectedPoi = null,
+                nearbyPois = emptyList(),
             )
         }
 
@@ -1136,7 +1334,7 @@ class MapLibreEngineImpl(
                 }
             },
         )
-        _uiState.update { it.copy(isCameraDetached = false) }
+        _uiState.update { it.copy(isCameraDetached = false, isInTopDownView = false) }
     }
 
     private fun activateNavigationTracking(componentReady: Boolean) {
@@ -1176,12 +1374,14 @@ class MapLibreEngineImpl(
     }
 
     private fun applyDrivingViewportPadding(map: MapLibreMap) {
+        if (_uiState.value.isInTopDownView) return
         val padding = computeDrivingViewportPadding(map)
         map.setPadding(padding.left, padding.top, padding.right, padding.bottom)
     }
 
     /** Map padding alone does not offset the puck during TRACKING_GPS — use paddingWhileTracking too. */
     private fun applyDrivingTrackingPadding(map: MapLibreMap) {
+        if (_uiState.value.isInTopDownView) return
         val padding = computeDrivingViewportPadding(map)
         map.setPadding(padding.left, padding.top, padding.right, padding.bottom)
         val component = map.locationComponent
@@ -1306,44 +1506,151 @@ class MapLibreEngineImpl(
         }
 
         map.addOnMapClickListener { latLng ->
-            val screenPoint = map.projection.toScreenLocation(latLng)
-            val features = map.queryRenderedFeatures(screenPoint, POI_LAYER_ID)
-            val feature = features.firstOrNull()
-            val selectedPlace = if (feature != null) {
-                val name = feature.getStringProperty("name") ?: return@addOnMapClickListener false
-                val subtitle = feature.getStringProperty("subtitle").orEmpty()
-                val category = feature.getStringProperty("category").orEmpty()
-                val lat = feature.getNumberProperty("lat")?.toDouble() ?: return@addOnMapClickListener false
-                val lng = feature.getNumberProperty("lng")?.toDouble() ?: return@addOnMapClickListener false
-                SearchResultPlace(
-                    name = name,
-                    subTitle = subtitle,
-                    latitude = lat,
-                    longitude = lng,
-                    category = category,
-                )
-            } else {
-                findNearestPoiInCache(latLng.latitude, latLng.longitude)
+            val loadedMap = mapLibreMap ?: return@addOnMapClickListener false
+            handleMapPointSelection(loadedMap, latLng)
+        }
+
+        map.addOnMapLongClickListener { latLng ->
+            val loadedMap = mapLibreMap ?: return@addOnMapLongClickListener false
+            if (_uiState.value.isNavigating) return@addOnMapLongClickListener false
+            if (handleMapPointSelection(loadedMap, latLng)) return@addOnMapLongClickListener true
+            startCustomPinDraft(latLng.latitude, latLng.longitude)
+            true
+        }
+    }
+
+    private fun handleMapPointSelection(map: MapLibreMap, latLng: LatLng): Boolean {
+        val screenPoint = map.projection.toScreenLocation(latLng)
+
+        run {
+            val feature = map.queryRenderedFeatures(screenPoint, SAVED_PLACES_LAYER_ID).firstOrNull()
+                ?: return@run
+            val lat = feature.getNumberProperty("lat")?.toDouble() ?: return@run
+            val lng = feature.getNumberProperty("lng")?.toDouble() ?: return@run
+            if (!isTapNearPinIcon(map, screenPoint, lat, lng)) return@run
+            val place = findSavedPlaceAt(lat, lng) ?: placeFromSymbolFeature(feature) ?: return@run
+            focusOnPoi(place, moveCamera = true)
+            return true
+        }
+
+        run {
+            val feature = map.queryRenderedFeatures(screenPoint, CUSTOM_PIN_LAYER_ID).firstOrNull()
+                ?: return@run
+            val coords = extractPointCoordinates(feature.geometry()) ?: return@run
+            val (pinLat, pinLng) = coords
+            if (!isTapNearPinIcon(map, screenPoint, pinLat, pinLng)) return@run
+            val current = _uiState.value.selectedPoi
+            val place = when {
+                current != null &&
+                    coordinatesNear(current.latitude, current.longitude, pinLat, pinLng) ->
+                    current
+                else -> findSavedPlaceAt(pinLat, pinLng)
                     ?: SearchResultPlace(
-                        name = "Dropped Pin",
-                        subTitle = formatLatLng(latLng.latitude, latLng.longitude),
-                        latitude = latLng.latitude,
-                        longitude = latLng.longitude,
+                        name = current?.name ?: "Dropped Pin",
+                        subTitle = formatLatLng(pinLat, pinLng),
+                        latitude = pinLat,
+                        longitude = pinLng,
                         isDroppedPin = true,
                     )
             }
+            focusOnPoi(place, moveCamera = true)
+            return true
+        }
 
-            val distanceInMeters = computeDistanceFromReference(
-                selectedPlace.latitude,
-                selectedPlace.longitude,
-            )
+        map.queryRenderedFeatures(screenPoint, POI_LAYER_ID).firstOrNull()?.let { feature ->
+            val place = placeFromSymbolFeature(feature) ?: return false
+            focusOnPoi(place, moveCamera = true)
+            return true
+        }
 
-            _uiState.update {
-                it.copy(
-                    selectedPoi = selectedPlace.copy(distanceInMeters = distanceInMeters),
-                )
+        return false
+    }
+
+    private fun exitFreeDriveToTopViewIfNeeded(lat: Double, lng: Double) {
+        if (_uiState.value.isNavigating || _uiState.value.isCameraDetached) return
+        animateTopDownCamera(lat, lng, POI_PREVIEW_ZOOM)
+    }
+
+    private fun startCustomPinDraft(lat: Double, lng: Double) {
+        exitFreeDriveToTopViewIfNeeded(lat, lng)
+        val selectedPlace = SearchResultPlace(
+            name = "Dropped Pin",
+            subTitle = formatLatLng(lat, lng),
+            latitude = lat,
+            longitude = lng,
+            isDroppedPin = true,
+        )
+        focusOnPoi(selectedPlace, moveCamera = false)
+        placeCustomPin(lat, lng, pending = true)
+        engineScope.launch {
+            val streetName = reverseGeocode(lat, lng)
+            _uiState.update { state ->
+                val current = state.selectedPoi
+                if (current?.isDroppedPin == true &&
+                    current.latitude == lat &&
+                    current.longitude == lng
+                ) {
+                    state.copy(selectedPoi = current.copy(name = streetName))
+                } else {
+                    state
+                }
             }
-            true
+            val stillSelected = _uiState.value.selectedPoi
+            if (stillSelected?.isDroppedPin == true &&
+                stillSelected.latitude == lat &&
+                stillSelected.longitude == lng &&
+                !isSavedPlace(stillSelected)
+            ) {
+                placeCustomPin(lat, lng, pending = false)
+            }
+        }
+    }
+
+    private fun isTapNearPinIcon(
+        map: MapLibreMap,
+        screenPoint: android.graphics.PointF,
+        pinLat: Double,
+        pinLng: Double,
+    ): Boolean {
+        val pinScreen = map.projection.toScreenLocation(LatLng(pinLat, pinLng))
+        val distPx = hypot(
+            (screenPoint.x - pinScreen.x).toDouble(),
+            (screenPoint.y - pinScreen.y).toDouble(),
+        ).toFloat()
+        val density = mapView?.context?.resources?.displayMetrics?.density ?: 2.5f
+        return distPx <= MAP_PIN_ICON_HIT_RADIUS_DP * density
+    }
+
+    private suspend fun reverseGeocode(lat: Double, lng: Double): String = withContext(Dispatchers.IO) {
+        val url = URL(
+            "https://nominatim.openstreetmap.org/reverse" +
+                "?lat=$lat&lon=$lng&format=json",
+        )
+        val connection = url.openConnection() as HttpURLConnection
+        connection.setRequestProperty("User-Agent", "MixAutoCarLauncher/1.0")
+        connection.connectTimeout = 8_000
+        connection.readTimeout = 8_000
+        try {
+            if (connection.responseCode !in 200..299) {
+                Log.w(TAG, "Reverse geocode HTTP error: ${connection.responseCode}")
+                return@withContext formatLatLng(lat, lng)
+            }
+            val body = connection.inputStream.bufferedReader().readText()
+            val root = JSONObject(body)
+            val address = root.optJSONObject("address")
+            if (address != null) {
+                listOf("road", "suburb", "city_district", "neighbourhood", "town", "city")
+                    .forEach { key ->
+                        val value = address.optString(key).trim()
+                        if (value.isNotBlank()) return@withContext value
+                    }
+            }
+            formatLatLng(lat, lng)
+        } catch (e: Exception) {
+            Log.w(TAG, "Reverse geocode failed: ${e.message}", e)
+            formatLatLng(lat, lng)
+        } finally {
+            connection.disconnect()
         }
     }
 
@@ -1412,11 +1719,14 @@ class MapLibreEngineImpl(
 
     private fun queryTilePois(map: MapLibreMap, queryBounds: GeoBounds): List<SearchResultPlace> {
         if (!useVectorTiles) return emptyList()
-
-        val source = map.style?.getSourceAs<VectorSource>(OPENMAPTILES_SOURCE_ID) ?: return emptyList()
+        val view = mapView ?: return emptyList()
         val reference = lastKnownLocation
         return runCatching {
-            source.querySourceFeatures(arrayOf(OPENMAPTILES_POI_LAYER), null)
+            val w = view.width.toFloat()
+            val h = view.height.toFloat()
+            if (w == 0f || h == 0f) return emptyList()
+            val screenBounds = RectF(0f, 0f, w, h)
+            map.queryRenderedFeatures(screenBounds, *VECTOR_POI_LAYER_IDS)
                 .mapNotNull { feature -> tileFeatureToPlace(feature, reference, queryBounds) }
                 .distinctBy { "${it.latitude},${it.longitude}" }
                 .take(MAX_POI_PINS)
@@ -1469,6 +1779,49 @@ class MapLibreEngineImpl(
             .asSequence()
             .mapNotNull { key -> feature.getStringProperty(key)?.takeIf { it.isNotBlank() } }
             .firstOrNull()
+    }
+
+    private fun placeFromSymbolFeature(feature: org.maplibre.geojson.Feature): SearchResultPlace? {
+        val name = feature.getStringProperty("name") ?: return null
+        val lat = feature.getNumberProperty("lat")?.toDouble() ?: return null
+        val lng = feature.getNumberProperty("lng")?.toDouble() ?: return null
+        return SearchResultPlace(
+            name = name,
+            subTitle = feature.getStringProperty("subtitle").orEmpty(),
+            latitude = lat,
+            longitude = lng,
+            category = feature.getStringProperty("category").orEmpty(),
+        )
+    }
+
+    private fun findSavedPlaceAt(lat: Double, lng: Double): SearchResultPlace? {
+        val tapKey = savedPlaceKey(
+            SearchResultPlace(
+                name = "",
+                subTitle = "",
+                latitude = lat,
+                longitude = lng,
+            ),
+        )
+        return savedPlacesCache.find { savedPlaceKey(it) == tapKey }
+            ?: savedPlacesCache.find { saved ->
+                coordinatesNear(saved.latitude, saved.longitude, lat, lng)
+            }
+    }
+
+    private fun isSavedPlace(place: SearchResultPlace): Boolean =
+        savedPlacesKeys.contains(savedPlaceKey(place))
+
+    private fun coordinatesNear(
+        lat1: Double,
+        lng1: Double,
+        lat2: Double,
+        lng2: Double,
+        maxM: Float = NEARBY_PIN_DEDUP_THRESHOLD_M,
+    ): Boolean {
+        val distanceResults = FloatArray(1)
+        Location.distanceBetween(lat1, lng1, lat2, lng2, distanceResults)
+        return distanceResults[0] < maxM
     }
 
     private fun extractPointCoordinates(geometry: Geometry?): Pair<Double, Double>? {
@@ -1573,14 +1926,17 @@ class MapLibreEngineImpl(
                 existing.setGeoJson(geoJson)
             } else {
                 style.addSource(GeoJsonSource(POI_SOURCE_ID, geoJson))
-                style.addLayer(
-                    SymbolLayer(POI_LAYER_ID, POI_SOURCE_ID).withProperties(
-                        PropertyFactory.iconImage(poiCategoryIconExpression()),
-                        PropertyFactory.iconAllowOverlap(true),
-                        PropertyFactory.iconAnchor(Property.ICON_ANCHOR_BOTTOM),
-                        PropertyFactory.iconSize(1f),
-                    ),
+                val poiLayer = SymbolLayer(POI_LAYER_ID, POI_SOURCE_ID).withProperties(
+                    PropertyFactory.iconImage(poiCategoryIconExpression()),
+                    PropertyFactory.iconAllowOverlap(true),
+                    PropertyFactory.iconAnchor(Property.ICON_ANCHOR_BOTTOM),
+                    PropertyFactory.iconSize(1f),
                 )
+                if (style.getLayer(RASTER_BASE_LAYER_ID) != null) {
+                    style.addLayerAbove(poiLayer, RASTER_BASE_LAYER_ID)
+                } else {
+                    style.addLayer(poiLayer)
+                }
             }
         }
     }
@@ -1596,7 +1952,118 @@ class MapLibreEngineImpl(
         }
     }
 
-    private fun buildPoiGeoJson(places: List<SearchResultPlace>): String {
+    private fun placeCustomPin(lat: Double, lng: Double, pending: Boolean) {
+        val map = mapLibreMap ?: return
+        val geoJson = buildCustomPinGeoJson(lat, lng, pending)
+        map.getStyle { style ->
+            val existing = style.getSource(CUSTOM_PIN_SOURCE_ID)
+            if (existing is GeoJsonSource) {
+                existing.setGeoJson(geoJson)
+            } else {
+                style.addSource(GeoJsonSource(CUSTOM_PIN_SOURCE_ID, geoJson))
+                val customPinLayer = SymbolLayer(CUSTOM_PIN_LAYER_ID, CUSTOM_PIN_SOURCE_ID).withProperties(
+                    PropertyFactory.iconImage(customPinIconExpression()),
+                    PropertyFactory.iconAllowOverlap(true),
+                    PropertyFactory.iconAnchor(Property.ICON_ANCHOR_BOTTOM),
+                    PropertyFactory.iconSize(1f),
+                )
+                when {
+                    style.getLayer(SAVED_PLACES_LAYER_ID) != null -> {
+                        style.addLayerAbove(customPinLayer, SAVED_PLACES_LAYER_ID)
+                    }
+                    style.getLayer(POI_LAYER_ID) != null -> {
+                        style.addLayerAbove(customPinLayer, POI_LAYER_ID)
+                    }
+                    style.getLayer(RASTER_BASE_LAYER_ID) != null -> {
+                        style.addLayerAbove(customPinLayer, RASTER_BASE_LAYER_ID)
+                    }
+                    else -> style.addLayer(customPinLayer)
+                }
+            }
+        }
+    }
+
+    private fun clearCustomPin() {
+        val map = mapLibreMap ?: return
+        map.getStyle { style ->
+            val existing = style.getSource(CUSTOM_PIN_SOURCE_ID)
+            if (existing is GeoJsonSource) {
+                existing.setGeoJson(EMPTY_CUSTOM_PIN_GEOJSON)
+            }
+        }
+    }
+
+    private fun updateSavedPlacesLayer(places: List<SearchResultPlace>) {
+        val map = mapLibreMap ?: return
+        val geoJson = if (places.isEmpty()) {
+            EMPTY_POI_GEOJSON
+        } else {
+            buildPoiGeoJson(places, forceStarred = true)
+        }
+        map.getStyle { style ->
+            val existing = style.getSource(SAVED_PLACES_SOURCE_ID)
+            if (existing is GeoJsonSource) {
+                existing.setGeoJson(geoJson)
+            } else if (places.isNotEmpty()) {
+                style.addSource(GeoJsonSource(SAVED_PLACES_SOURCE_ID, geoJson))
+                val savedLayer = SymbolLayer(SAVED_PLACES_LAYER_ID, SAVED_PLACES_SOURCE_ID).withProperties(
+                    PropertyFactory.iconImage(starredCategoryIconExpression()),
+                    PropertyFactory.iconAllowOverlap(true),
+                    PropertyFactory.iconAnchor(Property.ICON_ANCHOR_BOTTOM),
+                    PropertyFactory.iconSize(1f),
+                )
+                when {
+                    style.getLayer(POI_LAYER_ID) != null -> {
+                        style.addLayerAbove(savedLayer, POI_LAYER_ID)
+                    }
+                    style.getLayer(RASTER_BASE_LAYER_ID) != null -> {
+                        style.addLayerAbove(savedLayer, RASTER_BASE_LAYER_ID)
+                    }
+                    else -> style.addLayer(savedLayer)
+                }
+            }
+        }
+    }
+
+    private fun buildCustomPinGeoJson(lat: Double, lng: Double, pending: Boolean): String {
+        return JSONObject().apply {
+            put("type", "FeatureCollection")
+            put(
+                "features",
+                JSONArray().apply {
+                    put(
+                        JSONObject().apply {
+                            put("type", "Feature")
+                            put(
+                                "geometry",
+                                JSONObject().apply {
+                                    put("type", "Point")
+                                    put(
+                                        "coordinates",
+                                        JSONArray().apply {
+                                            put(lng)
+                                            put(lat)
+                                        },
+                                    )
+                                },
+                            )
+                            put(
+                                "properties",
+                                JSONObject().apply {
+                                    put("pending", pending)
+                                },
+                            )
+                        },
+                    )
+                },
+            )
+        }.toString()
+    }
+
+    private fun buildPoiGeoJson(
+        places: List<SearchResultPlace>,
+        forceStarred: Boolean = false,
+    ): String {
         val features = places.map { place ->
             JSONObject().apply {
                 put("type", "Feature")
@@ -1621,7 +2088,10 @@ class MapLibreEngineImpl(
                         put("lat", place.latitude)
                         put("lng", place.longitude)
                         put("category", place.category)
-                        put("starred", savedPlacesKeys.contains(savedPlaceKey(place)))
+                        put(
+                            "starred",
+                            forceStarred || savedPlacesKeys.contains(savedPlaceKey(place)),
+                        )
                     },
                 )
             }
@@ -2304,6 +2774,14 @@ class MapLibreEngineImpl(
         }
     }
 
+    private fun customPinIconExpression(): Expression {
+        return Expression.switchCase(
+            Expression.eq(Expression.get("pending"), Expression.literal(true)),
+            Expression.literal(PoiIconFactory.CUSTOM_PIN_PENDING_ICON_ID),
+            Expression.literal(PoiIconFactory.CUSTOM_PIN_ICON_ID),
+        )
+    }
+
     private fun poiCategoryIconExpression(): Expression {
         return Expression.switchCase(
             Expression.eq(Expression.get("starred"), Expression.literal(true)),
@@ -2395,12 +2873,16 @@ class MapLibreEngineImpl(
 
     companion object {
         private const val TAG = "MapLibreEngineImpl"
+        private const val COMPASS_MARGIN_DP = 16f
         private const val DEFAULT_ZOOM = 15.0
         private const val DEFAULT_ZOOM_FALLBACK = 6.0
         private const val ROUTING_MIN_ZOOM = 10.0
         private const val NAV_TILT = 58.0
         private const val NAV_CAMERA_DURATION_MS = 2500
         private const val FREE_DRIVE_TILT = 50.0
+        private const val POI_PREVIEW_ZOOM = 15.5
+        private const val POI_PREVIEW_ANIMATION_MS = 1000
+        private const val NEARBY_PIN_DEDUP_THRESHOLD_M = 50f
         private const val RASTER_BASE_LAYER_ID = "osm"
         private const val TRAFFIC_SOURCE_ID = "mix-traffic-source"
         private const val TRAFFIC_LAYER_ID = "mix-traffic-layer"
@@ -2421,10 +2903,13 @@ class MapLibreEngineImpl(
         private const val ROUTE_SOURCE_ID = "mix-route-source"
         private const val ROUTE_CASING_LAYER_ID = "mix-route-casing-layer"
         private const val ROUTE_LAYER_ID = "mix-route-layer"
-        private const val OPENMAPTILES_SOURCE_ID = "openmaptiles"
-        private const val OPENMAPTILES_POI_LAYER = "poi"
+        private val VECTOR_POI_LAYER_IDS = arrayOf("poi_r1", "poi_r7", "poi_r20", "poi_transit")
         private const val POI_SOURCE_ID = "mix-poi-source"
         private const val POI_LAYER_ID = "mix-poi-layer"
+        private const val CUSTOM_PIN_SOURCE_ID = "mix-custom-pin-source"
+        private const val CUSTOM_PIN_LAYER_ID = "mix-custom-pin-layer"
+        private const val SAVED_PLACES_SOURCE_ID = "mix-saved-source"
+        private const val SAVED_PLACES_LAYER_ID = "mix-saved-layer"
         private val POI_CATEGORY_GROUPS = setOf(
             "food",
             "fuel",
@@ -2438,10 +2923,14 @@ class MapLibreEngineImpl(
         private const val MAX_POI_PINS = 100
         private const val POI_CACHE_SEARCH_LIMIT = 15
         private const val POI_DEBOUNCE_MS = 400L
+        private const val NEARBY_SEARCH_BBOX_DELTA = 0.08
         private const val BBOX_PADDING_FACTOR = 1.5
         private const val PHOTON_MOVE_THRESHOLD_M = 300f
         private const val MAP_TAP_NEAREST_POI_MAX_M = 500f
+        /** Screen-space hit radius for teardrop pin icons (≈ half of 64 dp icon height). */
+        private const val MAP_PIN_ICON_HIT_RADIUS_DP = 38f
         private const val EMPTY_POI_GEOJSON = """{"type":"FeatureCollection","features":[]}"""
+        private const val EMPTY_CUSTOM_PIN_GEOJSON = """{"type":"FeatureCollection","features":[]}"""
         private const val ROUTE_CASING_COLOR = "#CC000000"
         private const val ROUTE_CASING_WIDTH = 18f
         private const val ROUTE_COLOR = "#00CBD6"

@@ -10,6 +10,7 @@ import androidx.lifecycle.viewModelScope
 import com.kyuusanq3.mixauto.data.map.TomTomKeyCheckResult
 import com.kyuusanq3.mixauto.data.map.TomTomTrafficClient
 import com.kyuusanq3.mixauto.domain.map.SearchResultPlace
+import com.kyuusanq3.mixauto.ui.components.canLaunchApp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
@@ -26,6 +27,9 @@ sealed class TomTomKeyCheckState {
 class LauncherViewModel(application: Application) : AndroidViewModel(application) {
     private val preferences = LauncherPreferences(application)
 
+    var defaultAudioPackage by mutableStateOf(loadValidatedDefaultAudioPackage())
+        private set
+
     var isLeftHandDrive by mutableStateOf(preferences.isLeftHandDrive)
         private set
 
@@ -39,6 +43,9 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         private set
 
     var useVectorTiles by mutableStateOf(preferences.useVectorTiles)
+        private set
+
+    var show3dBuildings by mutableStateOf(preferences.show3dBuildings)
         private set
 
     var isLauncherMode by mutableStateOf(preferences.isLauncherMode)
@@ -80,8 +87,20 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     private val _voiceSearchTrigger = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
     val voiceSearchTrigger = _voiceSearchTrigger.asSharedFlow()
 
+    private var startVoiceOnSearchOpen = false
+
     fun triggerVoiceSearch() {
         _voiceSearchTrigger.tryEmit(Unit)
+    }
+
+    fun setStartVoiceOnSearchOpen() {
+        startVoiceOnSearchOpen = true
+    }
+
+    fun consumeStartVoiceOnSearchOpen(): Boolean {
+        if (!startVoiceOnSearchOpen) return false
+        startVoiceOnSearchOpen = false
+        return true
     }
 
     fun toggleLeftHandDrive() {
@@ -107,6 +126,11 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     fun toggleVectorTiles() {
         useVectorTiles = !useVectorTiles
         preferences.useVectorTiles = useVectorTiles
+    }
+
+    fun toggleShow3dBuildings() {
+        show3dBuildings = !show3dBuildings
+        preferences.show3dBuildings = show3dBuildings
     }
 
     fun toggleLauncherMode() {
@@ -150,6 +174,11 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         tomTomKeyCheckState = TomTomKeyCheckState.Idle
     }
 
+    fun updateDefaultAudioPackage(packageName: String) {
+        defaultAudioPackage = packageName
+        preferences.defaultAudioPackage = packageName
+    }
+
     fun addRecentDestination(place: SearchResultPlace) {
         val filtered = recentDestinations.filterNot { existing ->
             isWithinDedupThreshold(existing, place)
@@ -166,6 +195,13 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         } else {
             (listOf(place) + savedPlaces).take(LauncherPreferences.MAX_SAVED_PLACES)
         }
+        preferences.savedPlaces = savedPlaces
+    }
+
+    fun updateSavedPlace(place: SearchResultPlace) {
+        val index = savedPlaces.indexOfFirst { isWithinDedupThreshold(it, place) }
+        if (index < 0) return
+        savedPlaces = savedPlaces.toMutableList().also { it[index] = place }
         preferences.savedPlaces = savedPlaces
     }
 
@@ -186,6 +222,16 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
                 is TomTomKeyCheckResult.Failure -> TomTomKeyCheckState.Error(result.message)
             }
         }
+    }
+
+    private fun loadValidatedDefaultAudioPackage(): String {
+        val stored = preferences.defaultAudioPackage
+        if (stored.isBlank()) return ""
+        if (!canLaunchApp(getApplication(), stored)) {
+            preferences.defaultAudioPackage = ""
+            return ""
+        }
+        return stored
     }
 
     private fun isWithinDedupThreshold(a: SearchResultPlace, b: SearchResultPlace): Boolean {

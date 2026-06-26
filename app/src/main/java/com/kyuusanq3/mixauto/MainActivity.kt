@@ -1,10 +1,14 @@
 package com.kyuusanq3.mixauto
 
 import android.Manifest
+import android.app.role.RoleManager
+import android.content.ActivityNotFoundException
 import android.content.ComponentName
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
+import android.provider.Settings
 import android.view.KeyEvent
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -18,6 +22,8 @@ import androidx.compose.ui.Modifier
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -57,6 +63,10 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    private val homeRoleRequestLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult(),
+    ) { /* Role dialog result; alias stays enabled until user changes setting */ }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         launcherPreferences = LauncherPreferences(this)
@@ -65,6 +75,7 @@ class MainActivity : ComponentActivity() {
         mapEngine = MapLibreEngineImpl(
             localPlaces = localPlacesRepository,
             initialUseVectorTiles = launcherPreferences.useVectorTiles,
+            initialShow3dBuildings = launcherPreferences.show3dBuildings,
             initialDrivingZoom = launcherPreferences.drivingZoom.toDouble(),
             initialPuckHOffset = launcherPreferences.puckHorizontalOffset,
             initialPuckVOffset = launcherPreferences.puckVerticalOffset,
@@ -82,6 +93,10 @@ class MainActivity : ComponentActivity() {
             pendingOnboardingSteps.isNotEmpty()
         showOnboarding = shouldShowOnboarding
         WindowCompat.setDecorFitsSystemWindows(window, false)
+        WindowInsetsControllerCompat(window, window.decorView).apply {
+            show(WindowInsetsCompat.Type.systemBars())
+            systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_DEFAULT
+        }
         setContent {
             MixAutoTheme {
                 Box(modifier = Modifier.fillMaxSize()) {
@@ -98,11 +113,12 @@ class MainActivity : ComponentActivity() {
                     mapEngine = mapEngine,
                     mapDataViewModel = mapDataViewModel,
                     mediaState = mediaState,
+                    defaultAudioPackage = launcherViewModel.defaultAudioPackage,
+                    onSetDefaultAudioPackage = launcherViewModel::updateDefaultAudioPackage,
                     onMediaPlayPause = mediaViewModel::playPause,
                     onMediaSkipPrevious = mediaViewModel::skipToPrevious,
                     onMediaSkipNext = mediaViewModel::skipToNext,
                     onMediaToggleLike = mediaViewModel::toggleLike,
-                    onMediaToggleShuffle = mediaViewModel::toggleShuffle,
                     isLeftHandDrive = launcherViewModel.isLeftHandDrive,
                     isShortcutsHorizontal = launcherViewModel.isShortcutsHorizontal,
                     mapMediaRatio = launcherViewModel.mapMediaRatio,
@@ -111,7 +127,9 @@ class MainActivity : ComponentActivity() {
                     savedPlaces = launcherViewModel.savedPlaces,
                     onDestinationSelected = launcherViewModel::addRecentDestination,
                     onToggleSavedPlace = launcherViewModel::toggleSavedPlace,
+                    onUpdateSavedPlace = launcherViewModel::updateSavedPlace,
                     useVectorTiles = launcherViewModel.useVectorTiles,
+                    show3dBuildings = launcherViewModel.show3dBuildings,
                     showTraffic = launcherViewModel.showTraffic,
                     tomTomApiKey = launcherViewModel.tomTomApiKey,
                     isLauncherMode = launcherViewModel.isLauncherMode,
@@ -127,6 +145,10 @@ class MainActivity : ComponentActivity() {
                     onToggleVectorTiles = {
                         launcherViewModel.toggleVectorTiles()
                         mapEngine.setMapStyle(launcherViewModel.useVectorTiles)
+                    },
+                    onToggleShow3dBuildings = {
+                        launcherViewModel.toggleShow3dBuildings()
+                        mapEngine.setShow3dBuildings(launcherViewModel.show3dBuildings)
                     },
                     onToggleTraffic = {
                         launcherViewModel.toggleTraffic()
@@ -145,6 +167,9 @@ class MainActivity : ComponentActivity() {
                     onToggleLauncherMode = {
                         launcherViewModel.toggleLauncherMode()
                         applyLauncherMode(launcherViewModel.isLauncherMode)
+                        if (launcherViewModel.isLauncherMode) {
+                            promptSetAsDefaultHome()
+                        }
                     },
                     onToggleLargeShortcutIcons = launcherViewModel::toggleLargeShortcutIcons,
                     onDrivingZoomChange = { value ->
@@ -179,7 +204,7 @@ class MainActivity : ComponentActivity() {
                                 launcherPreferences.onboardingVersion = CURRENT_ONBOARDING_VERSION
                                 showOnboarding = false
                                 requestLocationPermissionIfNeeded()
-                                MediaSessionRepository.getInstance(this@MainActivity).refreshSessions()
+                                refreshMediaSessionsAndBootAudio()
                             },
                         )
                     }
@@ -194,7 +219,17 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
-        MediaSessionRepository.getInstance(this).refreshSessions()
+        refreshMediaSessionsAndBootAudio()
+    }
+
+    private fun refreshMediaSessionsAndBootAudio() {
+        val repository = MediaSessionRepository.getInstance(this)
+        repository.refreshSessions()
+        if (::launcherViewModel.isInitialized) {
+            repository.ensureDefaultPlayerIfNeeded(
+                launcherViewModel.defaultAudioPackage.takeIf { it.isNotBlank() },
+            )
+        }
     }
 
     override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
@@ -244,6 +279,36 @@ class MainActivity : ComponentActivity() {
             },
             PackageManager.DONT_KILL_APP,
         )
+    }
+
+    private fun promptSetAsDefaultHome() {
+        // Wait for PackageManager to register the enabled alias before prompting.
+        window.decorView.postDelayed({
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                val roleManager = getSystemService(RoleManager::class.java)
+                if (roleManager.isRoleAvailable(RoleManager.ROLE_HOME) &&
+                    !roleManager.isRoleHeld(RoleManager.ROLE_HOME)
+                ) {
+                    homeRoleRequestLauncher.launch(
+                        roleManager.createRequestRoleIntent(RoleManager.ROLE_HOME),
+                    )
+                    return@postDelayed
+                }
+            }
+            openHomeAppSettings()
+        }, LAUNCHER_ALIAS_REGISTER_DELAY_MS)
+    }
+
+    private fun openHomeAppSettings() {
+        try {
+            startActivity(Intent(Settings.ACTION_HOME_SETTINGS))
+        } catch (_: ActivityNotFoundException) {
+            // No system UI for default home on this device; alias is still enabled.
+        }
+    }
+
+    companion object {
+        private const val LAUNCHER_ALIAS_REGISTER_DELAY_MS = 200L
     }
 
     private fun launchApkInstall(apkFile: File) {

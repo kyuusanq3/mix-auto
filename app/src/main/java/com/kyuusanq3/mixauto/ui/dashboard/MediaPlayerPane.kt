@@ -2,7 +2,10 @@ package com.kyuusanq3.mixauto.ui.dashboard
 
 import android.content.Intent
 import android.provider.Settings
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
@@ -22,9 +25,9 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Favorite
+import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.Shuffle
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.material.icons.outlined.FavoriteBorder
@@ -51,6 +54,11 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import com.kyuusanq3.mixauto.domain.media.MediaPlaybackState
+import com.kyuusanq3.mixauto.ui.components.AudioPlayerListContent
+import com.kyuusanq3.mixauto.ui.components.AudioPlayerPickerOverlay
+import com.kyuusanq3.mixauto.ui.components.canLaunchApp
+import com.kyuusanq3.mixauto.ui.components.launchAppByPackage
+import com.kyuusanq3.mixauto.ui.components.rememberAppIcon
 import com.kyuusanq3.mixauto.ui.theme.CarBodyText
 import com.kyuusanq3.mixauto.ui.theme.CarDimensions
 import com.kyuusanq3.mixauto.ui.theme.CarHeadlineText
@@ -66,26 +74,29 @@ private val AlbumArtSwipeThreshold = 40.dp
 @Composable
 fun MediaPlayerPane(
     mediaState: MediaPlaybackState,
+    defaultAudioPackage: String,
+    onSetDefaultAudioPackage: (String) -> Unit,
     onPlayPause: () -> Unit,
     onSkipPrevious: () -> Unit,
     onSkipNext: () -> Unit,
     onToggleLike: () -> Unit,
-    onToggleShuffle: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
+    val needsDefaultSetup = defaultAudioPackage.isBlank() &&
+        !mediaState.hasActiveSession &&
+        !mediaState.needsNotificationAccess
     val artModeState = remember { mutableStateOf(AlbumArtMode.PLAIN) }
     val artMode by artModeState
     var isPickerOpen by remember { mutableStateOf(false) }
+    var showAudioPicker by remember { mutableStateOf(false) }
     var pickerIndex by remember { mutableIntStateOf(0) }
     val swipeThresholdPx = with(LocalDensity.current) { AlbumArtSwipeThreshold.toPx() }
     val onPlayPauseState = rememberUpdatedState(onPlayPause)
     val onSkipPreviousState = rememberUpdatedState(onSkipPrevious)
     val onSkipNextState = rememberUpdatedState(onSkipNext)
     val onToggleLikeState = rememberUpdatedState(onToggleLike)
-    val onToggleShuffleState = rememberUpdatedState(onToggleShuffle)
     val supportsLikeState = rememberUpdatedState(mediaState.supportsLike)
-    val supportsShuffleState = rememberUpdatedState(mediaState.supportsShuffle)
     val hasActiveSessionState = rememberUpdatedState(mediaState.hasActiveSession)
 
     ElevatedCard(
@@ -95,6 +106,23 @@ fun MediaPlayerPane(
             containerColor = DarkSurface,
         ),
     ) {
+        Box(modifier = Modifier.fillMaxSize()) {
+        if (needsDefaultSetup) {
+            AudioPlayerListContent(
+                defaultAudioPackage = defaultAudioPackage,
+                headerTitle = null,
+                headerMessage = "Choose the default audio source",
+                showCloseButton = false,
+                showLongPressHint = false,
+                onDismiss = {},
+                onAppClick = { app ->
+                    onSetDefaultAudioPackage(app.packageName)
+                    launchAppByPackage(context, app.packageName)
+                },
+                onRequestSetDefault = {},
+                modifier = Modifier.fillMaxSize(),
+            )
+        } else {
         Column(
             modifier = Modifier
                 .fillMaxSize()
@@ -145,7 +173,6 @@ fun MediaPlayerPane(
                                 Modifier.pointerInput(
                                     mediaState.hasActiveSession,
                                     mediaState.supportsLike,
-                                    mediaState.supportsShuffle,
                                     swipeThresholdPx,
                                 ) {
                                     coroutineScope {
@@ -187,9 +214,6 @@ fun MediaPlayerPane(
                                                 when {
                                                     absY > absX && drag.y < 0f && supportsLikeState.value -> {
                                                         onToggleLikeState.value()
-                                                    }
-                                                    absY > absX && drag.y > 0f && supportsShuffleState.value -> {
-                                                        onToggleShuffleState.value()
                                                     }
                                                     absX > absY && drag.x < 0f -> {
                                                         onSkipPreviousState.value()
@@ -269,16 +293,11 @@ fun MediaPlayerPane(
                         .height(CarDimensions.MinTapTarget),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    MediaControlButton(
-                        onClick = onToggleShuffle,
-                        contentDescription = if (mediaState.isShuffleOn) {
-                            "Shuffle on"
-                        } else {
-                            "Shuffle off"
-                        },
-                        icon = Icons.Filled.Shuffle,
-                        enabled = mediaState.hasActiveSession && mediaState.supportsShuffle,
-                        active = mediaState.isShuffleOn,
+                    SourceAppButton(
+                        sourcePackage = mediaState.sourcePackage,
+                        defaultAudioPackage = defaultAudioPackage,
+                        hasActiveSession = mediaState.hasActiveSession,
+                        onOpenPicker = { showAudioPicker = true },
                         modifier = Modifier.weight(1f),
                     )
                     MediaControlButton(
@@ -312,6 +331,75 @@ fun MediaPlayerPane(
                         modifier = Modifier.weight(1f),
                     )
                 }
+            }
+        }
+
+            if (showAudioPicker) {
+                AudioPlayerPickerOverlay(
+                    defaultAudioPackage = defaultAudioPackage,
+                    onSetDefaultAudioPackage = onSetDefaultAudioPackage,
+                    onDismiss = { showAudioPicker = false },
+                    modifier = Modifier.fillMaxSize(),
+                )
+            }
+        }
+        }
+    }
+}
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun SourceAppButton(
+    sourcePackage: String,
+    defaultAudioPackage: String,
+    hasActiveSession: Boolean,
+    onOpenPicker: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val context = LocalContext.current
+    val displayPackage = if (hasActiveSession) sourcePackage else defaultAudioPackage
+    val appIcon = rememberAppIcon(displayPackage)
+    val canLaunch = remember(displayPackage) { canLaunchApp(context, displayPackage) }
+    val canLaunchSource = hasActiveSession && canLaunch
+    val canOpenPicker = !hasActiveSession
+    val showDefaultIcon = !hasActiveSession && defaultAudioPackage.isNotBlank() && appIcon != null
+    val iconSize = CarDimensions.AppIconSize - 8.dp
+
+    Box(
+        modifier = modifier.fillMaxHeight(),
+        contentAlignment = Alignment.Center,
+    ) {
+        Box(
+            modifier = Modifier
+                .requiredSize(CarDimensions.MinTapTarget)
+                .combinedClickable(
+                    onClick = {
+                        when {
+                            canLaunchSource -> launchAppByPackage(context, sourcePackage)
+                            canOpenPicker -> onOpenPicker()
+                        }
+                    },
+                    onLongClick = onOpenPicker,
+                ),
+            contentAlignment = Alignment.Center,
+        ) {
+            if (appIcon != null && (canLaunchSource || showDefaultIcon)) {
+                Image(
+                    bitmap = appIcon,
+                    contentDescription = "Open audio source",
+                    modifier = Modifier.size(iconSize),
+                )
+            } else {
+                Icon(
+                    imageVector = Icons.Filled.MusicNote,
+                    contentDescription = if (canOpenPicker) "Choose audio player" else "Audio source",
+                    modifier = Modifier.requiredSize(iconSize),
+                    tint = when {
+                        canOpenPicker -> ElectricCyan
+                        canLaunchSource -> MaterialTheme.colorScheme.onSurface
+                        else -> MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
+                    },
+                )
             }
         }
     }

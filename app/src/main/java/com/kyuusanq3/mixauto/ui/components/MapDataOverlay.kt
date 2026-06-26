@@ -1,7 +1,5 @@
 package com.kyuusanq3.mixauto.ui.components
 
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -18,14 +16,16 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.CloudDownload
 import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.FolderOpen
+import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
+import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -36,9 +36,12 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import androidx.lifecycle.viewmodel.compose.viewModel
+import com.kyuusanq3.mixauto.ui.settings.LauncherViewModel
 import com.kyuusanq3.mixauto.ui.settings.MapDataUiState
 import com.kyuusanq3.mixauto.ui.settings.MapDataViewModel
 import com.kyuusanq3.mixauto.ui.settings.RemoteCountryPack
+import com.kyuusanq3.mixauto.ui.settings.TomTomKeyCheckState
 import com.kyuusanq3.mixauto.ui.theme.CarBodyText
 import com.kyuusanq3.mixauto.ui.theme.CarDimensions
 import com.kyuusanq3.mixauto.ui.theme.CarHeadlineText
@@ -54,20 +57,9 @@ private val InstalledGreen = Color(0xFF4CAF50)
 fun MapDataOverlay(
     viewModel: MapDataViewModel,
     onDismiss: () -> Unit,
+    tomTomApiKey: String = "",
+    onTomTomApiKeyChange: (String) -> Unit = {},
 ) {
-    val uiState by viewModel.uiState.collectAsState()
-
-    val importLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.OpenDocument(),
-    ) { uri ->
-        if (uri != null) {
-            viewModel.importPhilippinesDatabase(uri)
-        }
-    }
-
-    val transferInProgress = uiState is MapDataUiState.Downloading ||
-        uiState is MapDataUiState.Importing
-
     Dialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false),
@@ -76,111 +68,194 @@ fun MapDataOverlay(
             modifier = Modifier.fillMaxSize(),
             color = OledBlack,
         ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(CarDimensions.PaneGap * 2),
-                verticalArrangement = Arrangement.spacedBy(CarDimensions.DockItemSpacing),
-            ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically,
+            MapDataPanelContent(
+                viewModel = viewModel,
+                onDismiss = onDismiss,
+                tomTomApiKey = tomTomApiKey,
+                onTomTomApiKeyChange = onTomTomApiKeyChange,
+                modifier = Modifier.fillMaxSize(),
+            )
+        }
+    }
+}
+
+@Composable
+fun MapDataPanelContent(
+    viewModel: MapDataViewModel,
+    onDismiss: () -> Unit,
+    tomTomApiKey: String,
+    onTomTomApiKeyChange: (String) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val uiState by viewModel.uiState.collectAsState()
+
+    Column(
+        modifier = modifier
+            .padding(CarDimensions.PaneGap * 2),
+        verticalArrangement = Arrangement.spacedBy(CarDimensions.DockItemSpacing),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            CarHeadlineText(
+                text = "Map Data",
+                style = MaterialTheme.typography.headlineMedium,
+                modifier = Modifier.weight(1f),
+            )
+            OverlayCloseButton(
+                onClick = onDismiss,
+                contentDescription = "Close map data",
+            )
+        }
+
+        CarBodyText(
+            text = "Download offline Overture POI packs from GitHub (~50 MB compressed per country).",
+            style = MaterialTheme.typography.bodyMedium,
+        )
+
+        when (val state = uiState) {
+            MapDataUiState.LoadingCatalog -> {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f),
+                    contentAlignment = Alignment.Center,
                 ) {
-                    CarHeadlineText(
-                        text = "Map Data",
-                        style = MaterialTheme.typography.headlineMedium,
-                        modifier = Modifier.weight(1f),
-                    )
-                    OverlayCloseButton(
-                        onClick = onDismiss,
-                        contentDescription = "Close map data",
-                    )
-                }
-
-                CarBodyText(
-                    text = "Download offline Overture POI packs from GitHub (~50 MB compressed per country).",
-                    style = MaterialTheme.typography.bodyMedium,
-                )
-
-                when (val state = uiState) {
-                    MapDataUiState.LoadingCatalog -> {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .weight(1f),
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            CircularProgressIndicator(color = ElectricCyan)
-                        }
-                    }
-                    is MapDataUiState.Error -> {
-                        CarBodyText(
-                            text = state.message,
-                            style = MaterialTheme.typography.bodyLarge,
-                        )
-                        ActionRow(
-                            text = "Retry loading catalog",
-                            icon = Icons.Filled.CloudDownload,
-                            enabled = true,
-                            onClick = { viewModel.loadCatalog() },
-                        )
-                    }
-                    is MapDataUiState.Importing -> {
-                        LinearProgressIndicator(
-                            progress = { state.progress },
-                            modifier = Modifier.fillMaxWidth(),
-                        )
-                        CarLabelText(
-                            text = "Importing ${state.label}… ${(state.progress * 100).roundToInt()}%",
-                            style = MaterialTheme.typography.labelMedium,
-                        )
-                    }
-                    is MapDataUiState.Catalog -> {
-                        CountryCatalogList(
-                            modifier = Modifier.weight(1f),
-                            packs = state.packs,
-                            uiState = uiState,
-                            onDownload = viewModel::downloadCountryData,
-                            onDelete = viewModel::deleteDatabase,
-                        )
-                    }
-                    is MapDataUiState.Downloading -> {
-                        CountryCatalogList(
-                            modifier = Modifier.weight(1f),
-                            packs = state.packs,
-                            uiState = uiState,
-                            onDownload = viewModel::downloadCountryData,
-                            onDelete = viewModel::deleteDatabase,
-                        )
-                    }
-                    MapDataUiState.Idle -> Unit
-                }
-
-                if (uiState !is MapDataUiState.LoadingCatalog && !transferInProgress) {
-                    ActionRow(
-                        text = "Import Philippines database (ph_places.db)",
-                        icon = Icons.Filled.FolderOpen,
-                        enabled = true,
-                        onClick = {
-                            importLauncher.launch(
-                                arrayOf(
-                                    "application/octet-stream",
-                                    "application/x-sqlite3",
-                                    "application/gzip",
-                                    "*/*",
-                                ),
-                            )
-                        },
-                    )
-                    ActionRow(
-                        text = "Install Philippines sample (20 POIs)",
-                        icon = Icons.Filled.FolderOpen,
-                        enabled = true,
-                        onClick = { viewModel.installSamplePhilippinesData() },
-                    )
+                    CircularProgressIndicator(color = ElectricCyan)
                 }
             }
+            is MapDataUiState.Error -> {
+                CarBodyText(
+                    text = state.message,
+                    style = MaterialTheme.typography.bodyLarge,
+                )
+                ActionRow(
+                    text = "Retry loading catalog",
+                    icon = Icons.Filled.CloudDownload,
+                    enabled = true,
+                    onClick = { viewModel.loadCatalog() },
+                )
+            }
+            is MapDataUiState.Importing -> {
+                LinearProgressIndicator(
+                    progress = { state.progress },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                CarLabelText(
+                    text = "Importing ${state.label}… ${(state.progress * 100).roundToInt()}%",
+                    style = MaterialTheme.typography.labelMedium,
+                )
+            }
+            is MapDataUiState.Catalog -> {
+                CountryCatalogList(
+                    modifier = Modifier.weight(1f),
+                    packs = state.packs,
+                    uiState = uiState,
+                    onDownload = viewModel::downloadCountryData,
+                    onDelete = viewModel::deleteDatabase,
+                )
+            }
+            is MapDataUiState.Downloading -> {
+                CountryCatalogList(
+                    modifier = Modifier.weight(1f),
+                    packs = state.packs,
+                    uiState = uiState,
+                    onDownload = viewModel::downloadCountryData,
+                    onDelete = viewModel::deleteDatabase,
+                )
+            }
+            MapDataUiState.Idle -> Unit
+        }
+
+        TomTomApiKeySection(
+            tomTomApiKey = tomTomApiKey,
+            onTomTomApiKeyChange = onTomTomApiKeyChange,
+        )
+    }
+}
+
+@Composable
+private fun TomTomApiKeySection(
+    tomTomApiKey: String,
+    onTomTomApiKeyChange: (String) -> Unit,
+) {
+    val launcherViewModel: LauncherViewModel = viewModel()
+    val tomTomKeyCheckState = launcherViewModel.tomTomKeyCheckState
+
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        CarBodyText(
+            text = "TomTom API Key (traffic)",
+            style = MaterialTheme.typography.bodyLarge,
+        )
+        OutlinedTextField(
+            value = tomTomApiKey,
+            onValueChange = onTomTomApiKeyChange,
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(CarDimensions.PrimaryTapTarget + CarDimensions.PaneGap),
+            placeholder = {
+                CarBodyText(
+                    text = "Paste key from developer.tomtom.com",
+                    style = MaterialTheme.typography.bodyLarge,
+                )
+            },
+            singleLine = true,
+            colors = TextFieldDefaults.colors(
+                focusedContainerColor = OledBlack,
+                unfocusedContainerColor = OledBlack,
+                focusedTextColor = ElectricCyan,
+                unfocusedTextColor = ElectricCyan,
+            ),
+        )
+        CarLabelText(
+            text = "Free tier covers Philippines. Required for traffic overlay.",
+            style = MaterialTheme.typography.labelMedium,
+        )
+        when (tomTomKeyCheckState) {
+            TomTomKeyCheckState.Idle -> Unit
+            TomTomKeyCheckState.Checking -> {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(CarDimensions.MinTapTarget),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(CarDimensions.PaneGap),
+                ) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(CarDimensions.MinTapTarget / 2),
+                        color = ElectricCyan,
+                    )
+                    CarBodyText(text = "Testing API key...")
+                }
+            }
+            is TomTomKeyCheckState.Success -> {
+                CarLabelText(
+                    text = tomTomKeyCheckState.message,
+                    style = MaterialTheme.typography.labelMedium.copy(color = ElectricCyan),
+                )
+            }
+            is TomTomKeyCheckState.Error -> {
+                CarLabelText(
+                    text = tomTomKeyCheckState.message,
+                    style = MaterialTheme.typography.labelMedium.copy(
+                        color = MaterialTheme.colorScheme.error,
+                    ),
+                )
+            }
+        }
+        Button(
+            onClick = launcherViewModel::checkTomTomApiKey,
+            enabled = tomTomKeyCheckState !is TomTomKeyCheckState.Checking,
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(CarDimensions.MinTapTarget),
+        ) {
+            CarBodyText(text = "Test TomTom API Key")
         }
     }
 }
@@ -193,23 +268,28 @@ private fun CountryCatalogList(
     onDownload: (RemoteCountryPack) -> Unit,
     onDelete: (String) -> Unit,
 ) {
-    Column(
-        modifier = modifier.verticalScroll(rememberScrollState()),
-        verticalArrangement = Arrangement.spacedBy(CarDimensions.DockItemSpacing / 2),
-    ) {
-        if (packs.isEmpty()) {
-            CarBodyText(
-                text = "No countries in catalog.",
-                style = MaterialTheme.typography.bodyMedium,
-            )
-        } else {
-            packs.forEach { pack ->
-                CountryPackRow(
-                    pack = pack,
-                    uiState = uiState,
-                    onDownload = { onDownload(pack) },
-                    onDelete = { onDelete(pack.iso) },
+    val scrollState = rememberScrollState()
+    Box(modifier = modifier.carScrollbar(scrollState)) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .verticalScroll(scrollState),
+            verticalArrangement = Arrangement.spacedBy(CarDimensions.DockItemSpacing / 2),
+        ) {
+            if (packs.isEmpty()) {
+                CarBodyText(
+                    text = "No countries in catalog.",
+                    style = MaterialTheme.typography.bodyMedium,
                 )
+            } else {
+                packs.forEach { pack ->
+                    CountryPackRow(
+                        pack = pack,
+                        uiState = uiState,
+                        onDownload = { onDownload(pack) },
+                        onDelete = { onDelete(pack.iso) },
+                    )
+                }
             }
         }
     }

@@ -24,9 +24,13 @@ class LocalPlacesRepository(context: Context) {
 
     init {
         placesDir.mkdirs()
-        prefs.getString(KEY_ACTIVE_ISO, null)?.let { iso ->
-            if (databaseFile(iso).exists()) {
-                openDatabase(iso)
+        synchronized(dbLock) {
+            val savedIso = prefs.getString(KEY_ACTIVE_ISO, null)
+            when {
+                savedIso != null && databaseFile(savedIso).exists() ->
+                    openDatabaseUnlocked(savedIso)
+                else ->
+                    discoverAndOpenInstalledDatabaseUnlocked()
             }
         }
     }
@@ -36,10 +40,7 @@ class LocalPlacesRepository(context: Context) {
     val activeCountryIso: String? get() = activeIsoCode
 
     val hasInstalledDatabase: Boolean
-        get() {
-            val iso = activeIsoCode ?: prefs.getString(KEY_ACTIVE_ISO, null) ?: return false
-            return databaseFile(iso).exists()
-        }
+        get() = listInstalledDatabaseIsos().isNotEmpty()
 
     fun databaseFile(isoCode: String): File = File(placesDir, "${isoCode.lowercase()}.db")
 
@@ -68,6 +69,14 @@ class LocalPlacesRepository(context: Context) {
             return false
         }
         closeDatabaseUnlocked()
+        return openDatabaseFile(isoCode, file, retryAfterSidecarCleanup = true)
+    }
+
+    private fun openDatabaseFile(
+        isoCode: String,
+        file: File,
+        retryAfterSidecarCleanup: Boolean,
+    ): Boolean {
         return try {
             database = SQLiteDatabase.openDatabase(
                 file.absolutePath,
@@ -80,6 +89,15 @@ class LocalPlacesRepository(context: Context) {
             Log.i(TAG, "Opened places database for $activeIsoCode (fts5=$fts5Available)")
             true
         } catch (exception: Exception) {
+            if (retryAfterSidecarCleanup) {
+                Log.w(
+                    TAG,
+                    "Failed to open places database for $isoCode, clearing sidecars and retrying",
+                    exception,
+                )
+                deleteSidecarFiles(file)
+                return openDatabaseFile(isoCode, file, retryAfterSidecarCleanup = false)
+            }
             Log.w(TAG, "Failed to open places database for $isoCode", exception)
             database = null
             activeIsoCode = null
@@ -97,10 +115,38 @@ class LocalPlacesRepository(context: Context) {
         val open = database
         if (open != null && open.isOpen) return open
 
-        val iso = activeIsoCode ?: prefs.getString(KEY_ACTIVE_ISO, null) ?: return null
-        if (!databaseFile(iso).exists()) return null
-        if (!openDatabaseUnlocked(iso)) return null
-        return database
+        val savedIso = activeIsoCode ?: prefs.getString(KEY_ACTIVE_ISO, null)
+        if (savedIso != null && databaseFile(savedIso).exists() && openDatabaseUnlocked(savedIso)) {
+            return database
+        }
+        if (discoverAndOpenInstalledDatabaseUnlocked()) return database
+        return null
+    }
+
+    private fun listInstalledDatabaseIsos(): List<String> {
+        return placesDir.listFiles()
+            ?.filter { file ->
+                file.isFile &&
+                    file.name.endsWith(".db", ignoreCase = true) &&
+                    !file.name.endsWith(".tmp", ignoreCase = true)
+            }
+            ?.map { it.name.removeSuffix(".db").uppercase() }
+            .orEmpty()
+    }
+
+    private fun discoverAndOpenInstalledDatabaseUnlocked(): Boolean {
+        val installed = placesDir.listFiles()
+            ?.filter { file ->
+                file.isFile &&
+                    file.name.endsWith(".db", ignoreCase = true) &&
+                    !file.name.endsWith(".tmp", ignoreCase = true)
+            }
+            .orEmpty()
+        if (installed.isEmpty()) return false
+        val best = installed.maxByOrNull { it.length() } ?: return false
+        val iso = best.name.removeSuffix(".db").uppercase()
+        Log.i(TAG, "Auto-discovered installed places database: $iso")
+        return openDatabaseUnlocked(iso)
     }
 
     private fun prepareDatabaseFileReplacement(isoCode: String) {

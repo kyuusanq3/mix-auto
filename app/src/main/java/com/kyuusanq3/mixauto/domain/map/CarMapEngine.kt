@@ -18,9 +18,13 @@ interface CarMapEngine {
     fun startFreeDrive()
     fun recenterCamera()
     fun dismissSelectedPoi()
+    fun focusOnLocation(lat: Double, lng: Double)
+    fun focusOnPoi(place: SearchResultPlace, moveCamera: Boolean = true)
+    fun enterTopDownView()
     fun navigateToCoordinates(lat: Double, lng: Double)
     fun retryLocationActivation()
     fun setMapStyle(useVectorTiles: Boolean)
+    fun setShow3dBuildings(show: Boolean)
     fun setTrafficEnabled(enabled: Boolean, apiKey: String)
     fun setDrivingZoom(zoom: Double)
     fun setViewportPadding(horizontalFraction: Float, verticalFraction: Float)
@@ -34,6 +38,9 @@ interface CarMapEngine {
     ): List<SearchResultPlace>
 
     fun getNearbyPois(lat: Double, lng: Double, limit: Int): List<SearchResultPlace>
+
+    /** GPS when available, else last fix, else map camera center (zoom ≥ 10). */
+    fun resolveSearchOrigin(): Pair<Double, Double>
 
     fun setSavedPlaces(places: List<SearchResultPlace>)
 }
