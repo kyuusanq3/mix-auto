@@ -27,9 +27,11 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Android
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
@@ -69,6 +71,7 @@ fun AppDrawerOverlay(
     maxDockPinnedApps: Int,
     onToggleDockPin: (String) -> Unit,
     onSelectAudioSource: (String) -> Unit,
+    onOpenLauncherSettings: () -> Unit,
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -109,6 +112,17 @@ fun AppDrawerOverlay(
                     text = "Apps",
                     modifier = Modifier.weight(1f),
                 )
+                IconButton(
+                    onClick = onOpenLauncherSettings,
+                    modifier = Modifier.size(CarDimensions.MinTapTarget),
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.Settings,
+                        contentDescription = "Launcher settings",
+                        modifier = Modifier.size(CarDimensions.AppIconSize - 8.dp),
+                        tint = MaterialTheme.colorScheme.primary,
+                    )
+                }
                 OverlayCloseButton(
                     onClick = onDismiss,
                     contentDescription = "Close app drawer",

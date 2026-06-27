@@ -42,8 +42,17 @@ interface CarMapEngine {
     /** GPS when available, else last fix, else map camera center (zoom ≥ 10). */
     fun resolveSearchOrigin(): Pair<Double, Double>
 
+    /** True when origin comes from GPS, last fix, or map camera — not the static country fallback. */
+    fun hasReliableSearchOrigin(): Boolean
+
+    /** Re-read system location and sync into search origin before querying. */
+    fun refreshSearchOrigin()
+
     fun setSavedPlaces(places: List<SearchResultPlace>)
 
     /** Compose/host resized the map pane — engine should re-apply preview camera if needed. */
     fun onMapHostLayoutChanged() {}
+
+    /** When set, a map tap invokes the handler and skips POI/pin selection. */
+    fun setMapTapDismissHandler(handler: (() -> Unit)?) {}
 }

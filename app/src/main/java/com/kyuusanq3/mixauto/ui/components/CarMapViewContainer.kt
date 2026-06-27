@@ -36,7 +36,12 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.wrapContentSize
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
+import kotlin.math.roundToInt
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
@@ -44,7 +49,6 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.kyuusanq3.mixauto.domain.map.CarMapEngine
 import com.kyuusanq3.mixauto.ui.theme.CarBodyText
 import com.kyuusanq3.mixauto.ui.theme.CarDimensions
-import com.kyuusanq3.mixauto.ui.theme.CarHeadlineText
 import com.kyuusanq3.mixauto.ui.theme.CarLabelText
 import com.kyuusanq3.mixauto.ui.theme.ElectricCyan
 import com.kyuusanq3.mixauto.ui.theme.OledBlack
@@ -56,6 +60,7 @@ fun CarMapViewContainer(
     isDestinationPanelOpen: Boolean,
     onToggleMapSettings: () -> Unit,
     isMapSettingsPanelOpen: Boolean,
+    puckScale: Float = 1f,
     modifier: Modifier = Modifier,
 ) {
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -89,23 +94,18 @@ fun CarMapViewContainer(
             modifier = Modifier.fillMaxSize(),
         )
 
-        Column(
-            modifier = Modifier
-                .align(Alignment.TopStart)
-                .padding(CarDimensions.PaneGap)
-                .background(OledBlack.copy(alpha = 0.72f))
-                .padding(CarDimensions.PaneGap),
-        ) {
-            CarHeadlineText(
-                text = "${mapUiState.currentSpeed} km/h",
-                style = MaterialTheme.typography.headlineMedium,
-            )
-            CarBodyText(
-                text = mapUiState.streetName,
-                modifier = Modifier.padding(top = CarDimensions.PaneGap / 2),
-                style = MaterialTheme.typography.bodyLarge,
-            )
-            if (mapUiState.isNavigating) {
+        if (mapUiState.isNavigating) {
+            Column(
+                modifier = Modifier
+                    .align(Alignment.TopStart)
+                    .padding(CarDimensions.PaneGap)
+                    .background(OledBlack.copy(alpha = 0.72f))
+                    .padding(CarDimensions.PaneGap),
+            ) {
+                CarBodyText(
+                    text = mapUiState.streetName,
+                    style = MaterialTheme.typography.bodyLarge,
+                )
                 mapUiState.turnInstruction?.let { instruction ->
                     CarLabelText(
                         text = instruction,
@@ -266,7 +266,70 @@ fun CarMapViewContainer(
                 trackColor = OledBlack.copy(alpha = 0.5f),
             )
         }
+
+        val puckX = mapUiState.puckScreenX
+        val puckY = mapUiState.puckScreenY
+        if (mapUiState.currentSpeed > 0 && puckX != null && puckY != null) {
+            val bubbleOffset = (PUCK_BASE_RADIUS_DP * puckScale + BUBBLE_GAP_DP).dp
+            Box(
+                modifier = Modifier
+                    .offset { IntOffset(puckX.roundToInt(), puckY.roundToInt()) }
+                    .wrapContentSize(unbounded = true),
+            ) {
+                SpeedBubble(
+                    text = "${mapUiState.currentSpeed} km/h",
+                    modifier = Modifier
+                        .align(Alignment.CenterStart)
+                        .offset(x = bubbleOffset),
+                )
+            }
+        }
     }
+}
+
+private val PUCK_BASE_RADIUS_DP = 28f
+private val BUBBLE_GAP_DP = 10f
+
+@Composable
+private fun SpeedBubble(
+    text: String,
+    modifier: Modifier = Modifier,
+) {
+    val bubbleColor = OledBlack.copy(alpha = 0.72f)
+    val cornerRadius = 8.dp
+    val tailWidth = 10.dp
+    val tailHeight = 8.dp
+
+    Text(
+        text = text,
+        modifier = modifier
+            .drawBehind {
+                val tailW = tailWidth.toPx()
+                val tailH = tailHeight.toPx()
+                val cornerPx = cornerRadius.toPx()
+
+                drawRoundRect(
+                    color = bubbleColor,
+                    topLeft = Offset(tailH, 0f),
+                    size = Size(size.width - tailH, size.height),
+                    cornerRadius = CornerRadius(cornerPx, cornerPx),
+                )
+
+                val tailMidY = size.height / 2f
+                val tailPath = Path().apply {
+                    moveTo(0f, tailMidY)
+                    lineTo(tailH, tailMidY - tailW / 2f)
+                    lineTo(tailH, tailMidY + tailW / 2f)
+                    close()
+                }
+                drawPath(tailPath, bubbleColor)
+            }
+            .padding(start = tailHeight)
+            .padding(horizontal = 12.dp, vertical = 6.dp),
+        style = MaterialTheme.typography.labelLarge.copy(color = ElectricCyan),
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis,
+    )
 }
 
 @Composable

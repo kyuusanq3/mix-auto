@@ -76,6 +76,8 @@ fun MediaPlayerPane(
     mediaState: MediaPlaybackState,
     defaultAudioPackage: String,
     onSetDefaultAudioPackage: (String) -> Unit,
+    albumArtMode: AlbumArtMode,
+    onAlbumArtModeChange: (AlbumArtMode) -> Unit,
     onPlayPause: () -> Unit,
     onSkipPrevious: () -> Unit,
     onSkipNext: () -> Unit,
@@ -86,8 +88,6 @@ fun MediaPlayerPane(
     val needsDefaultSetup = defaultAudioPackage.isBlank() &&
         !mediaState.hasActiveSession &&
         !mediaState.needsNotificationAccess
-    val artModeState = remember { mutableStateOf(AlbumArtMode.PLAIN) }
-    val artMode by artModeState
     var isPickerOpen by remember { mutableStateOf(false) }
     var showAudioPicker by remember { mutableStateOf(false) }
     var pickerIndex by remember { mutableIntStateOf(0) }
@@ -184,7 +184,7 @@ fun MediaPlayerPane(
                                                     }
                                                 },
                                                 onLongPress = {
-                                                    pickerIndex = artModeState.value.ordinal
+                                                    pickerIndex = albumArtMode.ordinal
                                                     isPickerOpen = true
                                                 },
                                             )
@@ -234,10 +234,11 @@ fun MediaPlayerPane(
                                 AlbumArtModePicker(
                                     albumArt = mediaState.albumArt,
                                     isPlaying = mediaState.isPlaying,
+                                    playbackPositionMs = mediaState.playbackPositionMs,
                                     selectedIndex = pickerIndex,
                                     onSelectedIndexChange = { pickerIndex = it },
                                     onConfirm = { mode ->
-                                        artModeState.value = mode
+                                        onAlbumArtModeChange(mode)
                                         isPickerOpen = false
                                     },
                                     tileSize = artSize,
@@ -258,9 +259,10 @@ fun MediaPlayerPane(
                                     contentAlignment = Alignment.Center,
                                 ) {
                                     AlbumArtModeContent(
-                                        mode = artMode,
+                                        mode = albumArtMode,
                                         albumArt = mediaState.albumArt,
                                         isPlaying = mediaState.isPlaying,
+                                        playbackPositionMs = mediaState.playbackPositionMs,
                                         modifier = Modifier.fillMaxSize(),
                                     )
                                 }

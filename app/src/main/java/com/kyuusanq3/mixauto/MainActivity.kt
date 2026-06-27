@@ -15,6 +15,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -93,10 +94,7 @@ class MainActivity : ComponentActivity() {
             pendingOnboardingSteps.isNotEmpty()
         showOnboarding = shouldShowOnboarding
         WindowCompat.setDecorFitsSystemWindows(window, false)
-        WindowInsetsControllerCompat(window, window.decorView).apply {
-            show(WindowInsetsCompat.Type.systemBars())
-            systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_DEFAULT
-        }
+        applySystemBarVisibility(launcherPreferences.showSystemStatusBar)
         setContent {
             MixAutoTheme {
                 Box(modifier = Modifier.fillMaxSize()) {
@@ -108,6 +106,10 @@ class MainActivity : ComponentActivity() {
                         ),
                     )
                     val mediaState by mediaViewModel.mediaState.collectAsStateWithLifecycle()
+
+                    SideEffect {
+                        applySystemBarVisibility(launcherViewModel.showSystemStatusBar)
+                    }
 
                     DashboardScreen(
                     mapEngine = mapEngine,
@@ -123,6 +125,8 @@ class MainActivity : ComponentActivity() {
                     onMediaSkipPrevious = mediaViewModel::skipToPrevious,
                     onMediaSkipNext = mediaViewModel::skipToNext,
                     onMediaToggleLike = mediaViewModel::toggleLike,
+                    albumArtMode = launcherViewModel.albumArtMode,
+                    onAlbumArtModeChange = launcherViewModel::updateAlbumArtMode,
                     isLeftHandDrive = launcherViewModel.isLeftHandDrive,
                     isShortcutsHorizontal = launcherViewModel.isShortcutsHorizontal,
                     mapMediaRatio = launcherViewModel.mapMediaRatio,
@@ -200,6 +204,10 @@ class MainActivity : ComponentActivity() {
                         launcherViewModel.updatePuckScale(value)
                         mapEngine.setPuckScale(value)
                     },
+                    showStatusStrip = launcherViewModel.showStatusStrip,
+                    showSystemStatusBar = launcherViewModel.showSystemStatusBar,
+                    onToggleShowStatusStrip = launcherViewModel::toggleShowStatusStrip,
+                    onToggleShowSystemStatusBar = launcherViewModel::toggleShowSystemStatusBar,
                     onInstallApk = ::launchApkInstall,
                 )
 
@@ -225,7 +233,13 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
+        if (::launcherPreferences.isInitialized) {
+            applySystemBarVisibility(launcherPreferences.showSystemStatusBar)
+        }
         refreshMediaSessionsAndBootAudio()
+        if (::mapEngine.isInitialized && hasLocationPermission()) {
+            mapEngine.retryLocationActivation()
+        }
     }
 
     private fun refreshMediaSessionsAndBootAudio() {
@@ -272,6 +286,18 @@ class MainActivity : ComponentActivity() {
             Manifest.permission.ACCESS_COARSE_LOCATION,
         ) == PackageManager.PERMISSION_GRANTED
         return fineGranted || coarseGranted
+    }
+
+    private fun applySystemBarVisibility(show: Boolean) {
+        WindowInsetsControllerCompat(window, window.decorView).apply {
+            if (show) {
+                show(WindowInsetsCompat.Type.systemBars())
+                systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_DEFAULT
+            } else {
+                systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+                hide(WindowInsetsCompat.Type.systemBars())
+            }
+        }
     }
 
     private fun applyLauncherMode(enabled: Boolean) {

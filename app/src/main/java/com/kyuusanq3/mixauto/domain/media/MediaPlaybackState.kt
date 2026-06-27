@@ -7,6 +7,7 @@ data class MediaPlaybackState(
     val artist: String = "",
     val albumArt: Bitmap? = null,
     val isPlaying: Boolean = false,
+    val playbackPositionMs: Long = 0L,
     val hasActiveSession: Boolean = false,
     val needsNotificationAccess: Boolean = false,
     val sourcePackage: String = "",

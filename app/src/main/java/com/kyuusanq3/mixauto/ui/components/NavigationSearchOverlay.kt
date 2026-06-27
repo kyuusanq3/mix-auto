@@ -219,6 +219,7 @@ fun NavigationSearchContent(
     }
 
     LaunchedEffect(Unit) {
+        engine.refreshSearchOrigin()
         if (launcherViewModel.consumeStartVoiceOnSearchOpen()) {
             tryStartVoiceSearch.value()
         }
@@ -245,8 +246,9 @@ fun NavigationSearchContent(
     val searchOrigin = engine.resolveSearchOrigin()
     val currentLat = searchOrigin.first
     val currentLng = searchOrigin.second
+    val hasReliableOrigin = engine.hasReliableSearchOrigin()
 
-    LaunchedEffect(query, uiState.currentLat, uiState.currentLng, currentLat, currentLng, limitSearchDistance) {
+    LaunchedEffect(query, uiState.currentLat, uiState.currentLng, currentLat, currentLng, hasReliableOrigin, limitSearchDistance) {
         if (query.length < 2) {
             results = emptyList()
             hasSearched = false
@@ -418,7 +420,11 @@ fun NavigationSearchContent(
 
                         if (selectedTab == SuggestedTab.Suggestions && suggestionsEmpty) {
                             CarBodyText(
-                                text = "No recent destinations — pan the map to load nearby POIs",
+                                text = if (hasReliableOrigin) {
+                                    "No recent destinations — pan the map to load nearby POIs"
+                                } else {
+                                    "Waiting for GPS — nearby suggestions appear once location is available"
+                                },
                                 style = MaterialTheme.typography.bodyLarge,
                             )
                         } else if (selectedTab == SuggestedTab.Saved && savedEmpty) {
@@ -507,7 +513,11 @@ fun NavigationSearchContent(
                     }
                     hasSearched && !isLoading && !isLoadingRemote && results.isEmpty() -> {
                         CarBodyText(
-                            text = "No results found",
+                            text = if (hasReliableOrigin) {
+                                "No results found"
+                            } else {
+                                "Waiting for GPS — try again in a moment"
+                            },
                             style = MaterialTheme.typography.bodyLarge,
                         )
                     }

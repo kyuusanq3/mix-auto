@@ -54,6 +54,7 @@ import com.kyuusanq3.mixauto.domain.map.CarMapEngine
 import com.kyuusanq3.mixauto.domain.map.SearchResultPlace
 import com.kyuusanq3.mixauto.domain.media.MediaPlaybackState
 import com.kyuusanq3.mixauto.ui.components.CarMapViewContainer
+import com.kyuusanq3.mixauto.ui.components.DashboardStatusBar
 import com.kyuusanq3.mixauto.ui.components.carScrollbar
 import com.kyuusanq3.mixauto.ui.components.MapSettingsPanelContent
 import com.kyuusanq3.mixauto.ui.components.NavigationSearchContent
@@ -97,6 +98,7 @@ private fun BoxScope.SplitScreenAppDrawerSlot(
     dockPinnedPackages: List<String>,
     onToggleDockPin: (String) -> Unit,
     onSelectAudioSource: (String) -> Unit,
+    onOpenLauncherSettings: () -> Unit,
     onDismiss: () -> Unit,
 ) {
     if (!visible) return
@@ -105,6 +107,7 @@ private fun BoxScope.SplitScreenAppDrawerSlot(
         maxDockPinnedApps = LauncherPreferences.MAX_DOCK_PINNED_APPS,
         onToggleDockPin = onToggleDockPin,
         onSelectAudioSource = onSelectAudioSource,
+        onOpenLauncherSettings = onOpenLauncherSettings,
         onDismiss = onDismiss,
         modifier = Modifier
             .fillMaxSize()
@@ -124,6 +127,8 @@ fun DashboardScreen(
     onMediaSkipPrevious: () -> Unit,
     onMediaSkipNext: () -> Unit,
     onMediaToggleLike: () -> Unit,
+    albumArtMode: AlbumArtMode,
+    onAlbumArtModeChange: (AlbumArtMode) -> Unit,
     isLeftHandDrive: Boolean,
     isShortcutsHorizontal: Boolean,
     mapMediaRatio: Float,
@@ -159,6 +164,10 @@ fun DashboardScreen(
     onPuckHorizontalOffsetChange: (Float) -> Unit,
     onPuckVerticalOffsetChange: (Float) -> Unit,
     onPuckScaleChange: (Float) -> Unit,
+    showStatusStrip: Boolean,
+    showSystemStatusBar: Boolean,
+    onToggleShowStatusStrip: () -> Unit,
+    onToggleShowSystemStatusBar: () -> Unit,
     onInstallApk: (File) -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -228,6 +237,7 @@ fun DashboardScreen(
         activePanel = dismissToBasePanel(musicPaneEnabled)
     }
     val onDismissAppDrawer = { activePanel = dismissToBasePanel(musicPaneEnabled) }
+    val onOpenLauncherSettingsFromDrawer = { activePanel = ActivePanel.SETTINGS }
     val isDestinationPanelOpen =
         activePanel == ActivePanel.SEARCH || activePanel == ActivePanel.POI_DETAIL
     val isMapSettingsPanelOpen = activePanel == ActivePanel.MAP_DATA
@@ -303,6 +313,12 @@ fun DashboardScreen(
 
     LaunchedEffect(activePanel) {
         launcherViewModel.isDestinationSearchOpen = activePanel == ActivePanel.SEARCH
+        when (activePanel) {
+            ActivePanel.SEARCH,
+            ActivePanel.MAP_DATA,
+            -> mapEngine.setMapTapDismissHandler(onDismissPanel)
+            else -> mapEngine.setMapTapDismissHandler(null)
+        }
     }
 
     LaunchedEffect(mapUiState.selectedPoi) {
@@ -323,12 +339,30 @@ fun DashboardScreen(
         mapEngine.onMapHostLayoutChanged()
     }
 
-    Box(
+    Column(
         modifier = modifier
             .fillMaxSize()
             .background(OledBlack)
-            .systemBarsPadding(),
+            .then(
+                if (showSystemStatusBar) {
+                    Modifier.systemBarsPadding()
+                } else {
+                    Modifier
+                },
+            ),
     ) {
+        if (showStatusStrip) {
+            DashboardStatusBar(
+                mapEngine = mapEngine,
+                showTraffic = showTraffic,
+                tomTomApiKey = tomTomApiKey,
+            )
+        }
+        Box(
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxWidth(),
+        ) {
         when {
             isPortrait -> {
                 Column(modifier = Modifier.fillMaxSize()) {
@@ -348,6 +382,7 @@ fun DashboardScreen(
                                 isDestinationPanelOpen = isDestinationPanelOpen,
                                 onToggleMapSettings = onToggleMapSettings,
                                 isMapSettingsPanelOpen = isMapSettingsPanelOpen,
+                                puckScale = puckScale,
                                 modifier = Modifier
                                     .weight(if (showSecondaryPane) effectiveMapMediaRatio else 1f)
                                     .fillMaxWidth(),
@@ -381,6 +416,8 @@ fun DashboardScreen(
                                     onMediaSkipPrevious = onMediaSkipPrevious,
                                     onMediaSkipNext = onMediaSkipNext,
                                     onMediaToggleLike = onMediaToggleLike,
+                                    albumArtMode = albumArtMode,
+                                    onAlbumArtModeChange = onAlbumArtModeChange,
                                     isLeftHandDrive = isLeftHandDrive,
                                     isShortcutsHorizontal = isShortcutsHorizontal,
                                     limitSearchDistance = limitSearchDistance,
@@ -407,6 +444,10 @@ fun DashboardScreen(
                                     onPuckVerticalOffsetChange = onPuckVerticalOffsetChange,
                                     puckScale = puckScale,
                                     onPuckScaleChange = onPuckScaleChange,
+                                    showStatusStrip = showStatusStrip,
+                                    showSystemStatusBar = showSystemStatusBar,
+                                    onToggleShowStatusStrip = onToggleShowStatusStrip,
+                                    onToggleShowSystemStatusBar = onToggleShowSystemStatusBar,
                                     appUpdateState = appUpdateState,
                                     onCheckForUpdate = appUpdateViewModel::checkForUpdate,
                                     onDownloadUpdate = appUpdateViewModel::downloadUpdate,
@@ -422,6 +463,7 @@ fun DashboardScreen(
                             dockPinnedPackages = dockPinnedPackages,
                             onToggleDockPin = onToggleDockPin,
                             onSelectAudioSource = openAudioSource,
+                            onOpenLauncherSettings = onOpenLauncherSettingsFromDrawer,
                             onDismiss = onDismissAppDrawer,
                         )
                     }
@@ -430,6 +472,7 @@ fun DashboardScreen(
                         isLargeIcons = isLargeShortcutIcons,
                         isLeftHandDrive = isLeftHandDrive,
                         activePanel = activePanel,
+                        mediaState = mediaState,
                         voiceSearchAvailable = voiceSearchAvailable,
                         defaultAudioPackage = defaultAudioPackage,
                         dockPinnedPackages = dockPinnedPackages,
@@ -465,6 +508,7 @@ fun DashboardScreen(
                                 isDestinationPanelOpen = isDestinationPanelOpen,
                                 onToggleMapSettings = onToggleMapSettings,
                                 isMapSettingsPanelOpen = isMapSettingsPanelOpen,
+                                puckScale = puckScale,
                                 modifier = Modifier
                                     .weight(if (showSecondaryPane) effectiveMapMediaRatio else 1f)
                                     .fillMaxSize(),
@@ -498,6 +542,8 @@ fun DashboardScreen(
                                     onMediaSkipPrevious = onMediaSkipPrevious,
                                     onMediaSkipNext = onMediaSkipNext,
                                     onMediaToggleLike = onMediaToggleLike,
+                                    albumArtMode = albumArtMode,
+                                    onAlbumArtModeChange = onAlbumArtModeChange,
                                     isLeftHandDrive = isLeftHandDrive,
                                     isShortcutsHorizontal = isShortcutsHorizontal,
                                     limitSearchDistance = limitSearchDistance,
@@ -524,6 +570,10 @@ fun DashboardScreen(
                                     onPuckVerticalOffsetChange = onPuckVerticalOffsetChange,
                                     puckScale = puckScale,
                                     onPuckScaleChange = onPuckScaleChange,
+                                    showStatusStrip = showStatusStrip,
+                                    showSystemStatusBar = showSystemStatusBar,
+                                    onToggleShowStatusStrip = onToggleShowStatusStrip,
+                                    onToggleShowSystemStatusBar = onToggleShowSystemStatusBar,
                                     appUpdateState = appUpdateState,
                                     onCheckForUpdate = appUpdateViewModel::checkForUpdate,
                                     onDownloadUpdate = appUpdateViewModel::downloadUpdate,
@@ -555,6 +605,8 @@ fun DashboardScreen(
                                     onMediaSkipPrevious = onMediaSkipPrevious,
                                     onMediaSkipNext = onMediaSkipNext,
                                     onMediaToggleLike = onMediaToggleLike,
+                                    albumArtMode = albumArtMode,
+                                    onAlbumArtModeChange = onAlbumArtModeChange,
                                     isLeftHandDrive = isLeftHandDrive,
                                     isShortcutsHorizontal = isShortcutsHorizontal,
                                     limitSearchDistance = limitSearchDistance,
@@ -581,6 +633,10 @@ fun DashboardScreen(
                                     onPuckVerticalOffsetChange = onPuckVerticalOffsetChange,
                                     puckScale = puckScale,
                                     onPuckScaleChange = onPuckScaleChange,
+                                    showStatusStrip = showStatusStrip,
+                                    showSystemStatusBar = showSystemStatusBar,
+                                    onToggleShowStatusStrip = onToggleShowStatusStrip,
+                                    onToggleShowSystemStatusBar = onToggleShowSystemStatusBar,
                                     appUpdateState = appUpdateState,
                                     onCheckForUpdate = appUpdateViewModel::checkForUpdate,
                                     onDownloadUpdate = appUpdateViewModel::downloadUpdate,
@@ -605,6 +661,7 @@ fun DashboardScreen(
                                 isDestinationPanelOpen = isDestinationPanelOpen,
                                 onToggleMapSettings = onToggleMapSettings,
                                 isMapSettingsPanelOpen = isMapSettingsPanelOpen,
+                                puckScale = puckScale,
                                 modifier = Modifier
                                     .weight(if (showSecondaryPane) effectiveMapMediaRatio else 1f)
                                     .fillMaxSize(),
@@ -616,6 +673,7 @@ fun DashboardScreen(
                             dockPinnedPackages = dockPinnedPackages,
                             onToggleDockPin = onToggleDockPin,
                             onSelectAudioSource = openAudioSource,
+                            onOpenLauncherSettings = onOpenLauncherSettingsFromDrawer,
                             onDismiss = onDismissAppDrawer,
                         )
                     }
@@ -624,6 +682,7 @@ fun DashboardScreen(
                         isLargeIcons = isLargeShortcutIcons,
                         isLeftHandDrive = isLeftHandDrive,
                         activePanel = activePanel,
+                        mediaState = mediaState,
                         voiceSearchAvailable = voiceSearchAvailable,
                         defaultAudioPackage = defaultAudioPackage,
                         dockPinnedPackages = dockPinnedPackages,
@@ -657,6 +716,7 @@ fun DashboardScreen(
                                 isDestinationPanelOpen = isDestinationPanelOpen,
                                 onToggleMapSettings = onToggleMapSettings,
                                 isMapSettingsPanelOpen = isMapSettingsPanelOpen,
+                                    puckScale = puckScale,
                                     modifier = Modifier
                                         .weight(
                                             if (showSecondaryPane) {
@@ -696,6 +756,8 @@ fun DashboardScreen(
                                         onMediaSkipPrevious = onMediaSkipPrevious,
                                         onMediaSkipNext = onMediaSkipNext,
                                         onMediaToggleLike = onMediaToggleLike,
+                                        albumArtMode = albumArtMode,
+                                        onAlbumArtModeChange = onAlbumArtModeChange,
                                         isLeftHandDrive = isLeftHandDrive,
                                         isShortcutsHorizontal = isShortcutsHorizontal,
                                         limitSearchDistance = limitSearchDistance,
@@ -722,6 +784,10 @@ fun DashboardScreen(
                                         onPuckVerticalOffsetChange = onPuckVerticalOffsetChange,
                                         puckScale = puckScale,
                                         onPuckScaleChange = onPuckScaleChange,
+                                        showStatusStrip = showStatusStrip,
+                                        showSystemStatusBar = showSystemStatusBar,
+                                        onToggleShowStatusStrip = onToggleShowStatusStrip,
+                                        onToggleShowSystemStatusBar = onToggleShowSystemStatusBar,
                                         appUpdateState = appUpdateState,
                                         onCheckForUpdate = appUpdateViewModel::checkForUpdate,
                                         onDownloadUpdate = appUpdateViewModel::downloadUpdate,
@@ -737,6 +803,7 @@ fun DashboardScreen(
                                 dockPinnedPackages = dockPinnedPackages,
                                 onToggleDockPin = onToggleDockPin,
                                 onSelectAudioSource = openAudioSource,
+                                onOpenLauncherSettings = onOpenLauncherSettingsFromDrawer,
                                 onDismiss = onDismissAppDrawer,
                             )
                         }
@@ -745,6 +812,7 @@ fun DashboardScreen(
                             isLargeIcons = isLargeShortcutIcons,
                             isLeftHandDrive = isLeftHandDrive,
                             activePanel = activePanel,
+                            mediaState = mediaState,
                             voiceSearchAvailable = voiceSearchAvailable,
                             defaultAudioPackage = defaultAudioPackage,
                             dockPinnedPackages = dockPinnedPackages,
@@ -763,6 +831,7 @@ fun DashboardScreen(
                             isLargeIcons = isLargeShortcutIcons,
                             isLeftHandDrive = isLeftHandDrive,
                             activePanel = activePanel,
+                            mediaState = mediaState,
                             voiceSearchAvailable = voiceSearchAvailable,
                             defaultAudioPackage = defaultAudioPackage,
                             dockPinnedPackages = dockPinnedPackages,
@@ -787,6 +856,7 @@ fun DashboardScreen(
                                 isDestinationPanelOpen = isDestinationPanelOpen,
                                 onToggleMapSettings = onToggleMapSettings,
                                 isMapSettingsPanelOpen = isMapSettingsPanelOpen,
+                                    puckScale = puckScale,
                                     modifier = Modifier
                                         .weight(
                                             if (showSecondaryPane) {
@@ -826,6 +896,8 @@ fun DashboardScreen(
                                         onMediaSkipPrevious = onMediaSkipPrevious,
                                         onMediaSkipNext = onMediaSkipNext,
                                         onMediaToggleLike = onMediaToggleLike,
+                                        albumArtMode = albumArtMode,
+                                        onAlbumArtModeChange = onAlbumArtModeChange,
                                         isLeftHandDrive = isLeftHandDrive,
                                         isShortcutsHorizontal = isShortcutsHorizontal,
                                         limitSearchDistance = limitSearchDistance,
@@ -852,6 +924,10 @@ fun DashboardScreen(
                                         onPuckVerticalOffsetChange = onPuckVerticalOffsetChange,
                                         puckScale = puckScale,
                                         onPuckScaleChange = onPuckScaleChange,
+                                        showStatusStrip = showStatusStrip,
+                                        showSystemStatusBar = showSystemStatusBar,
+                                        onToggleShowStatusStrip = onToggleShowStatusStrip,
+                                        onToggleShowSystemStatusBar = onToggleShowSystemStatusBar,
                                         appUpdateState = appUpdateState,
                                         onCheckForUpdate = appUpdateViewModel::checkForUpdate,
                                         onDownloadUpdate = appUpdateViewModel::downloadUpdate,
@@ -867,12 +943,14 @@ fun DashboardScreen(
                                 dockPinnedPackages = dockPinnedPackages,
                                 onToggleDockPin = onToggleDockPin,
                                 onSelectAudioSource = openAudioSource,
+                                onOpenLauncherSettings = onOpenLauncherSettingsFromDrawer,
                                 onDismiss = onDismissAppDrawer,
                             )
                         }
                     }
                 }
             }
+        }
         }
     }
 }
@@ -898,6 +976,8 @@ private fun DashboardSecondaryPane(
     onMediaSkipPrevious: () -> Unit,
     onMediaSkipNext: () -> Unit,
     onMediaToggleLike: () -> Unit,
+    albumArtMode: AlbumArtMode,
+    onAlbumArtModeChange: (AlbumArtMode) -> Unit,
     isLeftHandDrive: Boolean,
     isShortcutsHorizontal: Boolean,
     limitSearchDistance: Boolean,
@@ -924,6 +1004,10 @@ private fun DashboardSecondaryPane(
     onPuckVerticalOffsetChange: (Float) -> Unit,
     puckScale: Float,
     onPuckScaleChange: (Float) -> Unit,
+    showStatusStrip: Boolean,
+    showSystemStatusBar: Boolean,
+    onToggleShowStatusStrip: () -> Unit,
+    onToggleShowSystemStatusBar: () -> Unit,
     appUpdateState: AppUpdateState,
     onCheckForUpdate: () -> Unit,
     onDownloadUpdate: () -> Unit,
@@ -950,6 +1034,8 @@ private fun DashboardSecondaryPane(
         onMediaSkipPrevious = onMediaSkipPrevious,
         onMediaSkipNext = onMediaSkipNext,
         onMediaToggleLike = onMediaToggleLike,
+        albumArtMode = albumArtMode,
+        onAlbumArtModeChange = onAlbumArtModeChange,
         isLeftHandDrive = isLeftHandDrive,
         isShortcutsHorizontal = isShortcutsHorizontal,
         limitSearchDistance = limitSearchDistance,
@@ -976,6 +1062,10 @@ private fun DashboardSecondaryPane(
         onPuckVerticalOffsetChange = onPuckVerticalOffsetChange,
         puckScale = puckScale,
         onPuckScaleChange = onPuckScaleChange,
+        showStatusStrip = showStatusStrip,
+        showSystemStatusBar = showSystemStatusBar,
+        onToggleShowStatusStrip = onToggleShowStatusStrip,
+        onToggleShowSystemStatusBar = onToggleShowSystemStatusBar,
         appUpdateState = appUpdateState,
         onCheckForUpdate = onCheckForUpdate,
         onDownloadUpdate = onDownloadUpdate,
@@ -1005,6 +1095,8 @@ private fun MediaOrSettingsPane(
     onMediaSkipPrevious: () -> Unit,
     onMediaSkipNext: () -> Unit,
     onMediaToggleLike: () -> Unit,
+    albumArtMode: AlbumArtMode,
+    onAlbumArtModeChange: (AlbumArtMode) -> Unit,
     isLeftHandDrive: Boolean,
     isShortcutsHorizontal: Boolean,
     limitSearchDistance: Boolean,
@@ -1031,6 +1123,10 @@ private fun MediaOrSettingsPane(
     onPuckVerticalOffsetChange: (Float) -> Unit,
     puckScale: Float,
     onPuckScaleChange: (Float) -> Unit,
+    showStatusStrip: Boolean,
+    showSystemStatusBar: Boolean,
+    onToggleShowStatusStrip: () -> Unit,
+    onToggleShowSystemStatusBar: () -> Unit,
     appUpdateState: AppUpdateState,
     onCheckForUpdate: () -> Unit,
     onDownloadUpdate: () -> Unit,
@@ -1085,6 +1181,10 @@ private fun MediaOrSettingsPane(
                     isShortcutsHorizontal = isShortcutsHorizontal,
                     isLauncherMode = isLauncherMode,
                     isLargeShortcutIcons = isLargeShortcutIcons,
+                    showStatusStrip = showStatusStrip,
+                    showSystemStatusBar = showSystemStatusBar,
+                    onToggleShowStatusStrip = onToggleShowStatusStrip,
+                    onToggleShowSystemStatusBar = onToggleShowSystemStatusBar,
                     onToggleLhd = onToggleLhd,
                     onToggleShortcutsHorizontal = onToggleShortcutsHorizontal,
                     onToggleLauncherMode = onToggleLauncherMode,
@@ -1130,6 +1230,8 @@ private fun MediaOrSettingsPane(
                     mediaState = mediaState,
                     defaultAudioPackage = defaultAudioPackage,
                     onSetDefaultAudioPackage = onSetDefaultAudioPackage,
+                    albumArtMode = albumArtMode,
+                    onAlbumArtModeChange = onAlbumArtModeChange,
                     onPlayPause = onMediaPlayPause,
                     onSkipPrevious = onMediaSkipPrevious,
                     onSkipNext = onMediaSkipNext,
@@ -1147,6 +1249,10 @@ private fun SettingsContent(
     isShortcutsHorizontal: Boolean,
     isLauncherMode: Boolean,
     isLargeShortcutIcons: Boolean,
+    showStatusStrip: Boolean,
+    showSystemStatusBar: Boolean,
+    onToggleShowStatusStrip: () -> Unit,
+    onToggleShowSystemStatusBar: () -> Unit,
     onToggleLhd: () -> Unit,
     onToggleShortcutsHorizontal: () -> Unit,
     onToggleLauncherMode: () -> Unit,
@@ -1212,6 +1318,26 @@ private fun SettingsContent(
                     onCheckedChange = { checked ->
                         if (checked != isLargeShortcutIcons) {
                             onToggleLargeShortcutIcons()
+                        }
+                    },
+                )
+
+                SettingsSwitchRow(
+                    label = "Status strip (time, date, weather)",
+                    checked = showStatusStrip,
+                    onCheckedChange = { checked ->
+                        if (checked != showStatusStrip) {
+                            onToggleShowStatusStrip()
+                        }
+                    },
+                )
+
+                SettingsSwitchRow(
+                    label = "System status bar",
+                    checked = showSystemStatusBar,
+                    onCheckedChange = { checked ->
+                        if (checked != showSystemStatusBar) {
+                            onToggleShowSystemStatusBar()
                         }
                     },
                 )

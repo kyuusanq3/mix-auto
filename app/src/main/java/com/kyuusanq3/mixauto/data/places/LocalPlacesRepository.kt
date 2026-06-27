@@ -42,6 +42,17 @@ class LocalPlacesRepository(context: Context) {
     val hasInstalledDatabase: Boolean
         get() = listInstalledDatabaseIsos().isNotEmpty()
 
+    /** Opens the largest installed DB if a file exists but the connection is closed. */
+    fun ensureDatabaseOpen(): Boolean = synchronized(dbLock) {
+        if (database?.isOpen == true) return true
+        if (!hasInstalledDatabase) return false
+        val opened = discoverAndOpenInstalledDatabaseUnlocked()
+        if (!opened) {
+            Log.w(TAG, "Places database file exists but could not be opened")
+        }
+        opened
+    }
+
     fun databaseFile(isoCode: String): File = File(placesDir, "${isoCode.lowercase()}.db")
 
     fun isDatabaseInstalled(isoCode: String): Boolean = databaseFile(isoCode).exists()
@@ -344,6 +355,7 @@ class LocalPlacesRepository(context: Context) {
         if (query.isBlank()) return emptyList()
 
         return runCatching {
+            if (!ensureDatabaseOpen()) return emptyList()
             val db = readableDatabase() ?: return emptyList()
 
             val minLat = currentLat - BBOX_DELTA
@@ -384,6 +396,7 @@ class LocalPlacesRepository(context: Context) {
         maxLng: Double,
         limit: Int = BBOX_RESULT_LIMIT,
     ): List<SearchResultPlace> {
+        if (!ensureDatabaseOpen()) return emptyList()
         val db = readableDatabase() ?: return emptyList()
         val sql = """
             SELECT name, address, city, lat, lng, category

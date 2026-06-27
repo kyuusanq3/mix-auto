@@ -8,6 +8,7 @@ import android.media.Rating
 import android.media.session.MediaController
 import android.media.session.MediaSessionManager
 import android.media.session.PlaybackState
+import android.os.SystemClock
 import android.support.v4.media.session.MediaControllerCompat
 import android.support.v4.media.session.MediaSessionCompat
 import android.support.v4.media.session.PlaybackStateCompat
@@ -289,6 +290,7 @@ class MediaSessionRepository(context: Context) {
                 artist = readArtist(metadata),
                 albumArt = readAlbumArt(metadata),
                 isPlaying = isPlaying,
+                playbackPositionMs = readPlaybackPositionMs(playbackState),
                 hasActiveSession = metadata != null || playbackState != null,
                 needsNotificationAccess = false,
                 sourcePackage = controller.packageName,
@@ -388,6 +390,14 @@ class MediaSessionRepository(context: Context) {
         return metadata?.getBitmap(MediaMetadata.METADATA_KEY_ALBUM_ART)
             ?: metadata?.getBitmap(MediaMetadata.METADATA_KEY_ART)
             ?: metadata?.getBitmap(MediaMetadata.METADATA_KEY_DISPLAY_ICON)
+    }
+
+    private fun readPlaybackPositionMs(playbackState: PlaybackState?): Long {
+        if (playbackState == null) return 0L
+        val position = playbackState.position.coerceAtLeast(0L)
+        if (playbackState.state != PlaybackState.STATE_PLAYING) return position
+        val elapsed = SystemClock.elapsedRealtime() - playbackState.lastPositionUpdateTime
+        return (position + elapsed * playbackState.playbackSpeed).toLong().coerceAtLeast(0L)
     }
 
     private fun readTrackKey(metadata: MediaMetadata?): String? {

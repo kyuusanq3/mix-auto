@@ -12,6 +12,7 @@ import com.kyuusanq3.mixauto.data.map.TomTomTrafficClient
 import com.kyuusanq3.mixauto.domain.map.SearchResultPlace
 import com.kyuusanq3.mixauto.BuildConfig
 import com.kyuusanq3.mixauto.ui.components.canLaunchApp
+import com.kyuusanq3.mixauto.ui.dashboard.AlbumArtMode
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
@@ -80,6 +81,15 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         private set
 
     var savedPlaces by mutableStateOf(preferences.savedPlaces)
+        private set
+
+    var albumArtMode by mutableStateOf(AlbumArtMode.fromPreference(preferences.albumArtMode))
+        private set
+
+    var showStatusStrip by mutableStateOf(preferences.showStatusStrip)
+        private set
+
+    var showSystemStatusBar by mutableStateOf(preferences.showSystemStatusBar)
         private set
 
     var tomTomKeyCheckState by mutableStateOf<TomTomKeyCheckState>(TomTomKeyCheckState.Idle)
@@ -167,9 +177,24 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         preferences.puckScale = value
     }
 
+    fun updateAlbumArtMode(mode: AlbumArtMode) {
+        albumArtMode = mode
+        preferences.albumArtMode = mode.name
+    }
+
     fun toggleTraffic() {
         showTraffic = !showTraffic
         preferences.showTraffic = showTraffic
+    }
+
+    fun toggleShowStatusStrip() {
+        showStatusStrip = !showStatusStrip
+        preferences.showStatusStrip = showStatusStrip
+    }
+
+    fun toggleShowSystemStatusBar() {
+        showSystemStatusBar = !showSystemStatusBar
+        preferences.showSystemStatusBar = showSystemStatusBar
     }
 
     fun updateTomTomApiKey(key: String) {

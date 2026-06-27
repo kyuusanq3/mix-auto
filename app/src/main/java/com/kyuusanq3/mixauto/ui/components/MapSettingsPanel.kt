@@ -231,10 +231,10 @@ private fun DrivingViewSettingsSection(
                 style = MaterialTheme.typography.bodyLarge,
             )
             Slider(
-                value = drivingZoom,
+                value = drivingZoom.coerceIn(MIN_DRIVING_ZOOM_SLIDER, MAX_DRIVING_ZOOM_SLIDER),
                 onValueChange = onDrivingZoomChange,
-                valueRange = 15f..21f,
-                steps = 12,
+                valueRange = MIN_DRIVING_ZOOM_SLIDER..MAX_DRIVING_ZOOM_SLIDER,
+                steps = DRIVING_ZOOM_SLIDER_STEPS,
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(CarDimensions.MinTapTarget),
@@ -246,3 +246,7 @@ private fun DrivingViewSettingsSection(
         }
     }
 }
+
+private const val MIN_DRIVING_ZOOM_SLIDER = 12f
+private const val MAX_DRIVING_ZOOM_SLIDER = 22f
+private const val DRIVING_ZOOM_SLIDER_STEPS = 19

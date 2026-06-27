@@ -143,6 +143,24 @@ class LauncherPreferences(context: Context) {
             prefs.edit().putString(KEY_DOCK_PINNED_PACKAGES, array.toString()).apply()
         }
 
+    var albumArtMode: String
+        get() = prefs.getString(KEY_ALBUM_ART_MODE, DEFAULT_ALBUM_ART_MODE) ?: DEFAULT_ALBUM_ART_MODE
+        set(value) {
+            prefs.edit().putString(KEY_ALBUM_ART_MODE, value).apply()
+        }
+
+    var showStatusStrip: Boolean
+        get() = prefs.getBoolean(KEY_SHOW_STATUS_STRIP, true)
+        set(value) {
+            prefs.edit().putBoolean(KEY_SHOW_STATUS_STRIP, value).apply()
+        }
+
+    var showSystemStatusBar: Boolean
+        get() = prefs.getBoolean(KEY_SHOW_SYSTEM_STATUS_BAR, true)
+        set(value) {
+            prefs.edit().putBoolean(KEY_SHOW_SYSTEM_STATUS_BAR, value).apply()
+        }
+
     companion object {
         private const val PREFS_NAME = "launcher_prefs"
         private const val KEY_LEFT_HAND_DRIVE = "lhd"
@@ -164,6 +182,10 @@ class LauncherPreferences(context: Context) {
         private const val KEY_ONBOARDING_VERSION = "onboarding_version"
         private const val KEY_DEFAULT_AUDIO_PACKAGE = "default_audio_package"
         private const val KEY_DOCK_PINNED_PACKAGES = "dock_pinned_packages"
+        private const val KEY_ALBUM_ART_MODE = "album_art_mode"
+        private const val KEY_SHOW_STATUS_STRIP = "show_status_strip"
+        private const val KEY_SHOW_SYSTEM_STATUS_BAR = "show_system_status_bar"
+        const val DEFAULT_ALBUM_ART_MODE = "PLAIN"
         const val MAX_RECENT_DESTINATIONS = 10
         const val MAX_SAVED_PLACES = 50
         const val MAX_DOCK_PINNED_APPS = 5

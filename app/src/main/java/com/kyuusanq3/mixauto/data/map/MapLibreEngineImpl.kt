@@ -122,6 +122,7 @@ class MapLibreEngineImpl(
     private var puckHorizontalOffset = initialPuckHOffset
     private var puckVerticalOffset = initialPuckVOffset
     private var puckScale = initialPuckScale
+    private var mapTapDismissHandler: (() -> Unit)? = null
 
     private var mapView: MapView? = null
     private var mapLibreMap: org.maplibre.android.maps.MapLibreMap? = null
@@ -191,6 +192,7 @@ class MapLibreEngineImpl(
                 map.addOnCameraMoveStartedListener { reason ->
                     if (reason == MapLibreMap.OnCameraMoveStartedListener.REASON_API_GESTURE) {
                         _uiState.update { it.copy(isCameraDetached = true) }
+                        updatePuckScreenPosition(map)
                         if (_uiState.value.isInTopDownView) {
                             cancelTopDownViewportSync()
                             cancelPoiPreviewRetries()
@@ -200,6 +202,7 @@ class MapLibreEngineImpl(
                     }
                 }
                 registerPoiInteractions(map)
+                map.addOnCameraMoveListener { updatePuckScreenPosition(map) }
                 applyMapStyle(map, context)
             }
             mapView = view
@@ -283,6 +286,7 @@ class MapLibreEngineImpl(
         applyDrivingViewportPadding(map)
         applyDrivingTrackingPadding(map)
         forceLocationUpdateForImmediateRender(map)
+        updatePuckScreenPosition(map)
     }
 
     override fun setPuckScale(scale: Float) {
@@ -295,6 +299,42 @@ class MapLibreEngineImpl(
             .minZoomIconScale(scale)
             .build()
         component.applyStyle(updated)
+    }
+
+    private fun updatePuckScreenPosition(map: MapLibreMap) {
+        val component = map.locationComponent
+        val hasActivePuck = component.isLocationComponentActivated &&
+            component.isLocationComponentEnabled &&
+            lastKnownLocation != null
+        if (!hasActivePuck) {
+            val state = _uiState.value
+            if (state.puckScreenX == null && state.puckScreenY == null) return
+            _uiState.update { it.copy(puckScreenX = null, puckScreenY = null) }
+            return
+        }
+
+        val state = _uiState.value
+        val point = if (
+            !state.isCameraDetached &&
+            !state.isInTopDownView &&
+            component.cameraMode == CameraMode.TRACKING_GPS
+        ) {
+            val padding = computeDrivingViewportPadding(map)
+            val w = map.width.toFloat()
+            val h = map.height.toFloat()
+            android.graphics.PointF(
+                (w + padding.left) / 2f,
+                (h + padding.top) / 2f,
+            )
+        } else {
+            map.projection.toScreenLocation(lastKnownLocation!!)
+        }
+        if (state.puckScreenX == point.x && state.puckScreenY == point.y) return
+        _uiState.update { it.copy(puckScreenX = point.x, puckScreenY = point.y) }
+    }
+
+    override fun setMapTapDismissHandler(handler: (() -> Unit)?) {
+        mapTapDismissHandler = handler
     }
 
     /**
@@ -463,6 +503,12 @@ class MapLibreEngineImpl(
 
         val photon = fetchPhoton(query, searchLat, searchLng)
         val finalResults = applyDistanceLimit(mergeAndDeduplicate(localAndCache, photon))
+        Log.i(
+            TAG,
+            "searchDestination query=\"$query\" origin=$searchLat,$searchLng " +
+                "reliable=${hasReliableSearchOrigin()} local=${local.size} cache=${cacheResults.size} " +
+                "photon=${photon.size} final=${finalResults.size}",
+        )
         if (finalResults.isNotEmpty()) {
             withContext(Dispatchers.Main) {
                 mergeIntoPoiCache(finalResults)
@@ -522,17 +568,90 @@ class MapLibreEngineImpl(
         return resolveSearchOrigin(0.0, 0.0)
     }
 
+    override fun hasReliableSearchOrigin(): Boolean {
+        val state = _uiState.value
+        if (state.currentLat != null && state.currentLng != null &&
+            isValidSearchOrigin(state.currentLat, state.currentLng)
+        ) {
+            return true
+        }
+        lastKnownLocation?.let { loc ->
+            if (isValidSearchOrigin(loc.latitude, loc.longitude)) return true
+        }
+        resolveMapViewOriginForSearch()?.let { return true }
+        return false
+    }
+
+    override fun refreshSearchOrigin() {
+        val ctx = appContext ?: return
+        if (!hasLocationPermission(ctx)) return
+        refreshLocationOnly(ctx)
+        readLastKnownLocation(ctx)?.let { latLng ->
+            lastKnownLocation = latLng
+            syncSearchOriginToUiState(latLng.latitude, latLng.longitude)
+        }
+    }
+
     private fun resolveSearchOrigin(fallbackLat: Double, fallbackLng: Double): Pair<Double, Double> {
         val state = _uiState.value
-        if (state.currentLat != null && state.currentLng != null) {
+        if (state.currentLat != null && state.currentLng != null &&
+            isValidSearchOrigin(state.currentLat, state.currentLng)
+        ) {
             return state.currentLat to state.currentLng
         }
-        lastKnownLocation?.let { return it.latitude to it.longitude }
-        resolveMapViewOrigin()?.let { return it.latitude to it.longitude }
-        if (fallbackLat != 0.0 || fallbackLng != 0.0) {
+        lastKnownLocation?.let { loc ->
+            if (isValidSearchOrigin(loc.latitude, loc.longitude)) {
+                return loc.latitude to loc.longitude
+            }
+        }
+        resolveMapViewOriginForSearch()?.let { target ->
+            return target.latitude to target.longitude
+        }
+        if (isValidSearchOrigin(fallbackLat, fallbackLng)) {
             return fallbackLat to fallbackLng
         }
-        return 0.0 to 0.0
+        appContext?.let { ctx ->
+            if (hasLocationPermission(ctx)) {
+                readLastKnownLocation(ctx)?.let { latLng ->
+                    if (isValidSearchOrigin(latLng.latitude, latLng.longitude)) {
+                        lastKnownLocation = latLng
+                        syncSearchOriginToUiState(latLng.latitude, latLng.longitude)
+                        return latLng.latitude to latLng.longitude
+                    }
+                }
+            }
+        }
+        Log.w(TAG, "Search origin unresolved; using Philippines fallback")
+        return DEFAULT_LOCATION.latitude to DEFAULT_LOCATION.longitude
+    }
+
+    private fun isValidSearchOrigin(lat: Double, lng: Double): Boolean {
+        if (lat == 0.0 && lng == 0.0) return false
+        if (kotlin.math.abs(lat) < 0.01 && kotlin.math.abs(lng) < 0.01) return false
+        return true
+    }
+
+    private fun syncSearchOriginToUiState(lat: Double, lng: Double) {
+        _uiState.update { state ->
+            if (state.currentLat == lat && state.currentLng == lng) {
+                state
+            } else {
+                state.copy(currentLat = lat, currentLng = lng)
+            }
+        }
+    }
+
+    private fun resolveMapViewOriginForSearch(): LatLng? {
+        val map = mapLibreMap ?: return null
+        val position = map.cameraPosition
+        val target = position.target ?: return null
+        if (!_uiState.value.isNavigating && position.zoom < ROUTING_MIN_ZOOM) {
+            return null
+        }
+        if (!isValidSearchOrigin(target.latitude, target.longitude)) {
+            return null
+        }
+        return target
     }
 
     private suspend fun fetchPhoton(
@@ -712,13 +831,16 @@ class MapLibreEngineImpl(
         if (_uiState.value.isNavigating) {
             enterNavigationCamera()
         } else {
+            cancelTopDownViewportSync()
+            cancelPoiPreviewRetries()
+            pendingPoiPreviewTarget = null
+            _uiState.update { it.copy(isCameraDetached = false, isInTopDownView = false) }
             hasSnappedCameraToGps = false
             val target = lastKnownLocation ?: resolveFreeDriveTarget(map)
             if (target != null) {
                 snapCameraToGpsIfNeeded(target)
             } else {
                 activateFreeDriveTrackingMode(map)
-                _uiState.update { it.copy(isCameraDetached = false, isInTopDownView = false) }
             }
         }
     }
@@ -730,6 +852,9 @@ class MapLibreEngineImpl(
         routeOverviewJob = null
         poiRefreshJob?.cancel()
         poiRefreshJob = null
+        cancelTopDownViewportSync()
+        cancelPoiPreviewRetries()
+        pendingPoiPreviewTarget = null
         fullRouteSteps = emptyList()
         currentStepIndex = 0
         destinationLatLng = null
@@ -766,6 +891,7 @@ class MapLibreEngineImpl(
             it.copy(
                 selectedPoi = null,
                 nearbyPois = emptyList(),
+                isInTopDownView = false,
             )
         }
         clearCustomPin()
@@ -1012,9 +1138,11 @@ class MapLibreEngineImpl(
                 state.selectedPoi != null -> recenterOnSelectedPoi(map, state.selectedPoi)
                 else -> syncTopDownViewportPaddingOnly(map)
             }
+            updatePuckScreenPosition(map)
             return
         }
         applyDrivingTrackingPadding(map)
+        updatePuckScreenPosition(map)
     }
 
     private fun applyMapPaddingImmediate(map: MapLibreMap, padding: ViewportPadding) {
@@ -1053,7 +1181,7 @@ class MapLibreEngineImpl(
             val target = resolveFreeDriveTarget(map)
             if (target != null) {
                 snapCameraToGpsIfNeeded(target)
-            } else if (isFreeDriveZoomTooWide(map)) {
+            } else {
                 activateFreeDriveTrackingMode(map)
             }
         }
@@ -1144,6 +1272,7 @@ class MapLibreEngineImpl(
         _uiState.update {
             it.copy(streetName = "Free Drive", isCameraDetached = false, isInTopDownView = false)
         }
+        updatePuckScreenPosition(map)
     }
 
     override fun navigateToCoordinates(lat: Double, lng: Double) {
@@ -1561,9 +1690,15 @@ class MapLibreEngineImpl(
     private fun applyDrivingTrackingPadding(map: MapLibreMap) {
         if (_uiState.value.isInTopDownView) return
         val padding = computeDrivingViewportPadding(map)
-        applyMapPaddingImmediate(map, padding)
         val component = map.locationComponent
-        if (!component.isLocationComponentActivated || !component.isLocationComponentEnabled) return
+        val componentReady = component.isLocationComponentActivated && component.isLocationComponentEnabled
+        val alreadyTrackingGps = componentReady && component.cameraMode == CameraMode.TRACKING_GPS
+        // moveCamera(paddingTo) while TRACKING_GPS is active drops out of follow mode — update
+        // paddingWhileTracking only and force a puck refresh to reposition the camera.
+        if (!alreadyTrackingGps) {
+            applyMapPaddingImmediate(map, padding)
+        }
+        if (!componentReady) return
         // Always store the tracking padding regardless of current camera mode — it will take
         // effect immediately in TRACKING_GPS mode and when tracking resumes after detach.
         component.paddingWhileTracking(
@@ -1574,6 +1709,9 @@ class MapLibreEngineImpl(
                 padding.bottom.toDouble(),
             ),
         )
+        if (alreadyTrackingGps) {
+            forceLocationUpdateForImmediateRender(map)
+        }
     }
 
     private fun drawRoute(geometryJson: String) {
@@ -1675,9 +1813,13 @@ class MapLibreEngineImpl(
             }
         }
 
-        map.addOnMapClickListener { latLng ->
+        map.addOnMapClickListener {
+            mapTapDismissHandler?.let { handler ->
+                handler()
+                return@addOnMapClickListener true
+            }
             val loadedMap = mapLibreMap ?: return@addOnMapClickListener false
-            handleMapPointSelection(loadedMap, latLng)
+            handleMapPointSelection(loadedMap, it)
         }
 
         map.addOnMapLongClickListener { latLng ->
@@ -2386,6 +2528,7 @@ class MapLibreEngineImpl(
             locationComponent.isLocationComponentEnabled = true
             locationComponent.renderMode = RenderMode.GPS
             applyDrivingTrackingPadding(map)
+            updatePuckScreenPosition(map)
 
             flushPendingLocationFix()
             beginLocationAcquisition(ctx)
@@ -2580,6 +2723,7 @@ class MapLibreEngineImpl(
             pendingLocationFix = displayLocation
         }
         startDeadReckoning(displayLocation)
+        mapLibreMap?.let { updatePuckScreenPosition(it) }
         Log.i(
             TAG,
             "Location fix ${displayLocation.latitude}, ${displayLocation.longitude} " +
@@ -2593,7 +2737,12 @@ class MapLibreEngineImpl(
             _uiState.value.isNavigating -> evaluateStepAdvancement(locationWithBearing)
             _uiState.value.isInTopDownView -> mapLibreMap?.let { ensureTopDownCameraDetached(it) }
             !hasSnappedCameraToGps -> snapCameraToGpsIfNeeded(latLng)
-            else -> _uiState.update { it.copy(streetName = "Free Drive") }
+            else -> {
+                _uiState.update { it.copy(streetName = "Free Drive") }
+                if (!_uiState.value.isCameraDetached) {
+                    mapLibreMap?.let { activateFreeDriveTrackingMode(it) }
+                }
+            }
         }
     }
 
@@ -2925,7 +3074,13 @@ class MapLibreEngineImpl(
         val location = readLastKnownLocation(context)
         return if (location != null) {
             lastKnownLocation = location
-            _uiState.update { it.copy(streetName = "Locating...") }
+            _uiState.update {
+                it.copy(
+                    streetName = "Locating...",
+                    currentLat = location.latitude,
+                    currentLng = location.longitude,
+                )
+            }
             ResolvedLocation(
                 latLng = location,
                 zoom = freeDriveZoom,

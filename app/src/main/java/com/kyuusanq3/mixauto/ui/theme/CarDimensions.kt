@@ -12,6 +12,7 @@ object CarDimensions {
     val PaneGap = 8.dp
     val DockItemSpacing = 12.dp
     val CardElevation = 4.dp
+    val StatusStripHeight = 72.dp
     const val DockVerticalWeight = 0.18f
     const val MapWeight = 0.55f
     const val MediaWeight = 0.27f

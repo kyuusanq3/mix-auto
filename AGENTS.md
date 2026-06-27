@@ -74,7 +74,7 @@ MainActivity (localPlacesRepo + mapEngine = MapLibreEngineImpl(localPlacesRepo))
   └── MixAutoTheme
         └── DashboardScreen(mapEngine, mapDataViewModel)
               ├── CarMapViewContainer — map pane (60% or CarDimensions.MapWeight)
-              ├── MediaPlayerPane + ShortcutDock (Map Data + Launcher settings)
+              ├── MediaPlayerPane + ShortcutDock (Map Data on map toolbar; Launcher settings in app drawer)
               ├── PoiDetailDrawer — full-screen overlay when map POI/pin selected
               └── MapDataOverlay — offline POI country download
 ```
@@ -91,18 +91,21 @@ Swap map provider: change one line in `MainActivity.kt` to a new `CarMapEngine` 
 
 ## Shortcut dock behavior
 
-`ShortcutDock.kt` dock layout: driver cluster (App Drawer + Mic) | **pinned apps (up to 5)** in center | overflow (Music player + Launcher settings). Map Data is on the map toolbar, not the dock.
+`ShortcutDock.kt` dock layout: driver cluster (App Drawer + Mic) | **pinned apps (up to 5)** in center | **music side control** (`DockMusicSideControl`). **Launcher settings** is in the app drawer header (gear icon). Map Data is on the map toolbar, not the dock.
 
-| Icon | Panel / action |
+| Icon / control | Panel / action |
 |------|----------------|
 | App Drawer | `ActivePanel.APP_DRAWER` — full map+media overlay (`AppDrawerOverlay.kt`) |
 | Pinned apps (0–5) | User-added from app drawer long-press; **audio apps** show music-note badge — tap sets source (or toggles media pane if already active); other apps tap launch; long-press → Add/Remove shortcut bar, App Info, Uninstall |
 | Mic (Voice Search) | Opens destination search + voice when closed; closes search or POI detail when open; hidden when no speech recognizer |
-| Launcher (MoreVert) | **Music player** toggles media pane; **Launcher settings** opens settings |
+| Music side control | **Horizontal collapsed:** LHD = right-aligned title + artist (marquee); RHD = left-aligned — both with faint full-width visualizer (`DockMiniVisualizer(wide=true, 32 bars, barAlpha 0.22`). **Horizontal open / vertical:** icon-sized thick 6-bar visualizer. Tap toggles `ActivePanel.MEDIA`. Fixed 280dp slot width. |
+| App drawer Settings (gear) | Opens `ActivePanel.SETTINGS` in media pane; closes drawer |
+
+**Driver cluster order** (`DriverSideCluster`): LHD = `[App Drawer][Mic]`; RHD = `[Mic][App Drawer]` (horizontal and vertical).
 
 **App Drawer icon position** (via `dockItemOrder()`): vertical side dock → **top** (first item); horizontal bottom dock LHD → **left** (first); RHD → **right** (last).
 
-**App Drawer overlay** lists all launchable apps (`queryIntentActivities`), sorted by name, with search. **Audio apps** show trailing music-note icon; tap sets default/preferred audio source and opens media pane (no launch). Other apps tap launch. Long-press → **Add/Remove from shortcut bar** (up to 5 pinned), App Info, or Uninstall. Overlay covers map+media split only — shortcut bar remains visible and unchanged in position.
+**App Drawer overlay** lists all launchable apps (`queryIntentActivities`), sorted by name, with search. Header has **Settings** gear (opens Launcher Settings) + close. **Audio apps** show trailing music-note icon; tap sets default/preferred audio source and opens media pane (no launch). Other apps tap launch. Long-press → **Add/Remove from shortcut bar** (up to 5 pinned), App Info, or Uninstall. Overlay covers map+media split only — shortcut bar remains visible and unchanged in position.
 
 **Pinned shortcut bar apps:** `LauncherPreferences.dockPinnedPackages` (JSON, max 5). Long-press in drawer to pin; icons appear in dock center. Audio apps get scaled music-note badge (`iconSize * 0.55f`); tap → `handleSelectAudioSource` (toggle media pane if already active, else set default + `setPreferredAudioSource` + open pane). App drawer uses `openAudioSource` (always set + open). Long-press pinned icon for same menu. `LauncherViewModel.toggleDockPinnedPackage()`.
 
@@ -223,7 +226,7 @@ After enabling Launcher Mode, press Home and select **Mix Auto** as the default 
 | Media pane shows "Enable notification access" | Settings → Special app access → Notification access → enable MixAuto; start playback in YT Music/Spotify then return to launcher |
 | Transport row shows dim MusicNote instead of app icon | Active session: first slot shows source app icon and launches via `launchAppByPackage()`; no session: cyan `MusicNote` opens `AudioPlayerPickerOverlay` in media pane (tap row to launch YT Music/Spotify/etc.) |
 | Audio player list empty on API 30+ | Manifest `<queries>` must include `CATEGORY_APP_MUSIC` and `android.media.browse.MediaBrowserService`; discovery in `AudioPlayerUtils.loadAudioPlayerApps()` uses `MATCH_ALL` on both |
-| Music dock badge missing | Removed — Music player moved to overflow menu; pinned audio apps show music-note badge instead |
+| Music dock badge missing | Removed — use dock music side control or pinned audio apps with music-note badge |
 | Skip-next media button shrinks in narrow pane | `MediaPlayerPane.kt`: use `weight(1f)` slots + `requiredSize(MinTapTarget)` on all three controls |
 | `setMapMediaRatio` JVM signature clash | Use `updateMapMediaRatio()` in `LauncherViewModel` — property already generates `setMapMediaRatio` setter |
 | Map/media divider only moves on repeated swipes | Do not include `mapMediaRatio` in `pointerInput` keys in `MapMediaDividerHandle` — use `rememberUpdatedState` + accumulate drag from `onDragStart` |
@@ -257,6 +260,7 @@ After enabling Launcher Mode, press Home and select **Mix Auto** as the default 
 | Can't open audio source list after default set | **Long-press** source app icon in transport row (tap launches active app when session exists); short tap opens picker only when no session |
 | Shortcut bar too small on head unit | Settings → **Large Shortcut Icons** doubles tap target and icon size in both horizontal and vertical dock (uses `DockHorizontalTapTarget` / `DockHorizontalIconSize`) |
 | Vertical shortcut bar too wide / large side padding | Vertical dock must use `wrapContentWidth()` in `ShortcutDock` + `DashboardScreen` — not `.weight(DockVerticalWeight)`; icon-only, no labels |
+| Pinned shortcut icons left of screen center (horizontal) | Do NOT center pinned apps in a `Row` middle `weight(1f)` column — 280 dp music slot vs ~2-icon driver cluster skews center left; use full-width `Box` with `CenterDockCluster` at `Alignment.Center` and edge clusters overlaid in `ShortcutDock.kt` |
 | App drawer malforms vertical shortcut bar (floating dock, black gap) | Do NOT stack `AppDrawerOverlay` above `ShortcutDock` in a side Column — overlay map+media `Box` only via `SplitScreenAppDrawerSlot`; dock stays `wrapContentWidth().fillMaxHeight()` sibling |
 | App drawer long-press menu at top-left / app names missing | Per-item `Box` + `DropdownMenu` in `AppDrawerItem` — not hoisted to overlay root; anchor `Box` = `fillMaxWidth()` only (no `wrapContentSize` on grid cells) |
 | TomTom traffic HTTP 400 `Invalid style: relative-delay` | Orbis v2 raster tiles only accept `style=light` or `style=dark` — not legacy styles (`relative`, `relative-delay`, etc.); see `MapLibreEngineImpl.applyTrafficOverlay()` |
@@ -266,6 +270,9 @@ After enabling Launcher Mode, press Home and select **Mix Auto** as the default 
 | Vinyl album art shows as square/rectangle | `VinylAlbumArt`: use `clip(CircleShape)` then `graphicsLayer { rotationZ }` — not `Modifier.rotate` before clip |
 | Long-press on album art does nothing / swipes conflict with picker | Long-press opens `AlbumArtModePicker`; normal swipe gestures disabled while `isPickerOpen` in `MediaPlayerPane.kt` |
 | Album art too small in tall portrait pane | Size via `BoxWithConstraints`: `(if (maxWidth < maxHeight) maxWidth else maxHeight) * 0.92f` |
+| Album art mode (Vinyl/Visualizer) resets after Settings/search/rotate/restart | Persist via `LauncherPreferences.albumArtMode` + `LauncherViewModel.updateAlbumArtMode()` — do NOT use `remember` in `MediaPlayerPane`; panel/orientation changes dispose the composable |
+| Visualizer bars twitch too fast or move in lockstep | `AnimatedSpectrumVisualizer` uses frame smoothing + slow band-blend waves; album = `VisualizerBarLayout.THIN` (24 bars); dock = `VisualizerBarLayout.DOCK` (6 thick bars) — do not share one bar width formula for both |
+| Visualizer not reacting to real bass/treble | MediaSession provides `playbackPositionMs` only — no FFT/Visualizer API for YT Music on AOSP; motion is position-anchored simulation, not audio analysis |
 | Unlike skips track in YT Music | `MediaSessionRepository.toggleLike()` never sends dislike/thumb_down — use unrated or re-toggle like action only |
 | Like heart not lit when returning to song | Per-track `likedTrackCache` in `MediaSessionRepository` keyed by media ID / title\|artist |
 | Voice button opens Assistant instead of search | Hardware key is often wired to Gemini and never reaches the app — use **shortcut dock mic** (Voice destination search); grant **Microphone** permission; Eonon may send `KEYCODE_SEARCH` instead of `KEYCODE_VOICE_ASSIST` (both handled in `MainActivity.onKeyDown` when search already open) |
@@ -274,7 +281,8 @@ After enabling Launcher Mode, press Home and select **Mix Auto** as the default 
 | Onboarding wizard shows icon only, no title/body | `OnboardingWizard` root must be `Surface(color = OledBlack)` — bare `Box` leaves `LocalContentColor` black and `Car*Text` invisible on OLED background |
 | Re-test permission onboarding wizard | Clear app data or set `launcher_prefs` key `onboarding_version` to `0`; wizard shows when `onboardingVersion < CURRENT_ONBOARDING_VERSION` in `OnboardingWizard.kt` |
 | Search/POI pane too narrow or divider still draggable | Destination Search + POI Details lock split to **40% map / 60% secondary** via `OVERLAY_MAP_MEDIA_RATIO` (0.4f) in `DashboardScreen.kt`; `MapMediaDividerHandle` hidden (`showMapMediaDivider`); do NOT persist 0.4 to `LauncherPreferences` — closing restores saved ratio |
-| Destination search empty after app update (PH DB installed) | Old builds used `(0,0)` before GPS — offline bbox missed PH; DB could show Installed but `active_iso`/open failure skipped search — fixed via `resolveSearchOrigin()`, `LocalPlacesRepository` auto-discover + WAL retry, `getNearbyPois()` offline fallback; sideload latest build |
+| Destination search empty after app update (PH DB installed) | Origin could be `(0,0)` before GPS (PH bbox + Photon bias miss user area; 500 km filter drops all); DB file Installed but connection closed — `ensureDatabaseOpen()` on search; sideload latest build with hardened `resolveSearchOrigin()` + `refreshSearchOrigin()` on search open |
+| Typed search "No results" while driving (puck moving) | Check Logcat `searchDestination` log for origin coords; if unreliable, UI shows "Waiting for GPS"; `hasReliableSearchOrigin()` requires GPS/last fix/camera not PH default; `MainActivity.onResume()` refreshes location |
 | Map blank when tapping search result | Do not `onDismiss()` before POI detail — use `onPreviewSearchPlace` to set `POI_DETAIL` + `focusOnPoi()`; engine retries preview camera via `onMapHostLayoutChanged()` |
 | Close POI after search preview returns to media not search | Fixed via `poiReturnToSearch` in `DashboardScreen.kt` — set in `onPreviewSearchPlace`, branch `LaunchedEffect(selectedPoi)` on dismiss; clear flag on Navigate |
 | Two close buttons on POI details | Use header `OverlayCloseButton` only — no Close in `PoiDetailCardContent` action row |
@@ -283,6 +291,12 @@ After enabling Launcher Mode, press Home and select **Mix Auto** as the default 
 | Top view too zoomed out / POI labels overlap | `TOP_DOWN_EXPLORE_ZOOM` is **15.0** (CropFree); mix POI overlay hidden in top-view — native Liberty labels only |
 | Can't pin more than 5 apps to shortcut bar | Max **5** pinned apps (`LauncherPreferences.MAX_DOCK_PINNED_APPS`); Add to shortcut bar is disabled in long-press menu when full |
 | Pinned shortcut missing after app uninstall | `LauncherViewModel.loadValidatedDockPinnedPackages()` removes unlaunchable packages on init |
+| Free drive camera doesn't follow puck | `applyDrivingTrackingPadding()` must skip `moveCamera(paddingTo)` when `cameraMode == TRACKING_GPS` — use `paddingWhileTracking` + `forceLocationUpdateForImmediateRender()` only; `applyAndroidLocation()` re-calls `activateFreeDriveTrackingMode()` when `!isCameraDetached`; clear `isInTopDownView` in `recenterCamera()` (before snap), `dismissSelectedPoi()`, and cancel `topDownViewportSync` in `startFreeDrive()` |
+| Speed bubble overlaps puck / wrong position | Bubble sits **right** of puck in `CarMapViewContainer` (`SpeedBubble` left tail); offset scales with `puckScale`; engine `updatePuckScreenPosition()` uses padded anchor in `TRACKING_GPS`, projection when detached |
+| "Free Drive" text in top-left HUD | Top-left HUD shows **only when navigating** — free drive has no street placeholder; speed is on puck bubble when `currentSpeed > 0` |
+| Status strip clock invisible | `DashboardStatusBar` must use `Surface(color = OledBlack, contentColor = OnDark)` — bare background leaves black text on black |
+| Status strip weather/city empty | Needs GPS fix in `MapUiState.currentLat/currentLng`; city from `NominatimReverseGeocodeClient`, weather from Open-Meteo; shows `—` until fetch completes |
+| Status strip shows "Traffic off" while map has overlay | Strip traffic label is **overlay toggle + TomTom key** state, not live congestion; enable Traffic Overlay in Map Settings with valid key for **Traffic on** |
 
 ## Related agent resources
 
