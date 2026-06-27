@@ -38,8 +38,6 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Tab
-import androidx.compose.material3.TabRow
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -62,7 +60,6 @@ import com.kyuusanq3.mixauto.ui.settings.LauncherPreferences
 import com.kyuusanq3.mixauto.ui.settings.LauncherViewModel
 import com.kyuusanq3.mixauto.ui.theme.CarBodyText
 import com.kyuusanq3.mixauto.ui.theme.CarDimensions
-import com.kyuusanq3.mixauto.ui.theme.CarHeadlineText
 import com.kyuusanq3.mixauto.ui.theme.CarLabelText
 import com.kyuusanq3.mixauto.ui.theme.ElectricCyan
 import com.kyuusanq3.mixauto.ui.theme.OledBlack
@@ -105,9 +102,16 @@ private fun isWithinDedupThreshold(a: SearchResultPlace, b: SearchResultPlace): 
     return distanceResults[0] < DEDUP_THRESHOLD_M
 }
 
-private enum class SuggestedTab {
-    Suggestions,
-    Saved,
+private fun filterSavedPlaces(
+    places: List<SearchResultPlace>,
+    query: String,
+): List<SearchResultPlace> {
+    val normalizedQuery = query.trim().lowercase()
+    if (normalizedQuery.length < 2) return places
+    return places.filter { place ->
+        place.name.lowercase().contains(normalizedQuery) ||
+            place.subTitle.lowercase().contains(normalizedQuery)
+    }
 }
 
 @Composable
@@ -132,7 +136,7 @@ fun NavigationSearchContent(
     var hasSearched by remember { mutableStateOf(false) }
     var isListening by remember { mutableStateOf(false) }
     var pendingVoiceStart by remember { mutableStateOf(false) }
-    var selectedTab by remember { mutableStateOf(SuggestedTab.Suggestions) }
+    var savedFilterActive by remember { mutableStateOf(false) }
     val listState = rememberLazyListState()
 
     val speechAvailable = remember(context) {
@@ -248,8 +252,17 @@ fun NavigationSearchContent(
     val currentLng = searchOrigin.second
     val hasReliableOrigin = engine.hasReliableSearchOrigin()
 
-    LaunchedEffect(query, uiState.currentLat, uiState.currentLng, currentLat, currentLng, hasReliableOrigin, limitSearchDistance) {
-        if (query.length < 2) {
+    LaunchedEffect(
+        query,
+        savedFilterActive,
+        uiState.currentLat,
+        uiState.currentLng,
+        currentLat,
+        currentLng,
+        hasReliableOrigin,
+        limitSearchDistance,
+    ) {
+        if (savedFilterActive || query.length < 2) {
             results = emptyList()
             hasSearched = false
             isLoading = false
@@ -278,8 +291,17 @@ fun NavigationSearchContent(
         }
     }
 
-    LaunchedEffect(query, uiState.currentLat, uiState.currentLng, currentLat, currentLng, recentDestinations, savedPlaces) {
-        if (query.length >= 2) {
+    LaunchedEffect(
+        query,
+        savedFilterActive,
+        uiState.currentLat,
+        uiState.currentLng,
+        currentLat,
+        currentLng,
+        recentDestinations,
+        savedPlaces,
+    ) {
+        if (savedFilterActive || query.length >= 2) {
             nearbyPois = emptyList()
             return@LaunchedEffect
         }
@@ -309,6 +331,10 @@ fun NavigationSearchContent(
         }
     }
 
+    val filteredSaved = remember(displayedSaved, query) {
+        filterSavedPlaces(displayedSaved, query)
+    }
+
     val isPlaceSaved: (SearchResultPlace) -> Boolean = { place ->
         savedPlaces.any { saved -> isWithinDedupThreshold(saved, place) }
     }
@@ -322,41 +348,56 @@ fun NavigationSearchContent(
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(CarDimensions.PaneGap * 2),
-            verticalArrangement = Arrangement.spacedBy(CarDimensions.DockItemSpacing),
+                .padding(
+                    horizontal = CarDimensions.PaneGap * 2,
+                    vertical = CarDimensions.PaneGap / 2,
+                ),
+            verticalArrangement = Arrangement.spacedBy(CarDimensions.PaneGap),
         ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    CarHeadlineText(
-                        text = "Navigate To",
-                        style = MaterialTheme.typography.headlineMedium,
-                        modifier = Modifier.weight(1f),
-                    )
-                    OverlayCloseButton(
-                        onClick = onDismiss,
-                        contentDescription = "Close search",
-                    )
-                }
+                PanelHeaderRow(
+                    title = "Navigate To",
+                    onClose = onDismiss,
+                    closeContentDescription = "Close search",
+                    compact = true,
+                    trailingContent = {
+                        IconButton(
+                            onClick = { savedFilterActive = !savedFilterActive },
+                            modifier = Modifier.size(CarDimensions.PanelCompactHeaderTapTarget),
+                        ) {
+                            Icon(
+                                imageVector = if (savedFilterActive) {
+                                    Icons.Filled.Star
+                                } else {
+                                    Icons.Outlined.Star
+                                },
+                                contentDescription = if (savedFilterActive) {
+                                    "Show all suggestions"
+                                } else {
+                                    "Show saved places only"
+                                },
+                                modifier = Modifier.size(CarDimensions.PanelCompactHeaderIconSize),
+                                tint = if (savedFilterActive) {
+                                    Color(0xFFFFD700)
+                                } else {
+                                    MaterialTheme.colorScheme.primary
+                                },
+                            )
+                        }
+                    },
+                )
 
                 OutlinedTextField(
                     value = query,
                     onValueChange = { query = it },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(CarDimensions.PrimaryTapTarget + CarDimensions.PaneGap),
-                    label = {
-                        CarLabelText(
-                            text = "Destination",
-                            style = MaterialTheme.typography.labelMedium,
-                        )
-                    },
+                    modifier = Modifier.fillMaxWidth(),
                     placeholder = {
-                        CarBodyText(
-                            text = "Search address or place",
-                            style = MaterialTheme.typography.bodyLarge,
+                        CarLabelText(
+                            text = if (savedFilterActive) {
+                                "Search saved places"
+                            } else {
+                                "Destination"
+                            },
+                            style = MaterialTheme.typography.labelMedium,
                         )
                     },
                     singleLine = true,
@@ -394,42 +435,68 @@ fun NavigationSearchContent(
                     )
                 }
 
-                if (isLoading || isLoadingRemote) {
+                if (!savedFilterActive && (isLoading || isLoadingRemote)) {
                     LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
                 }
 
                 when {
-                    query.length < 2 -> {
-                        TabRow(selectedTabIndex = selectedTab.ordinal) {
-                            SuggestedTab.entries.forEach { tab ->
-                                Tab(
-                                    selected = selectedTab == tab,
-                                    onClick = { selectedTab = tab },
-                                    text = {
-                                        CarLabelText(
-                                            text = tab.name,
-                                            style = MaterialTheme.typography.labelLarge,
-                                        )
-                                    },
+                    savedFilterActive -> {
+                        when {
+                            query.length >= 2 && filteredSaved.isEmpty() -> {
+                                CarBodyText(
+                                    text = "No saved places match your search",
+                                    style = MaterialTheme.typography.bodyLarge,
                                 )
                             }
+                            query.length < 2 && displayedSaved.isEmpty() -> {
+                                CarBodyText(
+                                    text = "No saved places — star a POI on the map",
+                                    style = MaterialTheme.typography.bodyLarge,
+                                )
+                            }
+                            else -> {
+                                val savedPlacesToShow = if (query.length >= 2) {
+                                    filteredSaved
+                                } else {
+                                    displayedSaved
+                                }
+                                Box(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .carLazyScrollbar(listState),
+                                ) {
+                                    LazyColumn(
+                                        state = listState,
+                                        modifier = Modifier.fillMaxSize(),
+                                        verticalArrangement = Arrangement.spacedBy(CarDimensions.PaneGap / 2),
+                                    ) {
+                                        items(
+                                            savedPlacesToShow,
+                                            key = { "saved-${it.latitude},${it.longitude},${it.name}" },
+                                        ) { place ->
+                                            SearchResultRow(
+                                                place = place,
+                                                isStarred = isPlaceSaved(place),
+                                                onClick = { previewPlace(place) },
+                                                onToggleStar = { onToggleSavedPlace(place) },
+                                            )
+                                        }
+                                    }
+                                }
+                            }
                         }
+                    }
+                    query.length < 2 -> {
+                        val suggestionsEmpty = displayedRecents.isEmpty() &&
+                            displayedSuggestionsNearby.isEmpty()
 
-                        val suggestionsEmpty = displayedRecents.isEmpty() && displayedSuggestionsNearby.isEmpty()
-                        val savedEmpty = displayedSaved.isEmpty()
-
-                        if (selectedTab == SuggestedTab.Suggestions && suggestionsEmpty) {
+                        if (suggestionsEmpty) {
                             CarBodyText(
                                 text = if (hasReliableOrigin) {
                                     "No recent destinations — pan the map to load nearby POIs"
                                 } else {
                                     "Waiting for GPS — nearby suggestions appear once location is available"
                                 },
-                                style = MaterialTheme.typography.bodyLarge,
-                            )
-                        } else if (selectedTab == SuggestedTab.Saved && savedEmpty) {
-                            CarBodyText(
-                                text = "No saved places — star a POI on the map",
                                 style = MaterialTheme.typography.bodyLarge,
                             )
                         } else {
@@ -443,7 +510,6 @@ fun NavigationSearchContent(
                                     modifier = Modifier.fillMaxSize(),
                                     verticalArrangement = Arrangement.spacedBy(CarDimensions.PaneGap / 2),
                                 ) {
-                                if (selectedTab == SuggestedTab.Suggestions) {
                                     if (displayedRecents.isNotEmpty()) {
                                         item(key = "header-recent") {
                                             CarLabelText(
@@ -494,20 +560,7 @@ fun NavigationSearchContent(
                                             )
                                         }
                                     }
-                                } else {
-                                    items(
-                                        displayedSaved,
-                                        key = { "saved-${it.latitude},${it.longitude},${it.name}" },
-                                    ) { place ->
-                                        SearchResultRow(
-                                            place = place,
-                                            isStarred = isPlaceSaved(place),
-                                            onClick = { previewPlace(place) },
-                                            onToggleStar = { onToggleSavedPlace(place) },
-                                        )
-                                    }
                                 }
-                            }
                             }
                         }
                     }

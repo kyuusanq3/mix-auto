@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
@@ -100,15 +101,24 @@ fun AudioPlayerListContent(
                 .fillMaxSize()
                 .padding(CarDimensions.PaneGap),
         ) {
-            if (headerTitle != null || showCloseButton) {
+            if (headerTitle != null && showCloseButton) {
+                PanelHeaderRow(
+                    title = headerTitle,
+                    onClose = onDismiss,
+                    closeContentDescription = "Close audio player list",
+                )
+            } else if (headerTitle != null || showCloseButton) {
                 Row(
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = CarDimensions.PanelHeaderTapTarget),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween,
                 ) {
                     if (headerTitle != null) {
                         CarHeadlineText(
                             text = headerTitle,
+                            style = MaterialTheme.typography.headlineSmall,
                             modifier = Modifier.weight(1f),
                         )
                     } else {

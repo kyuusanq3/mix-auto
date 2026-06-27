@@ -7,12 +7,15 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.kyuusanq3.mixauto.BuildConfig
+import com.kyuusanq3.mixauto.data.apps.LaunchableAppEntry
+import com.kyuusanq3.mixauto.data.apps.LaunchableAppsRepository
 import com.kyuusanq3.mixauto.data.map.TomTomKeyCheckResult
 import com.kyuusanq3.mixauto.data.map.TomTomTrafficClient
 import com.kyuusanq3.mixauto.domain.map.SearchResultPlace
-import com.kyuusanq3.mixauto.BuildConfig
 import com.kyuusanq3.mixauto.ui.components.canLaunchApp
 import com.kyuusanq3.mixauto.ui.dashboard.AlbumArtMode
+import com.kyuusanq3.mixauto.ui.dashboard.DockShortcutIconSize
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
@@ -28,6 +31,7 @@ sealed class TomTomKeyCheckState {
 
 class LauncherViewModel(application: Application) : AndroidViewModel(application) {
     private val preferences = LauncherPreferences(application)
+    private val launchableAppsRepository = LaunchableAppsRepository(application)
 
     var defaultAudioPackage by mutableStateOf(loadValidatedDefaultAudioPackage())
         private set
@@ -56,7 +60,7 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     var isLauncherMode by mutableStateOf(preferences.isLauncherMode)
         private set
 
-    var isLargeShortcutIcons by mutableStateOf(preferences.isLargeShortcutIcons)
+    var dockShortcutIconSize by mutableStateOf(preferences.dockShortcutIconSize)
         private set
 
     var drivingZoom by mutableStateOf(preferences.drivingZoom)
@@ -72,6 +76,9 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         private set
 
     var showTraffic by mutableStateOf(preferences.showTraffic)
+        private set
+
+    var navigationVoiceEnabled by mutableStateOf(preferences.navigationVoiceEnabled)
         private set
 
     var tomTomApiKey by mutableStateOf(preferences.tomTomApiKey)
@@ -98,6 +105,15 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     var isDestinationSearchOpen by mutableStateOf(false)
         internal set
 
+    var launchableApps by mutableStateOf<List<LaunchableAppEntry>>(emptyList())
+        private set
+
+    var audioPlayerPackages by mutableStateOf<Set<String>>(emptySet())
+        private set
+
+    var isAppDrawerLoading by mutableStateOf(false)
+        private set
+
     private val _voiceSearchTrigger = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
     val voiceSearchTrigger = _voiceSearchTrigger.asSharedFlow()
 
@@ -115,6 +131,21 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         if (!startVoiceOnSearchOpen) return false
         startVoiceOnSearchOpen = false
         return true
+    }
+
+    fun ensureLaunchableAppsLoaded() {
+        if (launchableApps.isNotEmpty() || isAppDrawerLoading) return
+        viewModelScope.launch {
+            isAppDrawerLoading = true
+            val (apps, audioPackages) = launchableAppsRepository.loadAll()
+            launchableApps = apps
+            audioPlayerPackages = audioPackages
+            isAppDrawerLoading = false
+        }
+    }
+
+    init {
+        ensureLaunchableAppsLoaded()
     }
 
     fun toggleLeftHandDrive() {
@@ -152,9 +183,9 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         preferences.isLauncherMode = isLauncherMode
     }
 
-    fun toggleLargeShortcutIcons() {
-        isLargeShortcutIcons = !isLargeShortcutIcons
-        preferences.isLargeShortcutIcons = isLargeShortcutIcons
+    fun updateDockShortcutIconSize(size: DockShortcutIconSize) {
+        dockShortcutIconSize = size
+        preferences.dockShortcutIconSize = size
     }
 
     fun updateDrivingZoom(value: Float) {
@@ -185,6 +216,11 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     fun toggleTraffic() {
         showTraffic = !showTraffic
         preferences.showTraffic = showTraffic
+    }
+
+    fun toggleNavigationVoice() {
+        navigationVoiceEnabled = !navigationVoiceEnabled
+        preferences.navigationVoiceEnabled = navigationVoiceEnabled
     }
 
     fun toggleShowStatusStrip() {
@@ -283,7 +319,9 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         val app = getApplication<Application>()
         val validated = preferences.dockPinnedPackages
             .distinct()
-            .filter { pkg -> canLaunchApp(app, pkg) }
+            .filter { pkg ->
+                pkg != BuildConfig.APPLICATION_ID && canLaunchApp(app, pkg)
+            }
             .take(LauncherPreferences.MAX_DOCK_PINNED_APPS)
         if (validated != preferences.dockPinnedPackages) {
             preferences.dockPinnedPackages = validated

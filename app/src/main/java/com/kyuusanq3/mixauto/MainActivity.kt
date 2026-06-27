@@ -30,6 +30,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.kyuusanq3.mixauto.data.map.MapLibreEngineImpl
 import com.kyuusanq3.mixauto.data.media.MediaSessionRepository
+import com.kyuusanq3.mixauto.data.navigation.NavigationVoiceController
 import com.kyuusanq3.mixauto.data.places.LocalPlacesRepository
 import com.kyuusanq3.mixauto.domain.map.CarMapEngine
 import com.kyuusanq3.mixauto.ui.dashboard.DashboardScreen
@@ -49,6 +50,7 @@ import java.io.File
 class MainActivity : ComponentActivity() {
 
     private lateinit var localPlacesRepository: LocalPlacesRepository
+    private lateinit var navigationVoiceController: NavigationVoiceController
     private lateinit var mapEngine: CarMapEngine
     private lateinit var launcherViewModel: LauncherViewModel
     private lateinit var launcherPreferences: LauncherPreferences
@@ -73,8 +75,12 @@ class MainActivity : ComponentActivity() {
         launcherPreferences = LauncherPreferences(this)
         applyLauncherMode(launcherPreferences.isLauncherMode)
         localPlacesRepository = LocalPlacesRepository(this)
+        navigationVoiceController = NavigationVoiceController(applicationContext).apply {
+            enabled = launcherPreferences.navigationVoiceEnabled
+        }
         mapEngine = MapLibreEngineImpl(
             localPlaces = localPlacesRepository,
+            navigationVoice = navigationVoiceController,
             initialUseVectorTiles = launcherPreferences.useVectorTiles,
             initialShow3dBuildings = launcherPreferences.show3dBuildings,
             initialDrivingZoom = launcherPreferences.drivingZoom.toDouble(),
@@ -139,11 +145,16 @@ class MainActivity : ComponentActivity() {
                     useVectorTiles = launcherViewModel.useVectorTiles,
                     show3dBuildings = launcherViewModel.show3dBuildings,
                     showTraffic = launcherViewModel.showTraffic,
+                    navigationVoiceEnabled = launcherViewModel.navigationVoiceEnabled,
                     tomTomApiKey = launcherViewModel.tomTomApiKey,
                     isLauncherMode = launcherViewModel.isLauncherMode,
-                    isLargeShortcutIcons = launcherViewModel.isLargeShortcutIcons,
+                    shortcutIconSize = launcherViewModel.dockShortcutIconSize,
                     dockPinnedPackages = launcherViewModel.dockPinnedPackages,
                     onToggleDockPin = launcherViewModel::toggleDockPinnedPackage,
+                    launchableApps = launcherViewModel.launchableApps,
+                    audioPlayerPackages = launcherViewModel.audioPlayerPackages,
+                    isAppDrawerLoading = launcherViewModel.isAppDrawerLoading,
+                    onEnsureLaunchableAppsLoaded = launcherViewModel::ensureLaunchableAppsLoaded,
                     drivingZoom = launcherViewModel.drivingZoom,
                     puckHorizontalOffset = launcherViewModel.puckHorizontalOffset,
                     puckVerticalOffset = launcherViewModel.puckVerticalOffset,
@@ -167,6 +178,10 @@ class MainActivity : ComponentActivity() {
                             launcherViewModel.tomTomApiKey,
                         )
                     },
+                    onToggleNavigationVoice = {
+                        launcherViewModel.toggleNavigationVoice()
+                        mapEngine.setNavigationVoiceEnabled(launcherViewModel.navigationVoiceEnabled)
+                    },
                     onTomTomApiKeyChange = { key ->
                         launcherViewModel.updateTomTomApiKey(key)
                         mapEngine.setTrafficEnabled(
@@ -181,7 +196,7 @@ class MainActivity : ComponentActivity() {
                             promptSetAsDefaultHome()
                         }
                     },
-                    onToggleLargeShortcutIcons = launcherViewModel::toggleLargeShortcutIcons,
+                    onShortcutIconSizeChange = launcherViewModel::updateDockShortcutIconSize,
                     onDrivingZoomChange = { value ->
                         launcherViewModel.updateDrivingZoom(value)
                         mapEngine.setDrivingZoom(value.toDouble())
@@ -240,6 +255,13 @@ class MainActivity : ComponentActivity() {
         if (::mapEngine.isInitialized && hasLocationPermission()) {
             mapEngine.retryLocationActivation()
         }
+    }
+
+    override fun onDestroy() {
+        if (::navigationVoiceController.isInitialized) {
+            navigationVoiceController.shutdown()
+        }
+        super.onDestroy()
     }
 
     private fun refreshMediaSessionsAndBootAudio() {

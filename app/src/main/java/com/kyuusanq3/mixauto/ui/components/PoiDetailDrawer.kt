@@ -98,24 +98,17 @@ fun PoiDetailPane(
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(CarDimensions.PaneGap * 2),
+                .padding(
+                    horizontal = CarDimensions.PaneGap * 2,
+                    vertical = CarDimensions.PaneGap,
+                ),
             verticalArrangement = Arrangement.spacedBy(CarDimensions.PaneGap),
         ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                CarHeadlineText(
-                    text = if (poi.isDroppedPin) "Custom Pin" else "Place Details",
-                    style = MaterialTheme.typography.headlineMedium,
-                    modifier = Modifier.weight(1f),
-                )
-                OverlayCloseButton(
-                    onClick = onDismiss,
-                    contentDescription = "Close place details",
-                )
-            }
+            PanelHeaderRow(
+                title = if (poi.isDroppedPin) "Custom Pin" else "Place Details",
+                onClose = onDismiss,
+                closeContentDescription = "Close place details",
+            )
 
             PoiDetailCardContent(
                 poi = poi,

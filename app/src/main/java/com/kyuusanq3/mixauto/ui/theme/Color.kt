@@ -12,6 +12,12 @@ val OnDark = Color(0xFFE1E1E1)
 val OnAccent = Color(0xFF000000)
 val ErrorRed = Color(0xFFCF6679)
 
+/** TomTom-style traffic flow colors for the status strip reel. */
+val TrafficFlowFree = Color(0xFF4CAF50)
+val TrafficFlowLight = Color(0xFFFDD835)
+val TrafficFlowModerate = Color(0xFFFB8C00)
+val TrafficFlowHeavy = Color(0xFFE53935)
+
 val MixAutoDarkColors = darkColorScheme(
     primary = ElectricCyan,
     onPrimary = OnAccent,

@@ -88,6 +88,37 @@ private val dockMusicArtistTextStyle: TextStyle
 
 private fun dockPinnedKey(packageName: String) = "dock_pinned_$packageName"
 
+enum class DockShortcutIconSize {
+    SMALL,
+    MEDIUM,
+    LARGE,
+    ;
+
+    companion object {
+        fun fromOrdinal(ordinal: Int): DockShortcutIconSize =
+            entries.getOrElse(ordinal.coerceIn(0, entries.lastIndex)) { LARGE }
+    }
+
+    val label: String
+        get() = when (this) {
+            SMALL -> "Small"
+            MEDIUM -> "Medium"
+            LARGE -> "Large"
+        }
+}
+
+private fun DockShortcutIconSize.scaleFactor(): Float = when (this) {
+    DockShortcutIconSize.SMALL -> 1f
+    DockShortcutIconSize.MEDIUM -> 1.5f
+    DockShortcutIconSize.LARGE -> 2f
+}
+
+private fun dockTapTargetFor(size: DockShortcutIconSize): Dp =
+    CarDimensions.DockHorizontalTapTarget * size.scaleFactor()
+
+private fun dockIconSizeFor(size: DockShortcutIconSize): Dp =
+    CarDimensions.DockHorizontalIconSize * size.scaleFactor()
+
 enum class ActivePanel {
     MEDIA,
     SETTINGS,
@@ -95,6 +126,7 @@ enum class ActivePanel {
     APP_DRAWER,
     SEARCH,
     POI_DETAIL,
+    ROUTE_PICKER,
     HIDDEN,
 }
 
@@ -107,7 +139,7 @@ private enum class DockActiveIndicatorPlacement {
 @Composable
 fun ShortcutDock(
     isHorizontal: Boolean,
-    isLargeIcons: Boolean = false,
+    shortcutIconSize: DockShortcutIconSize = DockShortcutIconSize.SMALL,
     isLeftHandDrive: Boolean = true,
     activePanel: ActivePanel,
     mediaState: MediaPlaybackState,
@@ -122,16 +154,8 @@ fun ShortcutDock(
 ) {
     val context = LocalContext.current
     val audioPlayerPackages = remember(context) { loadAudioPlayerPackageNames(context) }
-    val tapTarget = if (isLargeIcons) {
-        CarDimensions.DockHorizontalTapTarget * 2
-    } else {
-        CarDimensions.DockHorizontalTapTarget
-    }
-    val iconSize = if (isLargeIcons) {
-        CarDimensions.DockHorizontalIconSize * 2
-    } else {
-        CarDimensions.DockHorizontalIconSize
-    }
+    val tapTarget = dockTapTargetFor(shortcutIconSize)
+    val iconSize = dockIconSizeFor(shortcutIconSize)
     val activeIndicatorPlacement = if (isHorizontal) {
         DockActiveIndicatorPlacement.Bottom
     } else if (isLeftHandDrive) {

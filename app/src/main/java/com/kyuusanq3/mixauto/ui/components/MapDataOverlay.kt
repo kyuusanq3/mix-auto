@@ -44,7 +44,6 @@ import com.kyuusanq3.mixauto.ui.settings.RemoteCountryPack
 import com.kyuusanq3.mixauto.ui.settings.TomTomKeyCheckState
 import com.kyuusanq3.mixauto.ui.theme.CarBodyText
 import com.kyuusanq3.mixauto.ui.theme.CarDimensions
-import com.kyuusanq3.mixauto.ui.theme.CarHeadlineText
 import com.kyuusanq3.mixauto.ui.theme.CarLabelText
 import com.kyuusanq3.mixauto.ui.theme.DeepCharcoal
 import com.kyuusanq3.mixauto.ui.theme.ElectricCyan
@@ -89,24 +88,17 @@ fun MapDataPanelContent(
 ) {
     Column(
         modifier = modifier
-            .padding(CarDimensions.PaneGap * 2),
+            .padding(
+                horizontal = CarDimensions.PaneGap * 2,
+                vertical = CarDimensions.PaneGap,
+            ),
         verticalArrangement = Arrangement.spacedBy(CarDimensions.DockItemSpacing),
     ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            CarHeadlineText(
-                text = "Map Data",
-                style = MaterialTheme.typography.headlineMedium,
-                modifier = Modifier.weight(1f),
-            )
-            OverlayCloseButton(
-                onClick = onDismiss,
-                contentDescription = "Close map data",
-            )
-        }
+        PanelHeaderRow(
+            title = "Map Data",
+            onClose = onDismiss,
+            closeContentDescription = "Close map data",
+        )
 
         MapDataSectionContent(
             viewModel = viewModel,

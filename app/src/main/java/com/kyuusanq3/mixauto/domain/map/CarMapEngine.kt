@@ -26,6 +26,7 @@ interface CarMapEngine {
     fun setMapStyle(useVectorTiles: Boolean)
     fun setShow3dBuildings(show: Boolean)
     fun setTrafficEnabled(enabled: Boolean, apiKey: String)
+    fun setNavigationVoiceEnabled(enabled: Boolean)
     fun setDrivingZoom(zoom: Double)
     fun setViewportPadding(horizontalFraction: Float, verticalFraction: Float)
     fun setPuckScale(scale: Float)
@@ -55,4 +56,10 @@ interface CarMapEngine {
 
     /** When set, a map tap invokes the handler and skips POI/pin selection. */
     fun setMapTapDismissHandler(handler: (() -> Unit)?) {}
+
+    /** Highlight a route during the selection phase; resets the overview timer. */
+    fun selectRouteOption(routeId: String) {}
+
+    /** Confirm the selected route and begin turn-by-turn navigation. */
+    fun confirmRouteSelection() {}
 }

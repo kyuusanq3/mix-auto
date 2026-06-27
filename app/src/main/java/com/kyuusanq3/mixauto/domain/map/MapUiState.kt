@@ -10,10 +10,10 @@ data class MapUiState(
     val isInTopDownView: Boolean = false,
     val currentLat: Double? = null,
     val currentLng: Double? = null,
-    /** MapView pixel coordinates for the GPS puck center; used by speed bubble overlay. */
-    val puckScreenX: Float? = null,
-    val puckScreenY: Float? = null,
     val routeOverviewProgress: Float = 0f,
     val selectedPoi: SearchResultPlace? = null,
     val nearbyPois: List<SearchResultPlace> = emptyList(),
+    val routeOptions: List<RouteOption> = emptyList(),
+    val selectedRouteId: String? = null,
+    val isRouteSelecting: Boolean = false,
 )

@@ -82,6 +82,7 @@ fun MediaPlayerPane(
     onSkipPrevious: () -> Unit,
     onSkipNext: () -> Unit,
     onToggleLike: () -> Unit,
+    reduceTopInset: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
@@ -100,7 +101,16 @@ fun MediaPlayerPane(
     val hasActiveSessionState = rememberUpdatedState(mediaState.hasActiveSession)
 
     ElevatedCard(
-        modifier = modifier.padding(CarDimensions.PaneGap),
+        modifier = modifier.padding(
+            start = CarDimensions.PaneGap,
+            end = CarDimensions.PaneGap,
+            bottom = CarDimensions.PaneGap,
+            top = if (reduceTopInset) {
+                CarDimensions.StatusStripAdjacentGap
+            } else {
+                CarDimensions.PaneGap
+            },
+        ),
         elevation = CardDefaults.elevatedCardElevation(defaultElevation = CarDimensions.CardElevation),
         colors = CardDefaults.elevatedCardColors(
             containerColor = DarkSurface,

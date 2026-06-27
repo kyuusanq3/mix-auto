@@ -18,7 +18,6 @@ import androidx.compose.ui.unit.dp
 import com.kyuusanq3.mixauto.ui.settings.MapDataViewModel
 import com.kyuusanq3.mixauto.ui.theme.CarBodyText
 import com.kyuusanq3.mixauto.ui.theme.CarDimensions
-import com.kyuusanq3.mixauto.ui.theme.CarHeadlineText
 import com.kyuusanq3.mixauto.ui.theme.CarLabelText
 import com.kyuusanq3.mixauto.ui.theme.OledBlack
 import kotlin.math.roundToInt
@@ -30,6 +29,7 @@ fun MapSettingsPanelContent(
     useVectorTiles: Boolean,
     show3dBuildings: Boolean,
     showTraffic: Boolean,
+    navigationVoiceEnabled: Boolean,
     drivingZoom: Float,
     puckHorizontalOffset: Float,
     puckVerticalOffset: Float,
@@ -39,6 +39,7 @@ fun MapSettingsPanelContent(
     onToggleVectorTiles: () -> Unit,
     onToggleShow3dBuildings: () -> Unit,
     onToggleTraffic: () -> Unit,
+    onToggleNavigationVoice: () -> Unit,
     onDrivingZoomChange: (Float) -> Unit,
     onPuckHorizontalOffsetChange: (Float) -> Unit,
     onPuckVerticalOffsetChange: (Float) -> Unit,
@@ -56,24 +57,18 @@ fun MapSettingsPanelContent(
             modifier = Modifier
                 .fillMaxWidth()
                 .verticalScroll(scrollState)
-                .padding(CarDimensions.PaneGap * 2),
-            verticalArrangement = Arrangement.spacedBy(CarDimensions.DockItemSpacing),
+                .padding(
+                    horizontal = CarDimensions.PaneGap * 2,
+                    vertical = CarDimensions.PaneGap / 2,
+                ),
+            verticalArrangement = Arrangement.spacedBy(CarDimensions.PaneGap),
         ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                CarHeadlineText(
-                    text = "Map Settings",
-                    style = MaterialTheme.typography.headlineMedium,
-                    modifier = Modifier.weight(1f),
-                )
-                OverlayCloseButton(
-                    onClick = onDismiss,
-                    contentDescription = "Close map settings",
-                )
-            }
+            PanelHeaderRow(
+                title = "Map Settings",
+                onClose = onDismiss,
+                closeContentDescription = "Close map settings",
+                compact = true,
+            )
 
             SettingsSwitchRow(
                 label = "Nearby results only (within 500 km)",
@@ -112,6 +107,16 @@ fun MapSettingsPanelContent(
                 onCheckedChange = { checked ->
                     if (checked != showTraffic) {
                         onToggleTraffic()
+                    }
+                },
+            )
+
+            SettingsSwitchRow(
+                label = "Voice navigation",
+                checked = navigationVoiceEnabled,
+                onCheckedChange = { checked ->
+                    if (checked != navigationVoiceEnabled) {
+                        onToggleNavigationVoice()
                     }
                 },
             )

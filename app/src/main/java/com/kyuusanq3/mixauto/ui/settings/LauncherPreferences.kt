@@ -2,6 +2,7 @@ package com.kyuusanq3.mixauto.ui.settings
 
 import android.content.Context
 import com.kyuusanq3.mixauto.domain.map.SearchResultPlace
+import com.kyuusanq3.mixauto.ui.dashboard.DockShortcutIconSize
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -50,10 +51,18 @@ class LauncherPreferences(context: Context) {
             prefs.edit().putBoolean(KEY_LAUNCHER_MODE, value).apply()
         }
 
-    var isLargeShortcutIcons: Boolean
-        get() = prefs.getBoolean(KEY_LARGE_SHORTCUT_ICONS, true)
+    var dockShortcutIconSize: DockShortcutIconSize
+        get() {
+            if (prefs.contains(KEY_SHORTCUT_ICON_SIZE)) {
+                return DockShortcutIconSize.fromOrdinal(
+                    prefs.getInt(KEY_SHORTCUT_ICON_SIZE, DockShortcutIconSize.LARGE.ordinal),
+                )
+            }
+            val legacyLarge = prefs.getBoolean(KEY_LARGE_SHORTCUT_ICONS, true)
+            return if (legacyLarge) DockShortcutIconSize.LARGE else DockShortcutIconSize.SMALL
+        }
         set(value) {
-            prefs.edit().putBoolean(KEY_LARGE_SHORTCUT_ICONS, value).apply()
+            prefs.edit().putInt(KEY_SHORTCUT_ICON_SIZE, value.ordinal).apply()
         }
 
     var drivingZoom: Float
@@ -84,6 +93,12 @@ class LauncherPreferences(context: Context) {
         get() = prefs.getBoolean(KEY_SHOW_TRAFFIC, false)
         set(value) {
             prefs.edit().putBoolean(KEY_SHOW_TRAFFIC, value).apply()
+        }
+
+    var navigationVoiceEnabled: Boolean
+        get() = prefs.getBoolean(KEY_NAVIGATION_VOICE_ENABLED, true)
+        set(value) {
+            prefs.edit().putBoolean(KEY_NAVIGATION_VOICE_ENABLED, value).apply()
         }
 
     var tomTomApiKey: String
@@ -171,11 +186,13 @@ class LauncherPreferences(context: Context) {
         private const val KEY_3D_BUILDINGS = "show_3d_buildings"
         private const val KEY_LAUNCHER_MODE = "launcher_mode"
         private const val KEY_LARGE_SHORTCUT_ICONS = "large_shortcut_icons"
+        private const val KEY_SHORTCUT_ICON_SIZE = "shortcut_icon_size"
         private const val KEY_DRIVING_ZOOM = "driving_zoom"
         private const val KEY_PUCK_H_OFFSET = "puck_h_offset"
         private const val KEY_PUCK_V_OFFSET = "puck_v_offset"
         private const val KEY_PUCK_SCALE = "puck_scale"
         private const val KEY_SHOW_TRAFFIC = "show_traffic"
+        private const val KEY_NAVIGATION_VOICE_ENABLED = "navigation_voice_enabled"
         private const val KEY_TOMTOM_API_KEY = "tomtom_api_key"
         private const val KEY_RECENT_DESTINATIONS = "recent_destinations"
         private const val KEY_SAVED_PLACES = "saved_places"

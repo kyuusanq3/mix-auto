@@ -1,0 +1,32 @@
+Mix Auto — UPS-Style Left-Turn Optimization (Route Penalty, Not Right-Turn-Only)
+
+Context: UPS ORION minimizes left turns in right-hand-traffic countries because left turns cross oncoming traffic — more idle time, fuel, and intersection risk. The Philippines drives on the right (same as US), so the concept applies to Bacolod/PH urban driving.
+
+Important constraint: Strict "right turns only" is NOT the goal and is often impractical on Philippine city grids (one-way streets, short blocks, destinations reachable only via left). Bacolod traffic (jeepneys, tricycles, unsignalized intersections) also means right turns are not always "free." Aim to **penalize** left turns when a similar-ETA alternative exists — not to forbid them.
+
+Current state: `MapLibreEngineImpl.fetchOsrmRoute()` calls public OSRM with no turn preferences:
+
+  https://routing.openstreetmap.de/routed-car/route/v1/driving/{origin};{dest}?geometries=geojson&steps=true&overview=full
+
+Public OSRM has no `avoid=left` or turn-bias query param.
+
+Possible approaches (pick one when implementing):
+
+1. Custom OSRM profile — self-hosted or patched `car.lua` with higher weight/cost on left-turn edges in the routing graph; requires maintaining OSM turn restriction data for PH/Bacolod.
+
+2. Post-process OSRM steps — parse step `maneuver.modifier` (`left`, `right`, `straight`); if route has many lefts, re-request with via-waypoints or alternate profiles; compare ETA vs default route.
+
+3. Multi-stop / delivery mode only — OR-Tools or similar VRP with left-turn penalty across many stops (UPS-style); overkill for single A→B nav in the launcher.
+
+4. Settings toggle (future) — e.g. "Prefer fewer left turns" in Map Settings or a Delivery mode; default OFF for normal driving; soft bias only.
+
+Out of scope for MVP:
+- Hard right-turn-only routing (may return no route or absurd detours)
+- Relying on public `routing.openstreetmap.de` for custom turn costs (need own OSRM instance or different engine: Valhalla, GraphHopper)
+
+Testing (when built):
+- Compare default OSRM vs penalized route: Gov Center → SM City Bacolod, short intra-city trips with known awkward lefts
+- Measure time/distance delta and count of left vs right maneuvers
+- Verify reroute (`checkOffRoute` / `startNavigation(..., isReroute=true)`) still works with alternate routing backend
+
+Reference: `MapLibreEngineImpl.kt` — `fetchOsrmRoute()`, `parseOsrmResponse()`, `startNavigation()`

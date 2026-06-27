@@ -29,6 +29,7 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -50,6 +51,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.kyuusanq3.mixauto.data.apps.LaunchableAppEntry
 import com.kyuusanq3.mixauto.domain.map.CarMapEngine
 import com.kyuusanq3.mixauto.domain.map.SearchResultPlace
 import com.kyuusanq3.mixauto.domain.media.MediaPlaybackState
@@ -58,8 +60,9 @@ import com.kyuusanq3.mixauto.ui.components.DashboardStatusBar
 import com.kyuusanq3.mixauto.ui.components.carScrollbar
 import com.kyuusanq3.mixauto.ui.components.MapSettingsPanelContent
 import com.kyuusanq3.mixauto.ui.components.NavigationSearchContent
-import com.kyuusanq3.mixauto.ui.components.OverlayCloseButton
+import com.kyuusanq3.mixauto.ui.components.PanelHeaderRow
 import com.kyuusanq3.mixauto.ui.components.PoiDetailPane
+import com.kyuusanq3.mixauto.ui.components.RoutePickerPane
 import com.kyuusanq3.mixauto.ui.components.SettingsSwitchRow
 import com.kyuusanq3.mixauto.ui.settings.AppUpdateState
 import com.kyuusanq3.mixauto.ui.settings.AppUpdateViewModel
@@ -68,7 +71,6 @@ import com.kyuusanq3.mixauto.ui.settings.LauncherViewModel
 import com.kyuusanq3.mixauto.ui.settings.MapDataViewModel
 import com.kyuusanq3.mixauto.ui.theme.CarBodyText
 import com.kyuusanq3.mixauto.ui.theme.CarDimensions
-import com.kyuusanq3.mixauto.ui.theme.CarHeadlineText
 import com.kyuusanq3.mixauto.ui.theme.CarLabelText
 import com.kyuusanq3.mixauto.ui.theme.ElectricCyan
 import com.kyuusanq3.mixauto.ui.theme.OledBlack
@@ -95,6 +97,9 @@ private fun dismissToBasePanel(musicPaneEnabled: Boolean): ActivePanel =
 @Composable
 private fun BoxScope.SplitScreenAppDrawerSlot(
     visible: Boolean,
+    launchableApps: List<LaunchableAppEntry>,
+    audioPlayerPackages: Set<String>,
+    isAppDrawerLoading: Boolean,
     dockPinnedPackages: List<String>,
     onToggleDockPin: (String) -> Unit,
     onSelectAudioSource: (String) -> Unit,
@@ -103,6 +108,9 @@ private fun BoxScope.SplitScreenAppDrawerSlot(
 ) {
     if (!visible) return
     AppDrawerOverlay(
+        launchableApps = launchableApps,
+        audioPlayerPackages = audioPlayerPackages,
+        isLoading = isAppDrawerLoading,
         dockPinnedPackages = dockPinnedPackages,
         maxDockPinnedApps = LauncherPreferences.MAX_DOCK_PINNED_APPS,
         onToggleDockPin = onToggleDockPin,
@@ -111,7 +119,7 @@ private fun BoxScope.SplitScreenAppDrawerSlot(
         onDismiss = onDismiss,
         modifier = Modifier
             .fillMaxSize()
-            .padding(CarDimensions.PaneGap),
+            .zIndex(1f),
     )
 }
 
@@ -141,11 +149,16 @@ fun DashboardScreen(
     useVectorTiles: Boolean,
     show3dBuildings: Boolean,
     showTraffic: Boolean,
+    navigationVoiceEnabled: Boolean,
     tomTomApiKey: String,
     isLauncherMode: Boolean,
-    isLargeShortcutIcons: Boolean,
+    shortcutIconSize: DockShortcutIconSize,
     dockPinnedPackages: List<String>,
     onToggleDockPin: (String) -> Unit,
+    launchableApps: List<LaunchableAppEntry>,
+    audioPlayerPackages: Set<String>,
+    isAppDrawerLoading: Boolean,
+    onEnsureLaunchableAppsLoaded: () -> Unit,
     drivingZoom: Float,
     puckHorizontalOffset: Float,
     puckVerticalOffset: Float,
@@ -157,9 +170,10 @@ fun DashboardScreen(
     onToggleVectorTiles: () -> Unit,
     onToggleShow3dBuildings: () -> Unit,
     onToggleTraffic: () -> Unit,
+    onToggleNavigationVoice: () -> Unit,
     onTomTomApiKeyChange: (String) -> Unit,
     onToggleLauncherMode: () -> Unit,
-    onToggleLargeShortcutIcons: () -> Unit,
+    onShortcutIconSizeChange: (DockShortcutIconSize) -> Unit,
     onDrivingZoomChange: (Float) -> Unit,
     onPuckHorizontalOffsetChange: (Float) -> Unit,
     onPuckVerticalOffsetChange: (Float) -> Unit,
@@ -204,6 +218,7 @@ fun DashboardScreen(
             ActivePanel.SEARCH,
             ActivePanel.POI_DETAIL,
             ActivePanel.MAP_DATA,
+            ActivePanel.ROUTE_PICKER,
             -> Unit
             ActivePanel.HIDDEN -> {
                 musicPaneEnabled = true
@@ -238,6 +253,13 @@ fun DashboardScreen(
     }
     val onDismissAppDrawer = { activePanel = dismissToBasePanel(musicPaneEnabled) }
     val onOpenLauncherSettingsFromDrawer = { activePanel = ActivePanel.SETTINGS }
+
+    LaunchedEffect(activePanel) {
+        if (activePanel == ActivePanel.APP_DRAWER) {
+            onEnsureLaunchableAppsLoaded()
+        }
+    }
+
     val isDestinationPanelOpen =
         activePanel == ActivePanel.SEARCH || activePanel == ActivePanel.POI_DETAIL
     val isMapSettingsPanelOpen = activePanel == ActivePanel.MAP_DATA
@@ -295,7 +317,8 @@ fun DashboardScreen(
     val isSplitLockedForOverlay =
         activePanel == ActivePanel.SEARCH ||
             activePanel == ActivePanel.POI_DETAIL ||
-            activePanel == ActivePanel.MAP_DATA
+            activePanel == ActivePanel.MAP_DATA ||
+            activePanel == ActivePanel.ROUTE_PICKER
     val effectiveMapMediaRatio =
         if (isSplitLockedForOverlay) OVERLAY_MAP_MEDIA_RATIO else mapMediaRatio
     val effectiveMediaWeight = 1f - effectiveMapMediaRatio
@@ -321,6 +344,15 @@ fun DashboardScreen(
         }
     }
 
+    LaunchedEffect(mapUiState.isRouteSelecting) {
+        if (mapUiState.isRouteSelecting) {
+            musicPaneEnabled = true
+            activePanel = ActivePanel.ROUTE_PICKER
+        } else if (activePanel == ActivePanel.ROUTE_PICKER) {
+            activePanel = dismissToBasePanel(musicPaneEnabled)
+        }
+    }
+
     LaunchedEffect(mapUiState.selectedPoi) {
         if (mapUiState.selectedPoi != null) {
             musicPaneEnabled = true
@@ -338,6 +370,9 @@ fun DashboardScreen(
     LaunchedEffect(activePanel, effectiveMapMediaRatio, mapUiState.selectedPoi) {
         mapEngine.onMapHostLayoutChanged()
     }
+
+    val reduceTopInsetBelowStatusStrip = showStatusStrip
+    val reduceMediaTopInsetBelowStatusStrip = showStatusStrip && !isPortrait
 
     Column(
         modifier = modifier
@@ -382,7 +417,7 @@ fun DashboardScreen(
                                 isDestinationPanelOpen = isDestinationPanelOpen,
                                 onToggleMapSettings = onToggleMapSettings,
                                 isMapSettingsPanelOpen = isMapSettingsPanelOpen,
-                                puckScale = puckScale,
+                                reduceTopInset = reduceTopInsetBelowStatusStrip,
                                 modifier = Modifier
                                     .weight(if (showSecondaryPane) effectiveMapMediaRatio else 1f)
                                     .fillMaxWidth(),
@@ -424,9 +459,10 @@ fun DashboardScreen(
                                     useVectorTiles = useVectorTiles,
                                     show3dBuildings = show3dBuildings,
                                     showTraffic = showTraffic,
+                                    navigationVoiceEnabled = navigationVoiceEnabled,
                                     tomTomApiKey = tomTomApiKey,
                                     isLauncherMode = isLauncherMode,
-                                    isLargeShortcutIcons = isLargeShortcutIcons,
+                                    shortcutIconSize = shortcutIconSize,
                                     drivingZoom = drivingZoom,
                                     puckHorizontalOffset = puckHorizontalOffset,
                                     puckVerticalOffset = puckVerticalOffset,
@@ -436,9 +472,10 @@ fun DashboardScreen(
                                     onToggleVectorTiles = onToggleVectorTiles,
                                     onToggleShow3dBuildings = onToggleShow3dBuildings,
                                     onToggleTraffic = onToggleTraffic,
+                                    onToggleNavigationVoice = onToggleNavigationVoice,
                                     onTomTomApiKeyChange = onTomTomApiKeyChange,
                                     onToggleLauncherMode = onToggleLauncherMode,
-                                    onToggleLargeShortcutIcons = onToggleLargeShortcutIcons,
+                                    onShortcutIconSizeChange = onShortcutIconSizeChange,
                                     onDrivingZoomChange = onDrivingZoomChange,
                                     onPuckHorizontalOffsetChange = onPuckHorizontalOffsetChange,
                                     onPuckVerticalOffsetChange = onPuckVerticalOffsetChange,
@@ -448,6 +485,7 @@ fun DashboardScreen(
                                     showSystemStatusBar = showSystemStatusBar,
                                     onToggleShowStatusStrip = onToggleShowStatusStrip,
                                     onToggleShowSystemStatusBar = onToggleShowSystemStatusBar,
+                                    reduceTopInset = reduceMediaTopInsetBelowStatusStrip,
                                     appUpdateState = appUpdateState,
                                     onCheckForUpdate = appUpdateViewModel::checkForUpdate,
                                     onDownloadUpdate = appUpdateViewModel::downloadUpdate,
@@ -460,6 +498,9 @@ fun DashboardScreen(
                         }
                         SplitScreenAppDrawerSlot(
                             visible = activePanel == ActivePanel.APP_DRAWER,
+                            launchableApps = launchableApps,
+                            audioPlayerPackages = audioPlayerPackages,
+                            isAppDrawerLoading = isAppDrawerLoading,
                             dockPinnedPackages = dockPinnedPackages,
                             onToggleDockPin = onToggleDockPin,
                             onSelectAudioSource = openAudioSource,
@@ -469,7 +510,7 @@ fun DashboardScreen(
                     }
                     ShortcutDock(
                         isHorizontal = true,
-                        isLargeIcons = isLargeShortcutIcons,
+                        shortcutIconSize = shortcutIconSize,
                         isLeftHandDrive = isLeftHandDrive,
                         activePanel = activePanel,
                         mediaState = mediaState,
@@ -508,7 +549,7 @@ fun DashboardScreen(
                                 isDestinationPanelOpen = isDestinationPanelOpen,
                                 onToggleMapSettings = onToggleMapSettings,
                                 isMapSettingsPanelOpen = isMapSettingsPanelOpen,
-                                puckScale = puckScale,
+                                reduceTopInset = reduceTopInsetBelowStatusStrip,
                                 modifier = Modifier
                                     .weight(if (showSecondaryPane) effectiveMapMediaRatio else 1f)
                                     .fillMaxSize(),
@@ -550,9 +591,10 @@ fun DashboardScreen(
                                     useVectorTiles = useVectorTiles,
                                     show3dBuildings = show3dBuildings,
                                     showTraffic = showTraffic,
+                                    navigationVoiceEnabled = navigationVoiceEnabled,
                                     tomTomApiKey = tomTomApiKey,
                                     isLauncherMode = isLauncherMode,
-                                    isLargeShortcutIcons = isLargeShortcutIcons,
+                                    shortcutIconSize = shortcutIconSize,
                                     drivingZoom = drivingZoom,
                                     puckHorizontalOffset = puckHorizontalOffset,
                                     puckVerticalOffset = puckVerticalOffset,
@@ -562,9 +604,10 @@ fun DashboardScreen(
                                     onToggleVectorTiles = onToggleVectorTiles,
                                     onToggleShow3dBuildings = onToggleShow3dBuildings,
                                     onToggleTraffic = onToggleTraffic,
+                                    onToggleNavigationVoice = onToggleNavigationVoice,
                                     onTomTomApiKeyChange = onTomTomApiKeyChange,
                                     onToggleLauncherMode = onToggleLauncherMode,
-                                    onToggleLargeShortcutIcons = onToggleLargeShortcutIcons,
+                                    onShortcutIconSizeChange = onShortcutIconSizeChange,
                                     onDrivingZoomChange = onDrivingZoomChange,
                                     onPuckHorizontalOffsetChange = onPuckHorizontalOffsetChange,
                                     onPuckVerticalOffsetChange = onPuckVerticalOffsetChange,
@@ -574,6 +617,7 @@ fun DashboardScreen(
                                     showSystemStatusBar = showSystemStatusBar,
                                     onToggleShowStatusStrip = onToggleShowStatusStrip,
                                     onToggleShowSystemStatusBar = onToggleShowSystemStatusBar,
+                                    reduceTopInset = reduceMediaTopInsetBelowStatusStrip,
                                     appUpdateState = appUpdateState,
                                     onCheckForUpdate = appUpdateViewModel::checkForUpdate,
                                     onDownloadUpdate = appUpdateViewModel::downloadUpdate,
@@ -613,9 +657,10 @@ fun DashboardScreen(
                                     useVectorTiles = useVectorTiles,
                                     show3dBuildings = show3dBuildings,
                                     showTraffic = showTraffic,
+                                    navigationVoiceEnabled = navigationVoiceEnabled,
                                     tomTomApiKey = tomTomApiKey,
                                     isLauncherMode = isLauncherMode,
-                                    isLargeShortcutIcons = isLargeShortcutIcons,
+                                    shortcutIconSize = shortcutIconSize,
                                     drivingZoom = drivingZoom,
                                     puckHorizontalOffset = puckHorizontalOffset,
                                     puckVerticalOffset = puckVerticalOffset,
@@ -625,9 +670,10 @@ fun DashboardScreen(
                                     onToggleVectorTiles = onToggleVectorTiles,
                                     onToggleShow3dBuildings = onToggleShow3dBuildings,
                                     onToggleTraffic = onToggleTraffic,
+                                    onToggleNavigationVoice = onToggleNavigationVoice,
                                     onTomTomApiKeyChange = onTomTomApiKeyChange,
                                     onToggleLauncherMode = onToggleLauncherMode,
-                                    onToggleLargeShortcutIcons = onToggleLargeShortcutIcons,
+                                    onShortcutIconSizeChange = onShortcutIconSizeChange,
                                     onDrivingZoomChange = onDrivingZoomChange,
                                     onPuckHorizontalOffsetChange = onPuckHorizontalOffsetChange,
                                     onPuckVerticalOffsetChange = onPuckVerticalOffsetChange,
@@ -637,6 +683,7 @@ fun DashboardScreen(
                                     showSystemStatusBar = showSystemStatusBar,
                                     onToggleShowStatusStrip = onToggleShowStatusStrip,
                                     onToggleShowSystemStatusBar = onToggleShowSystemStatusBar,
+                                    reduceTopInset = reduceMediaTopInsetBelowStatusStrip,
                                     appUpdateState = appUpdateState,
                                     onCheckForUpdate = appUpdateViewModel::checkForUpdate,
                                     onDownloadUpdate = appUpdateViewModel::downloadUpdate,
@@ -661,7 +708,7 @@ fun DashboardScreen(
                                 isDestinationPanelOpen = isDestinationPanelOpen,
                                 onToggleMapSettings = onToggleMapSettings,
                                 isMapSettingsPanelOpen = isMapSettingsPanelOpen,
-                                puckScale = puckScale,
+                                reduceTopInset = reduceTopInsetBelowStatusStrip,
                                 modifier = Modifier
                                     .weight(if (showSecondaryPane) effectiveMapMediaRatio else 1f)
                                     .fillMaxSize(),
@@ -670,6 +717,9 @@ fun DashboardScreen(
                         }
                         SplitScreenAppDrawerSlot(
                             visible = activePanel == ActivePanel.APP_DRAWER,
+                            launchableApps = launchableApps,
+                            audioPlayerPackages = audioPlayerPackages,
+                            isAppDrawerLoading = isAppDrawerLoading,
                             dockPinnedPackages = dockPinnedPackages,
                             onToggleDockPin = onToggleDockPin,
                             onSelectAudioSource = openAudioSource,
@@ -679,7 +729,7 @@ fun DashboardScreen(
                     }
                     ShortcutDock(
                         isHorizontal = true,
-                        isLargeIcons = isLargeShortcutIcons,
+                        shortcutIconSize = shortcutIconSize,
                         isLeftHandDrive = isLeftHandDrive,
                         activePanel = activePanel,
                         mediaState = mediaState,
@@ -716,7 +766,7 @@ fun DashboardScreen(
                                 isDestinationPanelOpen = isDestinationPanelOpen,
                                 onToggleMapSettings = onToggleMapSettings,
                                 isMapSettingsPanelOpen = isMapSettingsPanelOpen,
-                                    puckScale = puckScale,
+                                    reduceTopInset = reduceTopInsetBelowStatusStrip,
                                     modifier = Modifier
                                         .weight(
                                             if (showSecondaryPane) {
@@ -764,9 +814,10 @@ fun DashboardScreen(
                                         useVectorTiles = useVectorTiles,
                                         show3dBuildings = show3dBuildings,
                                         showTraffic = showTraffic,
+                                        navigationVoiceEnabled = navigationVoiceEnabled,
                                         tomTomApiKey = tomTomApiKey,
                                         isLauncherMode = isLauncherMode,
-                                        isLargeShortcutIcons = isLargeShortcutIcons,
+                                        shortcutIconSize = shortcutIconSize,
                                         drivingZoom = drivingZoom,
                                         puckHorizontalOffset = puckHorizontalOffset,
                                         puckVerticalOffset = puckVerticalOffset,
@@ -776,9 +827,10 @@ fun DashboardScreen(
                                         onToggleVectorTiles = onToggleVectorTiles,
                                         onToggleShow3dBuildings = onToggleShow3dBuildings,
                                         onToggleTraffic = onToggleTraffic,
+                                        onToggleNavigationVoice = onToggleNavigationVoice,
                                         onTomTomApiKeyChange = onTomTomApiKeyChange,
                                         onToggleLauncherMode = onToggleLauncherMode,
-                                        onToggleLargeShortcutIcons = onToggleLargeShortcutIcons,
+                                        onShortcutIconSizeChange = onShortcutIconSizeChange,
                                         onDrivingZoomChange = onDrivingZoomChange,
                                         onPuckHorizontalOffsetChange = onPuckHorizontalOffsetChange,
                                         onPuckVerticalOffsetChange = onPuckVerticalOffsetChange,
@@ -788,6 +840,7 @@ fun DashboardScreen(
                                         showSystemStatusBar = showSystemStatusBar,
                                         onToggleShowStatusStrip = onToggleShowStatusStrip,
                                         onToggleShowSystemStatusBar = onToggleShowSystemStatusBar,
+                                        reduceTopInset = reduceMediaTopInsetBelowStatusStrip,
                                         appUpdateState = appUpdateState,
                                         onCheckForUpdate = appUpdateViewModel::checkForUpdate,
                                         onDownloadUpdate = appUpdateViewModel::downloadUpdate,
@@ -800,6 +853,9 @@ fun DashboardScreen(
                             }
                             SplitScreenAppDrawerSlot(
                                 visible = activePanel == ActivePanel.APP_DRAWER,
+                                launchableApps = launchableApps,
+                                audioPlayerPackages = audioPlayerPackages,
+                                isAppDrawerLoading = isAppDrawerLoading,
                                 dockPinnedPackages = dockPinnedPackages,
                                 onToggleDockPin = onToggleDockPin,
                                 onSelectAudioSource = openAudioSource,
@@ -809,7 +865,7 @@ fun DashboardScreen(
                         }
                         ShortcutDock(
                             isHorizontal = false,
-                            isLargeIcons = isLargeShortcutIcons,
+                            shortcutIconSize = shortcutIconSize,
                             isLeftHandDrive = isLeftHandDrive,
                             activePanel = activePanel,
                             mediaState = mediaState,
@@ -828,7 +884,7 @@ fun DashboardScreen(
                     } else {
                         ShortcutDock(
                             isHorizontal = false,
-                            isLargeIcons = isLargeShortcutIcons,
+                            shortcutIconSize = shortcutIconSize,
                             isLeftHandDrive = isLeftHandDrive,
                             activePanel = activePanel,
                             mediaState = mediaState,
@@ -856,7 +912,7 @@ fun DashboardScreen(
                                 isDestinationPanelOpen = isDestinationPanelOpen,
                                 onToggleMapSettings = onToggleMapSettings,
                                 isMapSettingsPanelOpen = isMapSettingsPanelOpen,
-                                    puckScale = puckScale,
+                                    reduceTopInset = reduceTopInsetBelowStatusStrip,
                                     modifier = Modifier
                                         .weight(
                                             if (showSecondaryPane) {
@@ -904,9 +960,10 @@ fun DashboardScreen(
                                         useVectorTiles = useVectorTiles,
                                         show3dBuildings = show3dBuildings,
                                         showTraffic = showTraffic,
+                                        navigationVoiceEnabled = navigationVoiceEnabled,
                                         tomTomApiKey = tomTomApiKey,
                                         isLauncherMode = isLauncherMode,
-                                        isLargeShortcutIcons = isLargeShortcutIcons,
+                                        shortcutIconSize = shortcutIconSize,
                                         drivingZoom = drivingZoom,
                                         puckHorizontalOffset = puckHorizontalOffset,
                                         puckVerticalOffset = puckVerticalOffset,
@@ -916,9 +973,10 @@ fun DashboardScreen(
                                         onToggleVectorTiles = onToggleVectorTiles,
                                         onToggleShow3dBuildings = onToggleShow3dBuildings,
                                         onToggleTraffic = onToggleTraffic,
+                                        onToggleNavigationVoice = onToggleNavigationVoice,
                                         onTomTomApiKeyChange = onTomTomApiKeyChange,
                                         onToggleLauncherMode = onToggleLauncherMode,
-                                        onToggleLargeShortcutIcons = onToggleLargeShortcutIcons,
+                                        onShortcutIconSizeChange = onShortcutIconSizeChange,
                                         onDrivingZoomChange = onDrivingZoomChange,
                                         onPuckHorizontalOffsetChange = onPuckHorizontalOffsetChange,
                                         onPuckVerticalOffsetChange = onPuckVerticalOffsetChange,
@@ -928,6 +986,7 @@ fun DashboardScreen(
                                         showSystemStatusBar = showSystemStatusBar,
                                         onToggleShowStatusStrip = onToggleShowStatusStrip,
                                         onToggleShowSystemStatusBar = onToggleShowSystemStatusBar,
+                                        reduceTopInset = reduceMediaTopInsetBelowStatusStrip,
                                         appUpdateState = appUpdateState,
                                         onCheckForUpdate = appUpdateViewModel::checkForUpdate,
                                         onDownloadUpdate = appUpdateViewModel::downloadUpdate,
@@ -940,6 +999,9 @@ fun DashboardScreen(
                             }
                             SplitScreenAppDrawerSlot(
                                 visible = activePanel == ActivePanel.APP_DRAWER,
+                                launchableApps = launchableApps,
+                                audioPlayerPackages = audioPlayerPackages,
+                                isAppDrawerLoading = isAppDrawerLoading,
                                 dockPinnedPackages = dockPinnedPackages,
                                 onToggleDockPin = onToggleDockPin,
                                 onSelectAudioSource = openAudioSource,
@@ -984,9 +1046,10 @@ private fun DashboardSecondaryPane(
     useVectorTiles: Boolean,
     show3dBuildings: Boolean,
     showTraffic: Boolean,
+    navigationVoiceEnabled: Boolean,
     tomTomApiKey: String,
     isLauncherMode: Boolean,
-    isLargeShortcutIcons: Boolean,
+    shortcutIconSize: DockShortcutIconSize,
     drivingZoom: Float,
     puckHorizontalOffset: Float,
     puckVerticalOffset: Float,
@@ -996,9 +1059,10 @@ private fun DashboardSecondaryPane(
     onToggleVectorTiles: () -> Unit,
     onToggleShow3dBuildings: () -> Unit,
     onToggleTraffic: () -> Unit,
+    onToggleNavigationVoice: () -> Unit,
     onTomTomApiKeyChange: (String) -> Unit,
     onToggleLauncherMode: () -> Unit,
-    onToggleLargeShortcutIcons: () -> Unit,
+    onShortcutIconSizeChange: (DockShortcutIconSize) -> Unit,
     onDrivingZoomChange: (Float) -> Unit,
     onPuckHorizontalOffsetChange: (Float) -> Unit,
     onPuckVerticalOffsetChange: (Float) -> Unit,
@@ -1008,6 +1072,7 @@ private fun DashboardSecondaryPane(
     showSystemStatusBar: Boolean,
     onToggleShowStatusStrip: () -> Unit,
     onToggleShowSystemStatusBar: () -> Unit,
+    reduceTopInset: Boolean,
     appUpdateState: AppUpdateState,
     onCheckForUpdate: () -> Unit,
     onDownloadUpdate: () -> Unit,
@@ -1042,9 +1107,10 @@ private fun DashboardSecondaryPane(
         useVectorTiles = useVectorTiles,
         show3dBuildings = show3dBuildings,
         showTraffic = showTraffic,
+        navigationVoiceEnabled = navigationVoiceEnabled,
         tomTomApiKey = tomTomApiKey,
         isLauncherMode = isLauncherMode,
-        isLargeShortcutIcons = isLargeShortcutIcons,
+        shortcutIconSize = shortcutIconSize,
         drivingZoom = drivingZoom,
         puckHorizontalOffset = puckHorizontalOffset,
         puckVerticalOffset = puckVerticalOffset,
@@ -1054,9 +1120,10 @@ private fun DashboardSecondaryPane(
         onToggleVectorTiles = onToggleVectorTiles,
         onToggleShow3dBuildings = onToggleShow3dBuildings,
         onToggleTraffic = onToggleTraffic,
+        onToggleNavigationVoice = onToggleNavigationVoice,
         onTomTomApiKeyChange = onTomTomApiKeyChange,
         onToggleLauncherMode = onToggleLauncherMode,
-        onToggleLargeShortcutIcons = onToggleLargeShortcutIcons,
+                                        onShortcutIconSizeChange = onShortcutIconSizeChange,
         onDrivingZoomChange = onDrivingZoomChange,
         onPuckHorizontalOffsetChange = onPuckHorizontalOffsetChange,
         onPuckVerticalOffsetChange = onPuckVerticalOffsetChange,
@@ -1066,6 +1133,7 @@ private fun DashboardSecondaryPane(
         showSystemStatusBar = showSystemStatusBar,
         onToggleShowStatusStrip = onToggleShowStatusStrip,
         onToggleShowSystemStatusBar = onToggleShowSystemStatusBar,
+        reduceTopInset = reduceTopInset,
         appUpdateState = appUpdateState,
         onCheckForUpdate = onCheckForUpdate,
         onDownloadUpdate = onDownloadUpdate,
@@ -1103,9 +1171,10 @@ private fun MediaOrSettingsPane(
     useVectorTiles: Boolean,
     show3dBuildings: Boolean,
     showTraffic: Boolean,
+    navigationVoiceEnabled: Boolean,
     tomTomApiKey: String,
     isLauncherMode: Boolean,
-    isLargeShortcutIcons: Boolean,
+    shortcutIconSize: DockShortcutIconSize,
     drivingZoom: Float,
     puckHorizontalOffset: Float,
     puckVerticalOffset: Float,
@@ -1115,9 +1184,10 @@ private fun MediaOrSettingsPane(
     onToggleVectorTiles: () -> Unit,
     onToggleShow3dBuildings: () -> Unit,
     onToggleTraffic: () -> Unit,
+    onToggleNavigationVoice: () -> Unit,
     onTomTomApiKeyChange: (String) -> Unit,
     onToggleLauncherMode: () -> Unit,
-    onToggleLargeShortcutIcons: () -> Unit,
+    onShortcutIconSizeChange: (DockShortcutIconSize) -> Unit,
     onDrivingZoomChange: (Float) -> Unit,
     onPuckHorizontalOffsetChange: (Float) -> Unit,
     onPuckVerticalOffsetChange: (Float) -> Unit,
@@ -1127,6 +1197,7 @@ private fun MediaOrSettingsPane(
     showSystemStatusBar: Boolean,
     onToggleShowStatusStrip: () -> Unit,
     onToggleShowSystemStatusBar: () -> Unit,
+    reduceTopInset: Boolean,
     appUpdateState: AppUpdateState,
     onCheckForUpdate: () -> Unit,
     onDownloadUpdate: () -> Unit,
@@ -1175,12 +1246,21 @@ private fun MediaOrSettingsPane(
                     )
                 }
             }
+            ActivePanel.ROUTE_PICKER -> {
+                RoutePickerPane(
+                    routeOptions = mapUiState.routeOptions,
+                    selectedRouteId = mapUiState.selectedRouteId,
+                    engine = mapEngine,
+                    onDismiss = { mapEngine.startFreeDrive() },
+                    modifier = Modifier.fillMaxSize(),
+                )
+            }
             ActivePanel.SETTINGS -> {
                 SettingsContent(
                     isLeftHandDrive = isLeftHandDrive,
                     isShortcutsHorizontal = isShortcutsHorizontal,
                     isLauncherMode = isLauncherMode,
-                    isLargeShortcutIcons = isLargeShortcutIcons,
+                    shortcutIconSize = shortcutIconSize,
                     showStatusStrip = showStatusStrip,
                     showSystemStatusBar = showSystemStatusBar,
                     onToggleShowStatusStrip = onToggleShowStatusStrip,
@@ -1188,7 +1268,7 @@ private fun MediaOrSettingsPane(
                     onToggleLhd = onToggleLhd,
                     onToggleShortcutsHorizontal = onToggleShortcutsHorizontal,
                     onToggleLauncherMode = onToggleLauncherMode,
-                    onToggleLargeShortcutIcons = onToggleLargeShortcutIcons,
+                                        onShortcutIconSizeChange = onShortcutIconSizeChange,
                     appUpdateState = appUpdateState,
                     onCheckForUpdate = onCheckForUpdate,
                     onDownloadUpdate = onDownloadUpdate,
@@ -1204,6 +1284,7 @@ private fun MediaOrSettingsPane(
                     useVectorTiles = useVectorTiles,
                     show3dBuildings = show3dBuildings,
                     showTraffic = showTraffic,
+                    navigationVoiceEnabled = navigationVoiceEnabled,
                     drivingZoom = drivingZoom,
                     puckHorizontalOffset = puckHorizontalOffset,
                     puckVerticalOffset = puckVerticalOffset,
@@ -1213,6 +1294,7 @@ private fun MediaOrSettingsPane(
                     onToggleVectorTiles = onToggleVectorTiles,
                     onToggleShow3dBuildings = onToggleShow3dBuildings,
                     onToggleTraffic = onToggleTraffic,
+                    onToggleNavigationVoice = onToggleNavigationVoice,
                     onDrivingZoomChange = onDrivingZoomChange,
                     onPuckHorizontalOffsetChange = onPuckHorizontalOffsetChange,
                     onPuckVerticalOffsetChange = onPuckVerticalOffsetChange,
@@ -1236,6 +1318,7 @@ private fun MediaOrSettingsPane(
                     onSkipPrevious = onMediaSkipPrevious,
                     onSkipNext = onMediaSkipNext,
                     onToggleLike = onMediaToggleLike,
+                    reduceTopInset = reduceTopInset,
                     modifier = Modifier.fillMaxSize(),
                 )
             }
@@ -1248,7 +1331,7 @@ private fun SettingsContent(
     isLeftHandDrive: Boolean,
     isShortcutsHorizontal: Boolean,
     isLauncherMode: Boolean,
-    isLargeShortcutIcons: Boolean,
+    shortcutIconSize: DockShortcutIconSize,
     showStatusStrip: Boolean,
     showSystemStatusBar: Boolean,
     onToggleShowStatusStrip: () -> Unit,
@@ -1256,7 +1339,7 @@ private fun SettingsContent(
     onToggleLhd: () -> Unit,
     onToggleShortcutsHorizontal: () -> Unit,
     onToggleLauncherMode: () -> Unit,
-    onToggleLargeShortcutIcons: () -> Unit,
+    onShortcutIconSizeChange: (DockShortcutIconSize) -> Unit,
     appUpdateState: AppUpdateState,
     onCheckForUpdate: () -> Unit,
     onDownloadUpdate: () -> Unit,
@@ -1273,24 +1356,17 @@ private fun SettingsContent(
             modifier = Modifier
                 .fillMaxWidth()
                 .verticalScroll(scrollState)
-                .padding(CarDimensions.PaneGap * 2),
+                .padding(
+                    horizontal = CarDimensions.PaneGap * 2,
+                    vertical = CarDimensions.PaneGap,
+                ),
             verticalArrangement = Arrangement.spacedBy(CarDimensions.DockItemSpacing),
         ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                CarHeadlineText(
-                    text = "Launcher Settings",
-                    style = MaterialTheme.typography.headlineMedium,
-                    modifier = Modifier.weight(1f),
-                )
-                OverlayCloseButton(
-                    onClick = onDismiss,
-                    contentDescription = "Close settings",
-                )
-            }
+            PanelHeaderRow(
+                title = "Launcher Settings",
+                onClose = onDismiss,
+                closeContentDescription = "Close settings",
+            )
 
             SettingsSwitchRow(
                     label = "Left-Hand Drive Layout",
@@ -1312,15 +1388,30 @@ private fun SettingsContent(
                     },
                 )
 
-                SettingsSwitchRow(
-                    label = "Large Shortcut Icons",
-                    checked = isLargeShortcutIcons,
-                    onCheckedChange = { checked ->
-                        if (checked != isLargeShortcutIcons) {
-                            onToggleLargeShortcutIcons()
-                        }
-                    },
-                )
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    CarBodyText(
+                        text = "Shortcut Icon Size",
+                        style = MaterialTheme.typography.bodyLarge,
+                    )
+                    Slider(
+                        value = shortcutIconSize.ordinal.toFloat(),
+                        onValueChange = { raw ->
+                            onShortcutIconSizeChange(DockShortcutIconSize.fromOrdinal(raw.roundToInt()))
+                        },
+                        valueRange = 0f..2f,
+                        steps = 1,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(CarDimensions.MinTapTarget),
+                    )
+                    CarLabelText(
+                        text = shortcutIconSize.label,
+                        style = MaterialTheme.typography.labelMedium,
+                    )
+                }
 
                 SettingsSwitchRow(
                     label = "Status strip (time, date, weather)",

@@ -1,6 +1,7 @@
 package com.kyuusanq3.mixauto.ui.components
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -13,9 +14,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.CropFree
-import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.GpsFixed
-import androidx.compose.material.icons.filled.Map
+import androidx.compose.material.icons.filled.Layers
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -28,25 +28,20 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.drawBehind
-import androidx.compose.ui.layout.onSizeChanged
-import androidx.compose.ui.geometry.CornerRadius
-import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.foundation.layout.offset
-import androidx.compose.foundation.layout.wrapContentSize
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
-import kotlin.math.roundToInt
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.kyuusanq3.mixauto.domain.map.CarMapEngine
+import com.kyuusanq3.mixauto.domain.map.RouteProvider
 import com.kyuusanq3.mixauto.ui.theme.CarBodyText
 import com.kyuusanq3.mixauto.ui.theme.CarDimensions
 import com.kyuusanq3.mixauto.ui.theme.CarLabelText
@@ -60,7 +55,7 @@ fun CarMapViewContainer(
     isDestinationPanelOpen: Boolean,
     onToggleMapSettings: () -> Unit,
     isMapSettingsPanelOpen: Boolean,
-    puckScale: Float = 1f,
+    reduceTopInset: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -85,7 +80,16 @@ fun CarMapViewContainer(
 
     Box(
         modifier = modifier
-            .padding(CarDimensions.PaneGap)
+            .padding(
+                start = CarDimensions.PaneGap,
+                end = CarDimensions.PaneGap,
+                bottom = CarDimensions.PaneGap,
+                top = if (reduceTopInset) {
+                    CarDimensions.StatusStripAdjacentGap
+                } else {
+                    CarDimensions.PaneGap
+                },
+            )
             .clip(MaterialTheme.shapes.medium)
             .onSizeChanged { engine.onMapHostLayoutChanged() },
     ) {
@@ -102,23 +106,36 @@ fun CarMapViewContainer(
                     .background(OledBlack.copy(alpha = 0.72f))
                     .padding(CarDimensions.PaneGap),
             ) {
-                CarBodyText(
-                    text = mapUiState.streetName,
-                    style = MaterialTheme.typography.bodyLarge,
-                )
-                mapUiState.turnInstruction?.let { instruction ->
-                    CarLabelText(
-                        text = instruction,
-                        modifier = Modifier.padding(top = CarDimensions.PaneGap / 2),
-                        style = MaterialTheme.typography.labelLarge,
+                if (mapUiState.isRouteSelecting) {
+                    CarBodyText(
+                        text = "Choose a route",
+                        style = MaterialTheme.typography.bodyLarge,
                     )
-                }
-                mapUiState.distanceToNextTurn?.let { distance ->
+                    val remainingSec = ((1f - mapUiState.routeOverviewProgress) * 10f).toInt().coerceAtLeast(0)
                     CarLabelText(
-                        text = distance,
-                        modifier = Modifier.padding(top = CarDimensions.PaneGap / 4),
+                        text = "Tap again on selected route to start · auto-start in ${remainingSec}s",
+                        modifier = Modifier.padding(top = CarDimensions.PaneGap / 2),
                         style = MaterialTheme.typography.labelMedium,
                     )
+                } else {
+                    CarBodyText(
+                        text = mapUiState.streetName,
+                        style = MaterialTheme.typography.bodyLarge,
+                    )
+                    mapUiState.turnInstruction?.let { instruction ->
+                        CarLabelText(
+                            text = instruction,
+                            modifier = Modifier.padding(top = CarDimensions.PaneGap / 2),
+                            style = MaterialTheme.typography.labelLarge,
+                        )
+                    }
+                    mapUiState.distanceToNextTurn?.let { distance ->
+                        CarLabelText(
+                            text = distance,
+                            modifier = Modifier.padding(top = CarDimensions.PaneGap / 4),
+                            style = MaterialTheme.typography.labelMedium,
+                        )
+                    }
                 }
             }
         }
@@ -157,53 +174,6 @@ fun CarMapViewContainer(
                 )
             }
 
-            Spacer(modifier = Modifier.height(CarDimensions.PaneGap))
-            IconButton(
-                onClick = onToggleMapSettings,
-                modifier = Modifier
-                    .size(CarDimensions.MinTapTarget)
-                    .background(
-                        if (isMapSettingsPanelOpen) {
-                            ElectricCyan
-                        } else {
-                            OledBlack.copy(alpha = 0.72f)
-                        },
-                        MaterialTheme.shapes.small,
-                    ),
-            ) {
-                Box(
-                    modifier = Modifier.size(CarDimensions.MinTapTarget * 0.55f),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Icon(
-                        imageVector = Icons.Filled.Map,
-                        contentDescription = null,
-                        modifier = Modifier.fillMaxSize(),
-                        tint = if (isMapSettingsPanelOpen) {
-                            OledBlack
-                        } else {
-                            MaterialTheme.colorScheme.primary
-                        },
-                    )
-                    Icon(
-                        imageVector = Icons.Filled.Edit,
-                        contentDescription = if (isMapSettingsPanelOpen) {
-                            "Hide map settings"
-                        } else {
-                            "Show map settings"
-                        },
-                        modifier = Modifier
-                            .align(Alignment.BottomEnd)
-                            .size(CarDimensions.MinTapTarget * 0.28f),
-                        tint = if (isMapSettingsPanelOpen) {
-                            OledBlack
-                        } else {
-                            MaterialTheme.colorScheme.primary
-                        },
-                    )
-                }
-            }
-
             if (mapUiState.isNavigating) {
                 Spacer(modifier = Modifier.height(CarDimensions.PaneGap))
                 IconButton(
@@ -223,20 +193,17 @@ fun CarMapViewContainer(
             if (mapUiState.isCameraDetached && !mapUiState.isNavigating) {
                 if (!mapUiState.isInTopDownView) {
                     Spacer(modifier = Modifier.height(CarDimensions.PaneGap))
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        TooltipBubble(text = "Enter Top-View Mode\nto place pins")
-                        IconButton(
-                            onClick = { engine.enterTopDownView() },
-                            modifier = Modifier
-                                .size(CarDimensions.MinTapTarget)
-                                .background(OledBlack.copy(alpha = 0.72f), MaterialTheme.shapes.small),
-                        ) {
-                            Icon(
-                                imageVector = Icons.Filled.CropFree,
-                                contentDescription = "Top-down view",
-                                tint = MaterialTheme.colorScheme.primary,
-                            )
-                        }
+                    IconButton(
+                        onClick = { engine.enterTopDownView() },
+                        modifier = Modifier
+                            .size(CarDimensions.MinTapTarget)
+                            .background(OledBlack.copy(alpha = 0.72f), MaterialTheme.shapes.small),
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.CropFree,
+                            contentDescription = "Top-down view",
+                            tint = MaterialTheme.colorScheme.primary,
+                        )
                     }
                 }
                 Spacer(modifier = Modifier.height(CarDimensions.PaneGap))
@@ -255,7 +222,30 @@ fun CarMapViewContainer(
             }
         }
 
-        if (mapUiState.routeOverviewProgress > 0f) {
+        MapSettingsFab(
+            isOpen = isMapSettingsPanelOpen,
+            onClick = onToggleMapSettings,
+            modifier = Modifier
+                .align(Alignment.BottomStart)
+                .padding(
+                    start = CarDimensions.PaneGap,
+                    bottom = MapLibreAttributionReserveDp,
+                ),
+        )
+
+        if (mapUiState.isRouteSelecting) {
+            RouteSelectionLegend(
+                routeProviders = mapUiState.routeOptions.map { it.provider }.distinct(),
+                modifier = Modifier
+                    .align(Alignment.BottomStart)
+                    .padding(
+                        start = CarDimensions.PaneGap,
+                        bottom = MapLibreAttributionReserveDp + CarDimensions.PanelHeaderTapTarget + CarDimensions.PaneGap,
+                    ),
+            )
+        }
+
+        if (mapUiState.isRouteSelecting || mapUiState.routeOverviewProgress > 0f) {
             LinearProgressIndicator(
                 progress = { mapUiState.routeOverviewProgress },
                 modifier = Modifier
@@ -267,109 +257,138 @@ fun CarMapViewContainer(
             )
         }
 
-        val puckX = mapUiState.puckScreenX
-        val puckY = mapUiState.puckScreenY
-        if (mapUiState.currentSpeed > 0 && puckX != null && puckY != null) {
-            val bubbleOffset = (PUCK_BASE_RADIUS_DP * puckScale + BUBBLE_GAP_DP).dp
-            Box(
-                modifier = Modifier
-                    .offset { IntOffset(puckX.roundToInt(), puckY.roundToInt()) }
-                    .wrapContentSize(unbounded = true),
-            ) {
-                SpeedBubble(
-                    text = "${mapUiState.currentSpeed} km/h",
-                    modifier = Modifier
-                        .align(Alignment.CenterStart)
-                        .offset(x = bubbleOffset),
-                )
-            }
+        SpeedCircle(
+            speedKmh = mapUiState.currentSpeed,
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .padding(bottom = SpeedCircleBottomInset),
+        )
+    }
+}
+
+private val MapLibreAttributionReserveDp = 40.dp
+
+@Composable
+private fun MapSettingsFab(
+    isOpen: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val tapTarget = CarDimensions.PanelHeaderTapTarget
+    IconButton(
+        onClick = onClick,
+        modifier = modifier
+            .size(tapTarget)
+            .background(
+                if (isOpen) {
+                    ElectricCyan
+                } else {
+                    OledBlack.copy(alpha = 0.72f)
+                },
+                MaterialTheme.shapes.small,
+            ),
+    ) {
+        Icon(
+            imageVector = Icons.Filled.Layers,
+            contentDescription = if (isOpen) {
+                "Hide map settings"
+            } else {
+                "Show map settings"
+            },
+            tint = if (isOpen) {
+                OledBlack
+            } else {
+                MaterialTheme.colorScheme.primary
+            },
+        )
+    }
+}
+
+@Composable
+private fun SpeedCircle(
+    speedKmh: Int,
+    modifier: Modifier = Modifier,
+) {
+    Box(
+        modifier = modifier
+            .size(SpeedCircleSize)
+            .clip(CircleShape)
+            .background(OledBlack.copy(alpha = 0.72f)),
+        contentAlignment = Alignment.Center,
+    ) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Text(
+                text = speedKmh.toString(),
+                style = MaterialTheme.typography.labelSmall.copy(
+                    color = ElectricCyan,
+                    fontSize = 11.sp,
+                    lineHeight = 11.sp,
+                    textAlign = TextAlign.Center,
+                ),
+                maxLines = 1,
+                overflow = TextOverflow.Clip,
+            )
+            Text(
+                text = "km/h",
+                style = MaterialTheme.typography.labelSmall.copy(
+                    color = ElectricCyan.copy(alpha = 0.75f),
+                    fontSize = 7.sp,
+                    lineHeight = 7.sp,
+                    textAlign = TextAlign.Center,
+                ),
+                maxLines = 1,
+                overflow = TextOverflow.Clip,
+            )
         }
     }
 }
 
-private val PUCK_BASE_RADIUS_DP = 28f
-private val BUBBLE_GAP_DP = 10f
+private val SpeedCircleSize = 30.dp
+private val SpeedCircleBottomInset = 4.dp
+
+private val RouteLegendFastestColor = Color(0xFF00CBD6)
+private val RouteLegendTomTomColor = Color(0xFFFFB300)
+private val RouteLegendAltColor = Color(0xFF6B7280)
 
 @Composable
-private fun SpeedBubble(
-    text: String,
+private fun RouteSelectionLegend(
+    routeProviders: List<RouteProvider>,
     modifier: Modifier = Modifier,
 ) {
-    val bubbleColor = OledBlack.copy(alpha = 0.72f)
-    val cornerRadius = 8.dp
-    val tailWidth = 10.dp
-    val tailHeight = 8.dp
-
-    Text(
-        text = text,
+    Column(
         modifier = modifier
-            .drawBehind {
-                val tailW = tailWidth.toPx()
-                val tailH = tailHeight.toPx()
-                val cornerPx = cornerRadius.toPx()
-
-                drawRoundRect(
-                    color = bubbleColor,
-                    topLeft = Offset(tailH, 0f),
-                    size = Size(size.width - tailH, size.height),
-                    cornerRadius = CornerRadius(cornerPx, cornerPx),
-                )
-
-                val tailMidY = size.height / 2f
-                val tailPath = Path().apply {
-                    moveTo(0f, tailMidY)
-                    lineTo(tailH, tailMidY - tailW / 2f)
-                    lineTo(tailH, tailMidY + tailW / 2f)
-                    close()
-                }
-                drawPath(tailPath, bubbleColor)
-            }
-            .padding(start = tailHeight)
-            .padding(horizontal = 12.dp, vertical = 6.dp),
-        style = MaterialTheme.typography.labelLarge.copy(color = ElectricCyan),
-        maxLines = 1,
-        overflow = TextOverflow.Ellipsis,
-    )
+            .background(OledBlack.copy(alpha = 0.72f), MaterialTheme.shapes.small)
+            .padding(horizontal = CarDimensions.PaneGap / 2, vertical = CarDimensions.PaneGap / 4),
+        verticalArrangement = Arrangement.spacedBy(2.dp),
+    ) {
+        if (routeProviders.contains(RouteProvider.OSRM_FASTEST)) {
+            RouteLegendRow(color = RouteLegendFastestColor, label = "Fastest")
+        }
+        if (routeProviders.contains(RouteProvider.TOMTOM_TRAFFIC)) {
+            RouteLegendRow(color = RouteLegendTomTomColor, label = "Traffic")
+        }
+        if (routeProviders.contains(RouteProvider.OSRM_ALTERNATE)) {
+            RouteLegendRow(color = RouteLegendAltColor, label = "Alternate")
+        }
+    }
 }
 
 @Composable
-private fun TooltipBubble(
-    text: String,
-    modifier: Modifier = Modifier,
+private fun RouteLegendRow(
+    color: Color,
+    label: String,
 ) {
-    val bubbleColor = OledBlack.copy(alpha = 0.72f)
-    val cornerRadius = 8.dp
-    val tailWidth = 12.dp
-    val tailHeight = 8.dp
-
-    Text(
-        text = text,
-        modifier = modifier
-            .drawBehind {
-                val tailW = tailWidth.toPx()
-                val tailH = tailHeight.toPx()
-                val cornerPx = cornerRadius.toPx()
-                val bodyWidth = size.width - tailH
-                val tailMidY = size.height / 2f
-
-                drawRoundRect(
-                    color = bubbleColor,
-                    size = Size(bodyWidth, size.height),
-                    cornerRadius = CornerRadius(cornerPx, cornerPx),
-                )
-
-                val tailPath = Path().apply {
-                    moveTo(bodyWidth, tailMidY - tailW / 2f)
-                    lineTo(bodyWidth, tailMidY + tailW / 2f)
-                    lineTo(size.width, tailMidY)
-                    close()
-                }
-                drawPath(tailPath, bubbleColor)
-            }
-            .padding(end = tailHeight)
-            .padding(horizontal = 14.dp, vertical = 6.dp),
-        style = MaterialTheme.typography.labelMedium.copy(color = ElectricCyan),
-        maxLines = 2,
-        overflow = TextOverflow.Ellipsis,
-    )
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Box(
+            modifier = Modifier
+                .size(8.dp)
+                .clip(CircleShape)
+                .background(color),
+        )
+        CarLabelText(
+            text = label,
+            modifier = Modifier.padding(start = 6.dp),
+            style = MaterialTheme.typography.labelSmall,
+        )
+    }
 }
