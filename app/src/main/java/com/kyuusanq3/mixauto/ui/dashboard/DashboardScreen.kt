@@ -189,35 +189,35 @@ fun DashboardScreen(
     onInstallApk: (File) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    var activePanel by remember { mutableStateOf(ActivePanel.MEDIA) }
-    var musicPaneEnabled by remember { mutableStateOf(true) }
-    var poiReturnToSearch by remember { mutableStateOf(false) }
-    val onClearPoiReturnToSearch = { poiReturnToSearch = false }
     val launcherViewModel: LauncherViewModel = viewModel()
+    val musicPaneEnabled = launcherViewModel.musicPaneEnabled
+    val activePanel = launcherViewModel.activePanel
+    val poiReturnToSearch = launcherViewModel.poiReturnToSearch
+    val onClearPoiReturnToSearch = launcherViewModel::clearPoiReturnToSearch
     val showSecondaryPane = activePanel != ActivePanel.HIDDEN
     val onTogglePanel: (ActivePanel) -> Unit = { target ->
         when (target) {
             ActivePanel.MEDIA -> when (activePanel) {
                 ActivePanel.MEDIA -> {
-                    musicPaneEnabled = false
-                    activePanel = ActivePanel.HIDDEN
+                    launcherViewModel.updateMusicPaneEnabled(false)
+                    launcherViewModel.setActivePanel(ActivePanel.HIDDEN)
                 }
                 ActivePanel.HIDDEN -> {
-                    musicPaneEnabled = true
-                    activePanel = ActivePanel.MEDIA
+                    launcherViewModel.updateMusicPaneEnabled(true)
+                    launcherViewModel.setActivePanel(ActivePanel.MEDIA)
                 }
                 else -> {
-                    musicPaneEnabled = true
-                    activePanel = ActivePanel.MEDIA
+                    launcherViewModel.updateMusicPaneEnabled(true)
+                    launcherViewModel.setActivePanel(ActivePanel.MEDIA)
                 }
             }
             ActivePanel.SETTINGS -> when (activePanel) {
-                ActivePanel.SETTINGS -> activePanel = dismissToBasePanel(musicPaneEnabled)
-                else -> activePanel = ActivePanel.SETTINGS
+                ActivePanel.SETTINGS -> launcherViewModel.setActivePanel(dismissToBasePanel(musicPaneEnabled))
+                else -> launcherViewModel.setActivePanel(ActivePanel.SETTINGS)
             }
             ActivePanel.APP_DRAWER -> when (activePanel) {
-                ActivePanel.APP_DRAWER -> activePanel = dismissToBasePanel(musicPaneEnabled)
-                else -> activePanel = ActivePanel.APP_DRAWER
+                ActivePanel.APP_DRAWER -> launcherViewModel.setActivePanel(dismissToBasePanel(musicPaneEnabled))
+                else -> launcherViewModel.setActivePanel(ActivePanel.APP_DRAWER)
             }
             ActivePanel.SEARCH,
             ActivePanel.POI_DETAIL,
@@ -225,8 +225,8 @@ fun DashboardScreen(
             ActivePanel.ROUTE_PICKER,
             -> Unit
             ActivePanel.HIDDEN -> {
-                musicPaneEnabled = true
-                activePanel = ActivePanel.MEDIA
+                launcherViewModel.updateMusicPaneEnabled(true)
+                launcherViewModel.setActivePanel(ActivePanel.MEDIA)
             }
         }
     }
@@ -240,23 +240,24 @@ fun DashboardScreen(
             onTogglePanel(ActivePanel.MEDIA)
         } else {
             onSelectAudioSource(packageName)
-            musicPaneEnabled = true
-            activePanel = ActivePanel.MEDIA
+            launcherViewModel.updateMusicPaneEnabled(true)
+            launcherViewModel.setActivePanel(ActivePanel.MEDIA)
         }
     }
     val openAudioSource: (String) -> Unit = { packageName ->
         onSelectAudioSource(packageName)
-        musicPaneEnabled = true
-        activePanel = ActivePanel.MEDIA
+        launcherViewModel.updateMusicPaneEnabled(true)
+        launcherViewModel.setActivePanel(ActivePanel.MEDIA)
     }
     val onDismissPanel = {
         if (activePanel == ActivePanel.SEARCH) {
             launcherViewModel.isDestinationSearchOpen = false
+            launcherViewModel.clearDestinationSearchState()
         }
-        activePanel = dismissToBasePanel(musicPaneEnabled)
+        launcherViewModel.setActivePanel(dismissToBasePanel(musicPaneEnabled))
     }
-    val onDismissAppDrawer = { activePanel = dismissToBasePanel(musicPaneEnabled) }
-    val onOpenLauncherSettingsFromDrawer = { activePanel = ActivePanel.SETTINGS }
+    val onDismissAppDrawer = { launcherViewModel.setActivePanel(dismissToBasePanel(musicPaneEnabled)) }
+    val onOpenLauncherSettingsFromDrawer = { launcherViewModel.setActivePanel(ActivePanel.SETTINGS) }
 
     LaunchedEffect(activePanel) {
         if (activePanel == ActivePanel.APP_DRAWER) {
@@ -271,20 +272,21 @@ fun DashboardScreen(
         when (activePanel) {
             ActivePanel.SEARCH -> {
                 launcherViewModel.isDestinationSearchOpen = false
-                activePanel = dismissToBasePanel(musicPaneEnabled)
+                launcherViewModel.clearDestinationSearchState()
+                launcherViewModel.setActivePanel(dismissToBasePanel(musicPaneEnabled))
             }
             ActivePanel.POI_DETAIL -> mapEngine.dismissSelectedPoi()
             else -> {
                 launcherViewModel.isDestinationSearchOpen = true
-                activePanel = ActivePanel.SEARCH
+                launcherViewModel.setActivePanel(ActivePanel.SEARCH)
             }
         }
     }
     val onToggleMapSettings = {
         when (activePanel) {
-            ActivePanel.MAP_DATA -> activePanel = dismissToBasePanel(musicPaneEnabled)
+            ActivePanel.MAP_DATA -> launcherViewModel.setActivePanel(dismissToBasePanel(musicPaneEnabled))
             ActivePanel.POI_DETAIL -> mapEngine.dismissSelectedPoi()
-            else -> activePanel = ActivePanel.MAP_DATA
+            else -> launcherViewModel.setActivePanel(ActivePanel.MAP_DATA)
         }
     }
     val onVoiceSearch = {
@@ -296,14 +298,14 @@ fun DashboardScreen(
         } else {
             launcherViewModel.setStartVoiceOnSearchOpen()
             launcherViewModel.isDestinationSearchOpen = true
-            activePanel = ActivePanel.SEARCH
+            launcherViewModel.setActivePanel(ActivePanel.SEARCH)
         }
     }
     val onPreviewSearchPlace: (SearchResultPlace) -> Unit = { place ->
-        poiReturnToSearch = true
+        launcherViewModel.setPoiReturnToSearch(true)
         mapEngine.focusOnPoi(place)
         launcherViewModel.isDestinationSearchOpen = false
-        activePanel = ActivePanel.POI_DETAIL
+        launcherViewModel.setActivePanel(ActivePanel.POI_DETAIL)
     }
     val mapUiState by mapEngine.uiState.collectAsStateWithLifecycle()
     val appUpdateViewModel: AppUpdateViewModel = viewModel()
@@ -348,21 +350,21 @@ fun DashboardScreen(
 
     LaunchedEffect(mapUiState.isRouteSelecting) {
         if (mapUiState.isRouteSelecting) {
-            activePanel = ActivePanel.ROUTE_PICKER
+            launcherViewModel.setActivePanel(ActivePanel.ROUTE_PICKER)
         } else if (activePanel == ActivePanel.ROUTE_PICKER) {
-            activePanel = dismissToBasePanel(musicPaneEnabled)
+            launcherViewModel.setActivePanel(dismissToBasePanel(musicPaneEnabled))
         }
     }
 
     LaunchedEffect(mapUiState.selectedPoi) {
         if (mapUiState.selectedPoi != null) {
-            activePanel = ActivePanel.POI_DETAIL
+            launcherViewModel.setActivePanel(ActivePanel.POI_DETAIL)
         } else if (activePanel == ActivePanel.POI_DETAIL) {
             if (poiReturnToSearch) {
-                poiReturnToSearch = false
-                activePanel = ActivePanel.SEARCH
+                launcherViewModel.clearPoiReturnToSearch()
+                launcherViewModel.setActivePanel(ActivePanel.SEARCH)
             } else {
-                activePanel = dismissToBasePanel(musicPaneEnabled)
+                launcherViewModel.setActivePanel(dismissToBasePanel(musicPaneEnabled))
             }
         }
     }

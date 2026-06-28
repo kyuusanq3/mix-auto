@@ -41,7 +41,9 @@ Release sideload copy: `mix-auto-v{version}.apk` at project root (e.g. `mix-auto
 
 ```
 app/src/main/java/com/kyuusanq3/mixauto/
-├── MainActivity.kt              # mapEngine = MapLibreEngineImpl(); location permission launcher
+├── MainActivity.kt              # MapHostViewModel; location permission launcher
+├── ui/map/
+│   └── MapHostViewModel.kt      # Activity-scoped map engine + nav TTS + places repo (survives rotation)
 ├── domain/map/
 │   ├── CarMapEngine.kt          # Swappable map contract
 │   ├── MapUiState.kt            # Speed, street, navigation HUD state
@@ -71,7 +73,7 @@ app/src/main/java/com/kyuusanq3/mixauto/
 ## Architecture
 
 ```
-MainActivity (localPlacesRepo + mapEngine = MapLibreEngineImpl(localPlacesRepo))
+MainActivity (MapHostViewModel — mapEngine, navigationVoice, localPlaces)
   └── MixAutoTheme
         └── DashboardScreen(mapEngine, mapDataViewModel)
               ├── CarMapViewContainer — map pane (60% or CarDimensions.MapWeight)
@@ -79,9 +81,11 @@ MainActivity (localPlacesRepo + mapEngine = MapLibreEngineImpl(localPlacesRepo))
               ├── PoiDetailDrawer — full-screen overlay when map POI/pin selected
               ├── RoutePickerPane — media pane when ≥2 routes (`ActivePanel.ROUTE_PICKER`)
               └── MapDataOverlay — offline POI country download
+
+LauncherViewModel — activePanel, poiReturnToSearch, destinationSearchState (rotation-safe UI)
 ```
 
-Swap map provider: change one line in `MainActivity.kt` to a new `CarMapEngine` implementation.
+Swap map provider: change `MapHostViewModel` to construct a new `CarMapEngine` implementation.
 
 ## Design constraints (automotive)
 
@@ -263,7 +267,8 @@ After enabling Launcher Mode, press Home and select **Mix Auto** as the default 
 | MapLibre ℹ overlaps logo text | `configureMapUiChrome()` must use **92 dp left** on `setAttributionMargins` (`ATTRIBUTION_LEFT_MARGIN_DP`) — SDK default clears logo width; uniform margins collapse ℹ onto logo |
 | Map settings button crowds watermark | `MapSettingsFab` in `CarMapViewContainer.kt` is bottom-start with `MapLibreAttributionReserveDp` (40 dp); bump to 44–48 dp on device if needed |
 | Nav doesn't re-route after wrong turn | Off-route reroute needs 2 GPS fixes >75 m from `routeGeometryPoints`; 5 s cooldown between reroutes; check Logcat for `Off route` / `Re-routing` |
-| Minimized music pane reopens after navigation | Do not set `musicPaneEnabled = true` in nav overlay entry (`onToggleSearch`, route picker `LaunchedEffect`, POI `LaunchedEffect`, etc.) — only dock music / audio-source actions should restore `ActivePanel.MEDIA` |
+| Minimized music pane reopens after navigation | Do not call `updateMusicPaneEnabled(true)` in nav overlay entry (`onToggleSearch`, route picker `LaunchedEffect`, POI `LaunchedEffect`, etc.) — only dock music / audio-source actions should restore `ActivePanel.MEDIA` |
+| Music player reopens after cold start when minimized | `DashboardScreen` must init `activePanel` from `LauncherPreferences.musicPaneEnabled` (not hard-coded `ActivePanel.MEDIA`); persist via `LauncherViewModel.updateMusicPaneEnabled()` on dock music toggle |
 | Music doesn't auto-play on launch | Enable notification access; set **default audio source** in media pane (first-run list or long-press source icon → picker); boot wake uses `BackgroundAudioLauncher` MediaBrowser connect + play; `maybeAutoPlay()` runs once per process when paused session has metadata — Logcat `BackgroundAudioLauncher`: `Background wake succeeded` / `MediaSessionRepository`: `Auto-playing paused media session on launch` |
 | YT Music steals foreground on launcher boot | Boot should use `BackgroundAudioLauncher` not `launchAppByPackage`; if MediaBrowser fails, brief flash then Mix Auto refocus — check Logcat `Background wake failed, using foreground launch + refocus` |
 | No audio on cold boot until car Next pressed | YT Music not running yet — passive `getActiveSessions()` empty; set default in Mix Auto so boot launch runs; car media keys use OS pipeline, not Mix Auto |
@@ -284,6 +289,8 @@ After enabling Launcher Mode, press Home and select **Mix Auto** as the default 
 | Traffic tiles fail with HTTP 403 | Invalid key or Traffic Flow API not enabled for that TomTom developer key |
 | Update check fails HTTP 404 | App uses GitHub Releases API (`AppUpdateRepository.RELEASES_API_URL`), not a `version.json` asset — attach `mix-auto.apk` to the release and set tag to semver (e.g. `0.0.5`); download URL is `releases/latest/download/mix-auto.apk` |
 | No update banner on launch | Boot check deferred until onboarding completes; banner only when GitHub `tag_name` is newer than `BuildConfig.VERSION_NAME` — temporarily lower `versionName` or publish newer release to test |
+| Update snackbar reappears on every rotation | Boot `checkForUpdate(autoPrompt=true)` must run only when `savedInstanceState == null`; `AppUpdateViewModel.bootAutoCheckDone` guards repeat auto-prompt per process |
+| Navigation / search resets on rotation | Map engine must live in `MapHostViewModel` (not `MainActivity.onCreate`); `activePanel` + `destinationSearchState` in `LauncherViewModel`; `CarMapViewContainer` must not call `engine.onDestroy()` on activity destroy |
 | Install button does nothing | API 26+ may need **Install unknown apps** for Mix Auto — `launchApkInstall()` opens that settings screen when permission missing |
 | Update snackbar hidden under dock | `AppUpdatePrompts` snackbar uses `padding(bottom = 88.dp)` above shortcut bar |
 | Vinyl album art shows as square/rectangle | `VinylAlbumArt`: use `clip(CircleShape)` then `graphicsLayer { rotationZ }` — not `Modifier.rotate` before clip |
@@ -295,7 +302,7 @@ After enabling Launcher Mode, press Home and select **Mix Auto** as the default 
 | Unlike skips track in YT Music | `MediaSessionRepository.toggleLike()` never sends dislike/thumb_down — use unrated or re-toggle like action only |
 | Like heart not lit when returning to song | Per-track `likedTrackCache` in `MediaSessionRepository` keyed by media ID / title\|artist |
 | Voice button opens Assistant instead of search | Hardware key is often wired to Gemini and never reaches the app — use **shortcut dock mic** (Voice destination search); grant **Microphone** permission; Eonon may send `KEYCODE_SEARCH` instead of `KEYCODE_VOICE_ASSIST` (both handled in `MainActivity.onKeyDown` when search already open) |
-| Mic listening stops immediately | Gemini may hold the speech engine — use dock mic only; check mic permission; `SpeechRecognizer.onError` is silent — conflicts show as brief “Listening…” flash |
+| Mic listening stops immediately | Consecutive dock mic: do not call `startListening()` when UI `isListening` is false — always cancel-then-restart via `pendingVoiceRestart` + `onError` in `NavigationSearchOverlay.kt`; also Gemini may hold the speech engine; check mic permission; `SpeechRecognizer.onError` is silent — conflicts show as brief “Listening…” flash |
 | Mic button missing in search overlay / dock | `SpeechRecognizer.isRecognitionAvailable()` false on bare AOSP — install Google app; mic hidden in overlay and dock when no recognizer |
 | Nav TTS reads "800m…500m…200m" in one breath | **Removed** — Option A uses ahead/prepare/turn only (`NavigationVoiceController` + `NavTtsPhrases.kt`); one cue per GPS tick via threshold crossing |
 | No nav-start traffic line | Needs TomTom API key + **Traffic Incidents** product; Tier 1 `findJamOnRoute()` or Tier 2 `trafficDelaySeconds ≥ 120`; prefetch during route overview — skip if IO not done before dive |

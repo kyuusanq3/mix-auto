@@ -17,7 +17,11 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
@@ -43,14 +47,18 @@ fun AppUpdatePrompts(
     modifier: Modifier = Modifier,
 ) {
     val snackbarHostState = remember { SnackbarHostState() }
+    var checkingSnackbarShown by rememberSaveable { mutableStateOf(false) }
 
     LaunchedEffect(uiState) {
         when (uiState) {
             AppUpdateState.Checking -> {
-                snackbarHostState.showSnackbar(
-                    message = "Checking for updates…",
-                    duration = SnackbarDuration.Indefinite,
-                )
+                if (!checkingSnackbarShown) {
+                    checkingSnackbarShown = true
+                    snackbarHostState.showSnackbar(
+                        message = "Checking for updates…",
+                        duration = SnackbarDuration.Indefinite,
+                    )
+                }
             }
             is AppUpdateState.Downloading -> {
                 snackbarHostState.currentSnackbarData?.dismiss()
@@ -64,6 +72,7 @@ fun AppUpdatePrompts(
             is AppUpdateState.ReadyToInstall,
             is AppUpdateState.Error,
             -> {
+                checkingSnackbarShown = false
                 snackbarHostState.currentSnackbarData?.dismiss()
             }
             else -> Unit

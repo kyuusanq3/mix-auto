@@ -28,13 +28,11 @@ import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.kyuusanq3.mixauto.data.map.MapLibreEngineImpl
 import com.kyuusanq3.mixauto.data.media.MediaSessionRepository
 import com.kyuusanq3.mixauto.data.navigation.NavTtsPhrases
-import com.kyuusanq3.mixauto.data.navigation.NavigationVoiceController
-import com.kyuusanq3.mixauto.data.places.LocalPlacesRepository
 import com.kyuusanq3.mixauto.domain.map.CarMapEngine
 import com.kyuusanq3.mixauto.ui.dashboard.DashboardScreen
+import com.kyuusanq3.mixauto.ui.map.MapHostViewModel
 import com.kyuusanq3.mixauto.ui.media.MediaPlayerViewModel
 import com.kyuusanq3.mixauto.ui.onboarding.CURRENT_ONBOARDING_VERSION
 import com.kyuusanq3.mixauto.ui.onboarding.OnboardingStep
@@ -50,9 +48,7 @@ import java.io.File
 
 class MainActivity : ComponentActivity() {
 
-    private lateinit var localPlacesRepository: LocalPlacesRepository
-    private lateinit var navigationVoiceController: NavigationVoiceController
-    private lateinit var mapEngine: CarMapEngine
+    private lateinit var mapHostViewModel: MapHostViewModel
     private lateinit var launcherViewModel: LauncherViewModel
     private lateinit var launcherPreferences: LauncherPreferences
     private lateinit var appUpdateViewModel: AppUpdateViewModel
@@ -63,8 +59,8 @@ class MainActivity : ComponentActivity() {
     private val locationPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions(),
     ) { results ->
-        if (results.values.any { it }) {
-            mapEngine.retryLocationActivation()
+        if (results.values.any { it } && ::mapHostViewModel.isInitialized) {
+            mapHostViewModel.mapEngine.retryLocationActivation()
         }
     }
 
@@ -76,25 +72,9 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         launcherPreferences = LauncherPreferences(this)
         applyLauncherMode(launcherPreferences.isLauncherMode)
-        localPlacesRepository = LocalPlacesRepository(this)
-        navigationVoiceController = NavigationVoiceController(applicationContext).apply {
-            enabled = launcherPreferences.navigationVoiceEnabled
-            volume = launcherPreferences.navigationVoiceVolume
-        }
-        mapEngine = MapLibreEngineImpl(
-            localPlaces = localPlacesRepository,
-            navigationVoice = navigationVoiceController,
-            initialUseVectorTiles = launcherPreferences.useVectorTiles,
-            initialShow3dBuildings = launcherPreferences.show3dBuildings,
-            initialDrivingZoom = launcherPreferences.drivingZoom.toDouble(),
-            initialPuckHOffset = launcherPreferences.puckHorizontalOffset,
-            initialPuckVOffset = launcherPreferences.puckVerticalOffset,
-            initialPuckScale = launcherPreferences.puckScale,
-        )
-        mapEngine.setTrafficEnabled(
-            launcherPreferences.showTraffic,
-            launcherPreferences.tomTomApiKey,
-        )
+        mapHostViewModel = ViewModelProvider(this)[MapHostViewModel::class.java]
+        val mapEngine: CarMapEngine = mapHostViewModel.mapEngine
+        val navigationVoiceController = mapHostViewModel.navigationVoiceController
 
         MediaSessionRepository.getInstance(this)
         launcherViewModel = ViewModelProvider(this)[LauncherViewModel::class.java]
@@ -112,7 +92,7 @@ class MainActivity : ComponentActivity() {
                     val mapDataViewModel: MapDataViewModel = viewModel(
                         factory = MapDataViewModelFactory(
                             application = application,
-                            localPlacesRepository = localPlacesRepository,
+                            localPlacesRepository = mapHostViewModel.localPlacesRepository,
                         ),
                     )
                     val mediaState by mediaViewModel.mediaState.collectAsStateWithLifecycle()
@@ -255,8 +235,10 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
-        if (!shouldShowOnboarding) {
+        if (!shouldShowOnboarding && savedInstanceState == null) {
             appUpdateViewModel.checkForUpdate(autoPrompt = true)
+        }
+        if (!shouldShowOnboarding) {
             requestLocationPermissionIfNeeded()
         }
     }
@@ -267,16 +249,9 @@ class MainActivity : ComponentActivity() {
             applySystemBarVisibility(launcherPreferences.showSystemStatusBar)
         }
         refreshMediaSessionsAndBootAudio()
-        if (::mapEngine.isInitialized && hasLocationPermission()) {
-            mapEngine.retryLocationActivation()
+        if (::mapHostViewModel.isInitialized && hasLocationPermission()) {
+            mapHostViewModel.mapEngine.retryLocationActivation()
         }
-    }
-
-    override fun onDestroy() {
-        if (::navigationVoiceController.isInitialized) {
-            navigationVoiceController.shutdown()
-        }
-        super.onDestroy()
     }
 
     private fun refreshMediaSessionsAndBootAudio() {
@@ -302,7 +277,7 @@ class MainActivity : ComponentActivity() {
 
     private fun requestLocationPermissionIfNeeded() {
         if (hasLocationPermission()) {
-            mapEngine.retryLocationActivation()
+            mapHostViewModel.mapEngine.retryLocationActivation()
         } else {
             locationPermissionLauncher.launch(
                 arrayOf(

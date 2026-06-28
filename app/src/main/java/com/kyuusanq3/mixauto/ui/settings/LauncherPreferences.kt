@@ -188,6 +188,12 @@ class LauncherPreferences(context: Context) {
             prefs.edit().putBoolean(KEY_SHOW_SYSTEM_STATUS_BAR, value).apply()
         }
 
+    var musicPaneEnabled: Boolean
+        get() = prefs.getBoolean(KEY_MUSIC_PANE_ENABLED, true)
+        set(value) {
+            prefs.edit().putBoolean(KEY_MUSIC_PANE_ENABLED, value).apply()
+        }
+
     companion object {
         private const val PREFS_NAME = "launcher_prefs"
         private const val KEY_LEFT_HAND_DRIVE = "lhd"
@@ -215,6 +221,7 @@ class LauncherPreferences(context: Context) {
         private const val KEY_ALBUM_ART_MODE = "album_art_mode"
         private const val KEY_SHOW_STATUS_STRIP = "show_status_strip"
         private const val KEY_SHOW_SYSTEM_STATUS_BAR = "show_system_status_bar"
+        private const val KEY_MUSIC_PANE_ENABLED = "music_pane_enabled"
         const val DEFAULT_ALBUM_ART_MODE = "PLAIN"
         const val MAX_RECENT_DESTINATIONS = 10
         const val MAX_SAVED_PLACES = 50

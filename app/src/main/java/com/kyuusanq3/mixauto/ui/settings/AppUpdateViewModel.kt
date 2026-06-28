@@ -38,14 +38,20 @@ class AppUpdateViewModel(application: Application) : AndroidViewModel(applicatio
 
     private var availableUpdate: UpdateInfo? = null
     private var pendingAutoPrompt = false
+    private var bootAutoCheckDone = false
 
     fun checkForUpdate(autoPrompt: Boolean = false) {
+        if (autoPrompt && bootAutoCheckDone) return
+
         if (_uiState.value is AppUpdateState.Checking ||
             _uiState.value is AppUpdateState.Downloading
         ) {
             return
         }
 
+        if (autoPrompt) {
+            bootAutoCheckDone = true
+        }
         pendingAutoPrompt = autoPrompt
 
         viewModelScope.launch {

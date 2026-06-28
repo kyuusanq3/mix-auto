@@ -126,17 +126,21 @@ fun NavigationSearchContent(
 ) {
     val context = LocalContext.current
     val launcherViewModel: LauncherViewModel = viewModel()
-    var query by remember { mutableStateOf("") }
-    var snapshotOrigin by remember { mutableStateOf<Pair<Double, Double>?>(null) }
-    var snapshotOriginReliable by remember { mutableStateOf(false) }
-    var results by remember { mutableStateOf<List<SearchResultPlace>>(emptyList()) }
-    var nearbyPois by remember { mutableStateOf<List<SearchResultPlace>>(emptyList()) }
+    val searchState = launcherViewModel.destinationSearchState
+    val query = searchState.query
+    val snapshotOrigin = searchState.snapshotOriginLat?.let { lat ->
+        searchState.snapshotOriginLng?.let { lng -> lat to lng }
+    }
+    val snapshotOriginReliable = searchState.snapshotOriginReliable
+    val results = searchState.results
+    val nearbyPois = searchState.nearbyPois
+    val hasSearched = searchState.hasSearched
+    val savedFilterActive = searchState.savedFilterActive
     var isLoading by remember { mutableStateOf(false) }
     var isLoadingRemote by remember { mutableStateOf(false) }
-    var hasSearched by remember { mutableStateOf(false) }
     var isListening by remember { mutableStateOf(false) }
     var pendingVoiceStart by remember { mutableStateOf(false) }
-    var savedFilterActive by remember { mutableStateOf(false) }
+    var pendingVoiceRestart by remember { mutableStateOf(false) }
     val listState = rememberLazyListState()
 
     val speechAvailable = remember(context) {
@@ -150,49 +154,69 @@ fun NavigationSearchContent(
         }
     }
 
-    DisposableEffect(speechRecognizer) {
-        onDispose {
-            speechRecognizer?.destroy()
-        }
-    }
-
-    val startListeningRef = rememberUpdatedState<(SpeechRecognizer) -> Unit> { recognizer ->
-        isListening = true
-        val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+    val recognitionIntent = remember {
+        Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
             putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
             putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
             putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
         }
+    }
+
+    val requestVoiceListeningRef = rememberUpdatedState<(SpeechRecognizer) -> Unit> { recognizer ->
+        pendingVoiceRestart = true
+        isListening = true
         recognizer.cancel()
-        recognizer.setRecognitionListener(object : RecognitionListener {
-            override fun onReadyForSpeech(params: Bundle?) = Unit
+    }
 
-            override fun onBeginningOfSpeech() = Unit
+    DisposableEffect(speechRecognizer) {
+        val recognizer = speechRecognizer
+        if (recognizer != null) {
+            recognizer.setRecognitionListener(object : RecognitionListener {
+                override fun onReadyForSpeech(params: Bundle?) = Unit
 
-            override fun onRmsChanged(rmsdB: Float) = Unit
+                override fun onBeginningOfSpeech() = Unit
 
-            override fun onBufferReceived(buffer: ByteArray?) = Unit
+                override fun onRmsChanged(rmsdB: Float) = Unit
 
-            override fun onEndOfSpeech() {
-                isListening = false
-            }
+                override fun onBufferReceived(buffer: ByteArray?) = Unit
 
-            override fun onError(error: Int) {
-                isListening = false
-            }
+                override fun onEndOfSpeech() {
+                    if (!pendingVoiceRestart) {
+                        isListening = false
+                    }
+                }
 
-            override fun onResults(resultsBundle: Bundle) {
-                resultsBundle.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
-                    ?.firstOrNull()
-                    ?.let { query = it }
-                isListening = false
-            }
+                override fun onError(error: Int) {
+                    if (pendingVoiceRestart) {
+                        pendingVoiceRestart = false
+                        isListening = true
+                        recognizer.startListening(recognitionIntent)
+                    } else {
+                        isListening = false
+                    }
+                }
 
-            override fun onPartialResults(partialResults: Bundle) = Unit
+                override fun onResults(resultsBundle: Bundle) {
+                    if (pendingVoiceRestart) return
+                    resultsBundle.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
+                        ?.firstOrNull()
+                        ?.let { spoken ->
+                            launcherViewModel.updateDestinationSearch { state ->
+                                state.copy(query = spoken)
+                            }
+                        }
+                    isListening = false
+                }
 
-            override fun onEvent(eventType: Int, params: Bundle?) = Unit
-        })
-        recognizer.startListening(intent)
+                override fun onPartialResults(partialResults: Bundle) = Unit
+
+                override fun onEvent(eventType: Int, params: Bundle?) = Unit
+            })
+        }
+        onDispose {
+            pendingVoiceRestart = false
+            speechRecognizer?.destroy()
+        }
     }
 
     val recordAudioPermissionLauncher = rememberLauncherForActivityResult(
@@ -200,7 +224,7 @@ fun NavigationSearchContent(
     ) { granted ->
         if (granted && pendingVoiceStart) {
             pendingVoiceStart = false
-            speechRecognizer?.let { startListeningRef.value(it) }
+            speechRecognizer?.let { requestVoiceListeningRef.value(it) }
         } else {
             pendingVoiceStart = false
         }
@@ -215,13 +239,21 @@ fun NavigationSearchContent(
             recordAudioPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
             return@rememberUpdatedState
         }
-        startListeningRef.value(recognizer)
+        requestVoiceListeningRef.value(recognizer)
     }
 
     LaunchedEffect(Unit) {
         engine.refreshSearchOrigin()
-        snapshotOrigin = engine.resolveSearchOrigin()
-        snapshotOriginReliable = engine.hasReliableSearchOrigin()
+        if (launcherViewModel.destinationSearchState.snapshotOriginLat == null) {
+            val origin = engine.resolveSearchOrigin()
+            launcherViewModel.updateDestinationSearch { state ->
+                state.copy(
+                    snapshotOriginLat = origin.first,
+                    snapshotOriginLng = origin.second,
+                    snapshotOriginReliable = engine.hasReliableSearchOrigin(),
+                )
+            }
+        }
         if (launcherViewModel.consumeStartVoiceOnSearchOpen()) {
             tryStartVoiceSearch.value()
         }
@@ -255,29 +287,36 @@ fun NavigationSearchContent(
         snapshotOrigin,
     ) {
         if (savedFilterActive || query.length < 2) {
-            results = emptyList()
-            hasSearched = false
+            launcherViewModel.updateDestinationSearch { state ->
+                state.copy(results = emptyList(), hasSearched = false)
+            }
             isLoading = false
             isLoadingRemote = false
             return@LaunchedEffect
         }
         val origin = snapshotOrigin ?: return@LaunchedEffect
         delay(300)
-        results = emptyList()
+        launcherViewModel.updateDestinationSearch { state ->
+            state.copy(results = emptyList(), hasSearched = true)
+        }
         isLoading = true
         isLoadingRemote = true
-        hasSearched = true
         try {
-            results = engine.searchDestination(
+            val fetched = engine.searchDestination(
                 query = query,
                 currentLat = origin.first,
                 currentLng = origin.second,
                 limitDistance = limitSearchDistance,
                 onLocalResults = { local ->
-                    results = local
+                    launcherViewModel.updateDestinationSearch { state ->
+                        state.copy(results = local)
+                    }
                     isLoading = false
                 },
             )
+            launcherViewModel.updateDestinationSearch { state ->
+                state.copy(results = fetched)
+            }
         } finally {
             isLoading = false
             isLoadingRemote = false
@@ -292,11 +331,13 @@ fun NavigationSearchContent(
         savedPlaces,
     ) {
         if (savedFilterActive || query.length >= 2) {
-            nearbyPois = emptyList()
+            launcherViewModel.updateDestinationSearch { state ->
+                state.copy(nearbyPois = emptyList())
+            }
             return@LaunchedEffect
         }
         val origin = snapshotOrigin ?: return@LaunchedEffect
-        nearbyPois = withContext(Dispatchers.IO) {
+        val nearby = withContext(Dispatchers.IO) {
             engine.getNearbyPois(
                 origin.first,
                 origin.second,
@@ -305,6 +346,9 @@ fun NavigationSearchContent(
         }.filterNot { nearby ->
             recentDestinations.any { recent -> isWithinDedupThreshold(recent, nearby) } ||
                 savedPlaces.any { saved -> isWithinDedupThreshold(saved, nearby) }
+        }
+        launcherViewModel.updateDestinationSearch { state ->
+            state.copy(nearbyPois = nearby)
         }
     }
 
@@ -368,7 +412,11 @@ fun NavigationSearchContent(
                     compact = true,
                     trailingContent = {
                         IconButton(
-                            onClick = { savedFilterActive = !savedFilterActive },
+                            onClick = {
+                                launcherViewModel.updateDestinationSearch { state ->
+                                    state.copy(savedFilterActive = !state.savedFilterActive)
+                                }
+                            },
                             modifier = Modifier.size(CarDimensions.PanelCompactHeaderTapTarget),
                         ) {
                             Icon(
@@ -395,7 +443,11 @@ fun NavigationSearchContent(
 
                 OutlinedTextField(
                     value = query,
-                    onValueChange = { query = it },
+                    onValueChange = { text ->
+                        launcherViewModel.updateDestinationSearch { state ->
+                            state.copy(query = text)
+                        }
+                    },
                     modifier = Modifier.fillMaxWidth(),
                     placeholder = {
                         CarLabelText(

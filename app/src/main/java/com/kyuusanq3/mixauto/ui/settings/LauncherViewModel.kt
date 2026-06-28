@@ -14,6 +14,7 @@ import com.kyuusanq3.mixauto.data.map.TomTomKeyCheckResult
 import com.kyuusanq3.mixauto.data.map.TomTomTrafficClient
 import com.kyuusanq3.mixauto.domain.map.SearchResultPlace
 import com.kyuusanq3.mixauto.ui.components.canLaunchApp
+import com.kyuusanq3.mixauto.ui.dashboard.ActivePanel
 import com.kyuusanq3.mixauto.ui.dashboard.AlbumArtMode
 import com.kyuusanq3.mixauto.ui.dashboard.DockShortcutIconSize
 import kotlinx.coroutines.Dispatchers
@@ -102,11 +103,47 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     var showSystemStatusBar by mutableStateOf(preferences.showSystemStatusBar)
         private set
 
+    var musicPaneEnabled by mutableStateOf(preferences.musicPaneEnabled)
+        private set
+
     var tomTomKeyCheckState by mutableStateOf<TomTomKeyCheckState>(TomTomKeyCheckState.Idle)
         private set
 
     var isDestinationSearchOpen by mutableStateOf(false)
         internal set
+
+    var activePanel by mutableStateOf(
+        if (preferences.musicPaneEnabled) ActivePanel.MEDIA else ActivePanel.HIDDEN,
+    )
+        internal set
+
+    var poiReturnToSearch by mutableStateOf(false)
+        internal set
+
+    fun setActivePanel(panel: ActivePanel) {
+        activePanel = panel
+    }
+
+    fun setPoiReturnToSearch(value: Boolean) {
+        poiReturnToSearch = value
+    }
+
+    fun clearPoiReturnToSearch() {
+        poiReturnToSearch = false
+    }
+
+    var destinationSearchState by mutableStateOf(DestinationSearchUiState())
+        private set
+
+    fun updateDestinationSearch(
+        transform: (DestinationSearchUiState) -> DestinationSearchUiState,
+    ) {
+        destinationSearchState = transform(destinationSearchState)
+    }
+
+    fun clearDestinationSearchState() {
+        destinationSearchState = DestinationSearchUiState()
+    }
 
     var launchableApps by mutableStateOf<List<LaunchableAppEntry>>(emptyList())
         private set
@@ -164,6 +201,11 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     fun updateMapMediaRatio(value: Float) {
         mapMediaRatio = value
         preferences.mapMediaRatio = value
+    }
+
+    fun updateMusicPaneEnabled(enabled: Boolean) {
+        musicPaneEnabled = enabled
+        preferences.musicPaneEnabled = enabled
     }
 
     fun toggleLimitSearchDistance() {
@@ -356,3 +398,15 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         private const val DEDUP_THRESHOLD_M = 50f
     }
 }
+
+/** Survives rotation while destination search is open; cleared when search panel dismisses. */
+data class DestinationSearchUiState(
+    val query: String = "",
+    val results: List<SearchResultPlace> = emptyList(),
+    val nearbyPois: List<SearchResultPlace> = emptyList(),
+    val snapshotOriginLat: Double? = null,
+    val snapshotOriginLng: Double? = null,
+    val snapshotOriginReliable: Boolean = false,
+    val hasSearched: Boolean = false,
+    val savedFilterActive: Boolean = false,
+)
