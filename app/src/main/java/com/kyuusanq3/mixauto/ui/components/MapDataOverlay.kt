@@ -16,7 +16,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.CloudDownload
 import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material3.Button
+import androidx.compose.material.icons.filled.NetworkCheck
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.Icon
@@ -118,6 +118,8 @@ fun MapDataSectionContent(
     modifier: Modifier = Modifier,
     catalogModifier: Modifier = Modifier.fillMaxWidth(),
     useInternalCatalogScroll: Boolean = false,
+    showTraffic: Boolean = false,
+    onToggleTraffic: (() -> Unit)? = null,
 ) {
     val uiState by viewModel.uiState.collectAsState()
 
@@ -187,6 +189,8 @@ fun MapDataSectionContent(
         TomTomApiKeySection(
             tomTomApiKey = tomTomApiKey,
             onTomTomApiKeyChange = onTomTomApiKeyChange,
+            showTraffic = showTraffic,
+            onToggleTraffic = onToggleTraffic,
         )
     }
 }
@@ -195,9 +199,12 @@ fun MapDataSectionContent(
 private fun TomTomApiKeySection(
     tomTomApiKey: String,
     onTomTomApiKeyChange: (String) -> Unit,
+    showTraffic: Boolean,
+    onToggleTraffic: (() -> Unit)?,
 ) {
     val launcherViewModel: LauncherViewModel = viewModel()
     val tomTomKeyCheckState = launcherViewModel.tomTomKeyCheckState
+    val isChecking = tomTomKeyCheckState is TomTomKeyCheckState.Checking
 
     Column(
         modifier = Modifier.fillMaxWidth(),
@@ -220,6 +227,27 @@ private fun TomTomApiKeySection(
                 )
             },
             singleLine = true,
+            trailingIcon = {
+                if (isChecking) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(CarDimensions.PanelHeaderIconSize),
+                        color = ElectricCyan,
+                        strokeWidth = 2.dp,
+                    )
+                } else {
+                    IconButton(
+                        onClick = launcherViewModel::checkTomTomApiKey,
+                        modifier = Modifier.size(CarDimensions.PanelHeaderTapTarget),
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.NetworkCheck,
+                            contentDescription = "Test TomTom API Key",
+                            modifier = Modifier.size(CarDimensions.PanelHeaderIconSize),
+                            tint = MaterialTheme.colorScheme.primary,
+                        )
+                    }
+                }
+            },
             colors = TextFieldDefaults.colors(
                 focusedContainerColor = OledBlack,
                 unfocusedContainerColor = OledBlack,
@@ -231,23 +259,19 @@ private fun TomTomApiKeySection(
             text = "Free tier covers Philippines. Required for traffic overlay.",
             style = MaterialTheme.typography.labelMedium,
         )
+        if (onToggleTraffic != null) {
+            SettingsSwitchRow(
+                label = "Traffic Overlay",
+                checked = showTraffic,
+                onCheckedChange = { checked ->
+                    if (checked != showTraffic) {
+                        onToggleTraffic()
+                    }
+                },
+            )
+        }
         when (tomTomKeyCheckState) {
-            TomTomKeyCheckState.Idle -> Unit
-            TomTomKeyCheckState.Checking -> {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(CarDimensions.MinTapTarget),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(CarDimensions.PaneGap),
-                ) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(CarDimensions.MinTapTarget / 2),
-                        color = ElectricCyan,
-                    )
-                    CarBodyText(text = "Testing API key...")
-                }
-            }
+            TomTomKeyCheckState.Idle, TomTomKeyCheckState.Checking -> Unit
             is TomTomKeyCheckState.Success -> {
                 CarLabelText(
                     text = tomTomKeyCheckState.message,
@@ -262,15 +286,6 @@ private fun TomTomApiKeySection(
                     ),
                 )
             }
-        }
-        Button(
-            onClick = launcherViewModel::checkTomTomApiKey,
-            enabled = tomTomKeyCheckState !is TomTomKeyCheckState.Checking,
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(CarDimensions.MinTapTarget),
-        ) {
-            CarBodyText(text = "Test TomTom API Key")
         }
     }
 }

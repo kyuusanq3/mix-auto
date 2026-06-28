@@ -13,6 +13,7 @@ import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
 import androidx.core.content.ContextCompat
+import com.kyuusanq3.mixauto.BuildConfig
 import com.kyuusanq3.mixauto.data.navigation.NavStepPhrase
 import com.kyuusanq3.mixauto.data.navigation.NavTickContext
 import com.kyuusanq3.mixauto.data.navigation.NavTtsPhrases
@@ -79,6 +80,7 @@ import kotlin.math.ceil
 import kotlin.math.cos
 import kotlin.math.hypot
 import kotlin.math.max
+import kotlin.math.min
 import kotlin.math.roundToInt
 import kotlin.math.sin
 
@@ -120,6 +122,7 @@ private data class RouteResult(
     val steps: List<LegStep> = emptyList(),
     val durationSeconds: Double = 0.0,
     val distanceMeters: Double = 0.0,
+    val trafficDelaySeconds: Int = 0,
 )
 
 private data class StoredRoute(
@@ -186,7 +189,6 @@ class MapLibreEngineImpl(
     private var locationEngine: LocationEngine? = null
     private var locationEngineCallback: LocationEngineCallback<LocationEngineResult>? = null
     private var freshLocationListener: LocationListener? = null
-    private var listenersRegistered = false
     private var pendingLocationActivation = false
     private var pendingLocationFix: Location? = null
     private var locationPollJob: Job? = null
@@ -209,6 +211,14 @@ class MapLibreEngineImpl(
     private var lastStableBearing: Float? = null
     private var deadReckoningJob: Job? = null
     private var lastDeadReckoningLocation: Location? = null
+    private var drAnchor: Location? = null
+    private var lastLocationFixForDedup: Location? = null
+    private var lastAppliedTrackingPadding: IntArray? = null
+    private var lastUiStateCoordUpdateMs: Long = 0L
+    private var lastUiStateCoordLat: Double? = null
+    private var lastUiStateCoordLng: Double? = null
+    private var lastPuckPushLocation: Location? = null
+    private var lastRouteProgressMapUpdateM: Float = 0f
     private var pendingPoiPreviewTarget: LatLng? = null
     private var pendingPoiPreviewZoom: Double = POI_PREVIEW_ZOOM
     private var poiPreviewRetryCount = 0
@@ -225,6 +235,12 @@ class MapLibreEngineImpl(
     private var selectionDestination: LatLng? = null
     private var selectionBoundsPoints: List<LatLng> = emptyList()
     private var routeOverviewTimerStartMs = 0L
+    /** TomTom delay from parallel fetch when OSRM route is selected (nav-start TTS tier 2). */
+    private var stashedParallelTomTomDelaySeconds = 0
+    private var pendingNavTrafficPhrase: String? = null
+    private var navTrafficPrefetchJob: Job? = null
+    /** True until first [activateNavigationTracking] consumes the nav-start traffic line. */
+    private var navStartTrafficEligible = false
 
     override fun createMapView(context: Context): View {
         mapView?.let { existing ->
@@ -257,8 +273,7 @@ class MapLibreEngineImpl(
                     if (reason == MapLibreMap.OnCameraMoveStartedListener.REASON_API_GESTURE) {
                         _uiState.update { it.copy(isCameraDetached = true) }
                         ensureTopDownCameraDetached(map)
-                        deadReckoningJob?.cancel()
-                        deadReckoningJob = null
+                        stopDeadReckoning()
                         if (_uiState.value.isInTopDownView) {
                             cancelTopDownViewportSync()
                             cancelPoiPreviewRetries()
@@ -363,6 +378,7 @@ class MapLibreEngineImpl(
     override fun setViewportPadding(horizontalFraction: Float, verticalFraction: Float) {
         puckHorizontalOffset = horizontalFraction
         puckVerticalOffset = verticalFraction
+        lastAppliedTrackingPadding = null
         val map = mapLibreMap ?: return
         applyDrivingViewportPadding(map)
         applyDrivingTrackingPadding(map)
@@ -415,8 +431,24 @@ class MapLibreEngineImpl(
     }
 
     /**
-     * After changing tracking padding or puck style, force a forceLocationUpdate so the map
-     * camera repositions immediately without waiting for the next GPS fix or dead-reckoning tick.
+     * Push puck position when it materially moved. LocationComponent already receives engine
+     * updates in free drive — extra forceLocationUpdate calls race MapLibre's RenderThread and
+     * can SIGSEGV on the emulator (fault addr 0x30 in MapRenderer::render).
+     */
+    private fun pushPuckLocationIfNeeded(location: Location, force: Boolean = false) {
+        if (!force) {
+            val prev = lastPuckPushLocation
+            if (prev != null && prev.distanceTo(location) < PUCK_PUSH_MIN_DIST_M) return
+        }
+        val map = mapLibreMap ?: return
+        val component = map.locationComponent
+        if (!component.isLocationComponentActivated || !component.isLocationComponentEnabled) return
+        lastPuckPushLocation = Location(location)
+        component.forceLocationUpdate(location)
+    }
+
+    /**
+     * After changing tracking padding or puck style, force a puck refresh so the camera repositions.
      */
     private fun forceLocationUpdateForImmediateRender(map: MapLibreMap) {
         val component = map.locationComponent
@@ -429,7 +461,7 @@ class MapLibreEngineImpl(
                 }
             }
             ?: return
-        component.forceLocationUpdate(location)
+        pushPuckLocationIfNeeded(location, force = true)
     }
 
     private fun applyMapStyle(map: MapLibreMap, context: Context) {
@@ -515,8 +547,7 @@ class MapLibreEngineImpl(
     }
 
     override fun onDestroy() {
-        deadReckoningJob?.cancel()
-        deadReckoningJob = null
+        stopDeadReckoning()
         locationPollJob?.cancel()
         locationPollJob = null
         locationRetryJob?.cancel()
@@ -530,7 +561,6 @@ class MapLibreEngineImpl(
         pendingLocationFix = null
         engineScope.cancel()
         removeFreshLocationListener()
-        listenersRegistered = false
         locationEngineCallback?.let { callback ->
             locationEngine?.removeLocationUpdates(callback)
         }
@@ -552,7 +582,11 @@ class MapLibreEngineImpl(
     ): List<SearchResultPlace> = withContext(Dispatchers.IO) {
         if (query.isBlank()) return@withContext emptyList()
 
-        val (searchLat, searchLng) = resolveSearchOrigin(currentLat, currentLng)
+        val (searchLat, searchLng) = if (isValidSearchOrigin(currentLat, currentLng)) {
+            currentLat to currentLng
+        } else {
+            resolveSearchOrigin(currentLat, currentLng)
+        }
 
         fun applyDistanceLimit(places: List<SearchResultPlace>): List<SearchResultPlace> =
             if (limitDistance) {
@@ -598,7 +632,12 @@ class MapLibreEngineImpl(
     override fun getNearbyPois(lat: Double, lng: Double, limit: Int): List<SearchResultPlace> {
         if (limit <= 0) return emptyList()
 
-        val (searchLat, searchLng) = resolveSearchOrigin(lat, lng)
+        val (searchLat, searchLng) = if (isValidSearchOrigin(lat, lng)) {
+            lat to lng
+        } else {
+            resolveSearchOrigin(lat, lng)
+        }
+
         val cacheResults = poiCache.values
             .map { place ->
                 val distanceResults = FloatArray(1)
@@ -611,35 +650,40 @@ class MapLibreEngineImpl(
                 )
                 place.copy(distanceInMeters = distanceResults[0])
             }
+
+        val repo = localPlaces
+        val offlineResults = if (repo != null && repo.hasInstalledDatabase) {
+            repo.getPlacesInBounds(
+                minLat = searchLat - NEARBY_SEARCH_BBOX_DELTA,
+                maxLat = searchLat + NEARBY_SEARCH_BBOX_DELTA,
+                minLng = searchLng - NEARBY_SEARCH_BBOX_DELTA,
+                maxLng = searchLng + NEARBY_SEARCH_BBOX_DELTA,
+                limit = limit * 2,
+            ).map { place ->
+                val distanceResults = FloatArray(1)
+                Location.distanceBetween(
+                    searchLat,
+                    searchLng,
+                    place.latitude,
+                    place.longitude,
+                    distanceResults,
+                )
+                place.copy(
+                    distanceInMeters = distanceResults[0],
+                    category = normalizeOvertureCategory(place.category),
+                )
+            }
+        } else {
+            emptyList()
+        }
+
+        return mergeAndDeduplicate(offlineResults, cacheResults)
             .sortedBy { it.distanceInMeters }
             .take(limit)
-
-        if (cacheResults.isNotEmpty()) return cacheResults
-
-        val repo = localPlaces ?: return emptyList()
-        if (!repo.hasInstalledDatabase) return emptyList()
-
-        return repo.getPlacesInBounds(
-            minLat = searchLat - NEARBY_SEARCH_BBOX_DELTA,
-            maxLat = searchLat + NEARBY_SEARCH_BBOX_DELTA,
-            minLng = searchLng - NEARBY_SEARCH_BBOX_DELTA,
-            maxLng = searchLng + NEARBY_SEARCH_BBOX_DELTA,
-            limit = limit,
-        ).map { place ->
-            val distanceResults = FloatArray(1)
-            Location.distanceBetween(
-                searchLat,
-                searchLng,
-                place.latitude,
-                place.longitude,
-                distanceResults,
-            )
-            place.copy(
-                distanceInMeters = distanceResults[0],
-                category = normalizeOvertureCategory(place.category),
-            )
-        }.sortedBy { it.distanceInMeters }
     }
+
+    override fun hasOfflinePlacesDatabase(): Boolean =
+        localPlaces?.hasInstalledDatabase == true
 
     override fun resolveSearchOrigin(): Pair<Double, Double> {
         return resolveSearchOrigin(0.0, 0.0)
@@ -925,8 +969,7 @@ class MapLibreEngineImpl(
 
     override fun startFreeDrive() {
         navigationVoice?.onNavigationEnded()
-        deadReckoningJob?.cancel()
-        deadReckoningJob = null
+        stopDeadReckoning()
         clearRouteOverviewState()
         poiRefreshJob?.cancel()
         poiRefreshJob = null
@@ -947,6 +990,7 @@ class MapLibreEngineImpl(
         selectionOrigin = null
         selectionDestination = null
         selectionBoundsPoints = emptyList()
+        clearNavTrafficPrefetchState()
 
         _uiState.value = MapUiState(
             isNavigating = false,
@@ -1064,8 +1108,7 @@ class MapLibreEngineImpl(
         } else {
             map.cameraPosition.zoom.coerceAtLeast(zoom)
         }
-        deadReckoningJob?.cancel()
-        deadReckoningJob = null
+        stopDeadReckoning()
         topDownExploreUserAdjusted = false
         val component = map.locationComponent
         if (component.isLocationComponentActivated && component.isLocationComponentEnabled) {
@@ -1500,6 +1543,7 @@ class MapLibreEngineImpl(
     private fun resetRouteProgress() {
         routeProgressSegmentIndex = 0
         routeProgressDistanceM = 0f
+        lastRouteProgressMapUpdateM = 0f
         if (routeGeometryPoints.isNotEmpty()) {
             routeProgressSplitLat = routeGeometryPoints[0].latitude
             routeProgressSplitLng = routeGeometryPoints[0].longitude
@@ -1646,6 +1690,10 @@ class MapLibreEngineImpl(
         routeProgressSplitLat = projection.splitLat
         routeProgressSplitLng = projection.splitLng
         routeProgressDistanceM = projection.distanceFromStartM
+        if (routeProgressDistanceM - lastRouteProgressMapUpdateM < ROUTE_PROGRESS_MAP_MIN_ADVANCE_M) {
+            return
+        }
+        lastRouteProgressMapUpdateM = routeProgressDistanceM
         applyRouteProgressToMap()
     }
 
@@ -1895,6 +1943,8 @@ class MapLibreEngineImpl(
                 destinationLatLng = LatLng(lat, lng)
                 navigationArrivalTriggered = false
                 offRouteCount = 0
+                stashedParallelTomTomDelaySeconds = tomtomRoute?.trafficDelaySeconds ?: 0
+                navStartTrafficEligible = true
 
                 if (candidates.size <= 1) {
                     val stored = candidates.firstOrNull()
@@ -1992,6 +2042,53 @@ class MapLibreEngineImpl(
         fullRouteSteps = route.steps
         currentStepIndex = 0
         drawRoute()
+        prefetchNavTrafficHint(route)
+    }
+
+    private fun clearNavTrafficPrefetchState() {
+        navTrafficPrefetchJob?.cancel()
+        navTrafficPrefetchJob = null
+        pendingNavTrafficPhrase = null
+        stashedParallelTomTomDelaySeconds = 0
+        navStartTrafficEligible = false
+    }
+
+    private fun prefetchNavTrafficHint(route: RouteResult) {
+        navTrafficPrefetchJob?.cancel()
+        pendingNavTrafficPhrase = null
+        if (!navStartTrafficEligible || tomTomApiKey.isBlank()) return
+
+        val routeLatLng = route.geometryPoints.map { Pair(it.latitude, it.longitude) }
+        val routeDelay = route.trafficDelaySeconds
+        val parallelDelay = stashedParallelTomTomDelaySeconds
+        val apiKey = tomTomApiKey
+
+        navTrafficPrefetchJob = engineScope.launch {
+            val phrase = withContext(Dispatchers.IO) {
+                resolveNavStartTrafficPhrase(routeLatLng, apiKey, routeDelay, parallelDelay)
+            }
+            if (!phrase.isNullOrBlank()) {
+                pendingNavTrafficPhrase = phrase
+            }
+        }
+    }
+
+    private fun resolveNavStartTrafficPhrase(
+        routeLatLng: List<Pair<Double, Double>>,
+        apiKey: String,
+        routeDelaySeconds: Int,
+        parallelDelaySeconds: Int,
+    ): String? {
+        val jam = TomTomTrafficClient.findJamOnRoute(routeLatLng, apiKey)
+        jam?.let { found ->
+            NavTtsPhrases.buildNavStartTrafficOnRoute(found.level, found.streetName)?.let { return it }
+        }
+        val delaySec = when {
+            routeDelaySeconds >= 120 -> routeDelaySeconds
+            parallelDelaySeconds >= 120 -> parallelDelaySeconds
+            else -> 0
+        }
+        return NavTtsPhrases.buildNavStartTrafficDelay(delaySec)
     }
 
     private fun enterRouteSelection(origin: LatLng, destination: LatLng, candidates: List<StoredRoute>) {
@@ -2152,6 +2249,7 @@ class MapLibreEngineImpl(
             steps = steps,
             durationSeconds = tt.travelTimeSeconds.toDouble(),
             distanceMeters = tt.distanceMeters,
+            trafficDelaySeconds = tt.trafficDelaySeconds,
         )
     }
 
@@ -2550,8 +2648,15 @@ class MapLibreEngineImpl(
             component.cameraMode = CameraMode.TRACKING_GPS
             applyDrivingTrackingPadding(map)
         }
+        val trafficPhrase = if (navStartTrafficEligible) {
+            navStartTrafficEligible = false
+            pendingNavTrafficPhrase
+        } else {
+            null
+        }
+        pendingNavTrafficPhrase = null
         fullRouteSteps.firstOrNull()?.toNavStepPhrase()?.let { firstStep ->
-            navigationVoice?.onNavigationDrivingStarted(firstStep)
+            navigationVoice?.onNavigationDrivingStarted(firstStep, trafficPhrase)
         }
     }
 
@@ -2590,9 +2695,14 @@ class MapLibreEngineImpl(
         if (isRouteOverviewActive() || navigationCameraTransitionActive) return
         if (_uiState.value.isInTopDownView || _uiState.value.isCameraDetached) return
         val padding = computeDrivingViewportPadding(map)
+        val paddingKey = intArrayOf(padding.left, padding.top, padding.right, padding.bottom)
         val component = map.locationComponent
         val componentReady = component.isLocationComponentActivated && component.isLocationComponentEnabled
         val alreadyTrackingGps = componentReady && component.cameraMode == CameraMode.TRACKING_GPS
+        if (lastAppliedTrackingPadding?.contentEquals(paddingKey) == true && alreadyTrackingGps) {
+            return
+        }
+        lastAppliedTrackingPadding = paddingKey
         // moveCamera(paddingTo) while TRACKING_GPS is active drops out of follow mode — update
         // paddingWhileTracking only and force a puck refresh to reposition the camera.
         if (!alreadyTrackingGps) {
@@ -3267,7 +3377,7 @@ class MapLibreEngineImpl(
             } else if (places.isNotEmpty()) {
                 style.addSource(GeoJsonSource(SAVED_PLACES_SOURCE_ID, geoJson))
                 val savedLayer = SymbolLayer(SAVED_PLACES_LAYER_ID, SAVED_PLACES_SOURCE_ID).withProperties(
-                    *poiLabelLayerProperties(poiCategoryIconExpression()),
+                    *poiIconOnlyLayerProperties(poiCategoryIconExpression()),
                 )
                 when {
                     style.getLayer(POI_LAYER_ID) != null -> {
@@ -3433,9 +3543,11 @@ class MapLibreEngineImpl(
         val location = pendingLocationFix ?: return
         val component = mapLibreMap?.locationComponent ?: return
         if (!component.isLocationComponentActivated || !component.isLocationComponentEnabled) return
-        component.forceLocationUpdate(location)
+        pushPuckLocationIfNeeded(location, force = true)
         pendingLocationFix = null
-        Log.i(TAG, "Applied queued location fix to LocationComponent")
+        if (BuildConfig.DEBUG) {
+            Log.d(TAG, "Applied queued location fix to LocationComponent")
+        }
     }
 
     private fun registerSpeedUpdates(engine: LocationEngine) {
@@ -3525,38 +3637,49 @@ class MapLibreEngineImpl(
         return location
     }
 
-    private fun startDeadReckoning(from: Location) {
-        deadReckoningJob?.cancel()
-        val speed = if (from.hasSpeed()) from.speed else return
-        if (speed < STOPPED_SPEED_MPS) return
-        val bearing = from.bearing
-        lastDeadReckoningLocation = from
-        deadReckoningJob = engineScope.launch {
-            val ref = from
-            while (isActive) {
-                delay(DEAD_RECKONING_INTERVAL_MS)
-                val elapsed = (System.currentTimeMillis() - ref.time).coerceAtLeast(0)
-                val dist = speed * (elapsed / 1000.0)
-                val bearingRad = Math.toRadians(bearing.toDouble())
-                val latRad = Math.toRadians(ref.latitude)
-                val lat = ref.latitude + cos(bearingRad) * dist / METERS_PER_DEGREE_LAT
-                val lng = ref.longitude + sin(bearingRad) * dist / (METERS_PER_DEGREE_LAT * cos(latRad))
-                val extrapolated = Location(ref).apply {
-                    latitude = lat
-                    longitude = lng
-                    time = System.currentTimeMillis()
-                    this.bearing = bearing
-                }
-                lastDeadReckoningLocation = extrapolated
-                val component = mapLibreMap?.locationComponent ?: break
-                if (component.isLocationComponentActivated && component.isLocationComponentEnabled) {
-                    component.forceLocationUpdate(extrapolated)
-                }
+    private fun isDuplicateLocationFix(location: Location): Boolean {
+        val prev = lastLocationFixForDedup ?: return false
+        val timeDelta = location.time - prev.time
+        if (timeDelta in 0..LOCATION_FIX_DEDUP_TIME_MS) return true
+        if (timeDelta < 500L && prev.distanceTo(location) < LOCATION_FIX_DEDUP_DIST_M) return true
+        return false
+    }
+
+    private fun maybeUpdateUiStateCoords(lat: Double, lng: Double) {
+        val now = System.currentTimeMillis()
+        val shouldUpdate = when {
+            lastUiStateCoordLat == null || lastUiStateCoordLng == null -> true
+            now - lastUiStateCoordUpdateMs >= UI_STATE_COORD_THROTTLE_MS -> true
+            else -> {
+                val results = FloatArray(1)
+                Location.distanceBetween(
+                    lastUiStateCoordLat!!,
+                    lastUiStateCoordLng!!,
+                    lat,
+                    lng,
+                    results,
+                )
+                results[0] >= UI_STATE_COORD_MIN_MOVE_M
             }
         }
+        if (!shouldUpdate) return
+        lastUiStateCoordUpdateMs = now
+        lastUiStateCoordLat = lat
+        lastUiStateCoordLng = lng
+        _uiState.update { it.copy(currentLat = lat, currentLng = lng) }
+    }
+
+    private fun stopDeadReckoning() {
+        deadReckoningJob?.cancel()
+        deadReckoningJob = null
+        drAnchor = null
+        lastDeadReckoningLocation = null
     }
 
     private fun applyAndroidLocation(location: Location, snapCamera: Boolean) {
+        if (isDuplicateLocationFix(location)) return
+        lastLocationFixForDedup = Location(location)
+
         val locationWithBearing = enrichLocationWithBearing(location)
 
         // During navigation, snap the display location onto the nearest route segment so the
@@ -3570,42 +3693,57 @@ class MapLibreEngineImpl(
 
         val latLng = LatLng(displayLocation.latitude, displayLocation.longitude)
         lastKnownLocation = latLng
-        _uiState.update {
-            it.copy(
-                currentLat = displayLocation.latitude,
-                currentLng = displayLocation.longitude,
-            )
-        }
+        maybeUpdateUiStateCoords(displayLocation.latitude, displayLocation.longitude)
+
         val component = mapLibreMap?.locationComponent
-        if (component != null && component.isLocationComponentActivated && component.isLocationComponentEnabled) {
-            component.forceLocationUpdate(displayLocation)
-            pendingLocationFix = null
-        } else {
-            pendingLocationFix = displayLocation
+        val componentReady = component != null &&
+            component.isLocationComponentActivated &&
+            component.isLocationComponentEnabled
+        val isNavigating = _uiState.value.isNavigating
+        when {
+            !componentReady -> pendingLocationFix = displayLocation
+            isNavigating -> {
+                pushPuckLocationIfNeeded(displayLocation, force = true)
+                pendingLocationFix = null
+            }
+            else -> {
+                // Free drive: LocationEngine feeds the puck — avoid forceLocationUpdate here
+                // (races native MapRenderer::render on emulator).
+                pendingLocationFix = null
+            }
         }
-        if (_uiState.value.isNavigating) {
+
+        if (isNavigating) {
             updateRouteProgress(displayLocation)
         }
-        if (!_uiState.value.isInTopDownView && !_uiState.value.isCameraDetached) {
-            startDeadReckoning(displayLocation)
+
+        if (BuildConfig.DEBUG) {
+            Log.d(
+                TAG,
+                "Location fix ${displayLocation.latitude}, ${displayLocation.longitude} " +
+                    "(provider=${displayLocation.provider}, bearing=${displayLocation.bearing}, " +
+                    "roadSnapped=${displayLocation !== locationWithBearing}, " +
+                    "snapCamera=$snapCamera, zoom=${mapLibreMap?.cameraPosition?.zoom})",
+            )
         }
-        Log.i(
-            TAG,
-            "Location fix ${displayLocation.latitude}, ${displayLocation.longitude} " +
-                "(provider=${displayLocation.provider}, bearing=${displayLocation.bearing}, " +
-                "roadSnapped=${displayLocation !== locationWithBearing}, " +
-                "snapCamera=$snapCamera, zoom=${mapLibreMap?.cameraPosition?.zoom})",
-        )
         when {
             // Pass the raw bearing-enriched fix to step/off-route logic so actual GPS deviation
             // is measured — the snapped display location would always appear on the route.
-            _uiState.value.isNavigating -> evaluateStepAdvancement(locationWithBearing)
+            isNavigating -> evaluateStepAdvancement(locationWithBearing)
             _uiState.value.isInTopDownView -> mapLibreMap?.let { ensureTopDownCameraDetached(it) }
             !hasSnappedCameraToGps -> snapCameraToGpsIfNeeded(latLng)
             else -> {
-                _uiState.update { it.copy(streetName = "Free Drive") }
                 if (!_uiState.value.isCameraDetached) {
-                    mapLibreMap?.let { activateFreeDriveTrackingMode(it) }
+                    mapLibreMap?.let { map ->
+                        val liveComponent = map.locationComponent
+                        val alreadyTracking = liveComponent.isLocationComponentActivated &&
+                            liveComponent.isLocationComponentEnabled &&
+                            liveComponent.cameraMode == CameraMode.TRACKING_GPS &&
+                            liveComponent.renderMode == RenderMode.GPS
+                        if (!alreadyTracking) {
+                            activateFreeDriveTrackingMode(map)
+                        }
+                    }
                 }
             }
         }
@@ -3830,8 +3968,7 @@ class MapLibreEngineImpl(
         Log.i(
             TAG,
             "beginLocationAcquisition: providers=${locationManager?.allProviders}, " +
-                "enabled=${isLocationEnabled(context)}, " +
-                "listenersRegistered=$listenersRegistered",
+                "enabled=${isLocationEnabled(context)}",
         )
         logPermissionState(context)
 
@@ -3847,12 +3984,13 @@ class MapLibreEngineImpl(
     }
 
     private fun ensureLocationListeners(context: Context) {
-        if (listenersRegistered) {
-            Log.i(TAG, "Location listeners already active; skipping re-register")
+        if (freshLocationListener != null) {
+            if (BuildConfig.DEBUG) {
+                Log.d(TAG, "GPS location listener already active; skipping re-register")
+            }
             return
         }
         ensureGpsLocationListener(context)
-        listenersRegistered = true
     }
 
     private fun ensureGpsLocationListener(context: Context) {
@@ -3861,10 +3999,12 @@ class MapLibreEngineImpl(
             ?: return
 
         val listener = LocationListener { location ->
-            Log.i(
-                TAG,
-                "GPS update: ${location.latitude}, ${location.longitude} from ${location.provider}",
-            )
+            if (BuildConfig.DEBUG) {
+                Log.d(
+                    TAG,
+                    "GPS update: ${location.latitude}, ${location.longitude} from ${location.provider}",
+                )
+            }
             applyAndroidLocation(location, snapCamera = !hasSnappedCameraToGps)
         }
         freshLocationListener = listener
@@ -4049,6 +4189,15 @@ class MapLibreEngineImpl(
         }
     }
 
+    private fun poiIconOnlyLayerProperties(iconImageExpression: Expression): Array<PropertyValue<*>> {
+        return arrayOf(
+            PropertyFactory.iconImage(iconImageExpression),
+            PropertyFactory.iconAnchor(Property.ICON_ANCHOR_CENTER),
+            PropertyFactory.iconAllowOverlap(true),
+            PropertyFactory.iconSize(1f),
+        )
+    }
+
     private fun poiLabelLayerProperties(iconImageExpression: Expression): Array<PropertyValue<*>> {
         return arrayOf(
             PropertyFactory.iconImage(iconImageExpression),
@@ -4200,6 +4349,12 @@ class MapLibreEngineImpl(
         private const val ROUTE_OVERVIEW_HOLD_MS = 10_000L
         private const val LOCATION_INTERVAL_MS = 1000L
         private const val FRESH_LOCATION_MIN_TIME_MS = 500L
+        private const val LOCATION_FIX_DEDUP_TIME_MS = 50L
+        private const val LOCATION_FIX_DEDUP_DIST_M = 2f
+        private const val PUCK_PUSH_MIN_DIST_M = 2f
+        private const val UI_STATE_COORD_THROTTLE_MS = 1000L
+        private const val UI_STATE_COORD_MIN_MOVE_M = 20f
+        private const val ROUTE_PROGRESS_MAP_MIN_ADVANCE_M = 10f
         private const val LOCATION_POLL_INTERVAL_MS = 1000L
         private const val LOCATION_POLL_ATTEMPTS = 15
         private const val LOCATION_ACQUIRE_TIMEOUT_MS = 8000L
@@ -4250,7 +4405,7 @@ class MapLibreEngineImpl(
         private const val MAX_POI_PINS = 100
         private const val POI_CACHE_SEARCH_LIMIT = 15
         private const val POI_DEBOUNCE_MS = 400L
-        private const val NEARBY_SEARCH_BBOX_DELTA = 0.08
+        private const val NEARBY_SEARCH_BBOX_DELTA = 0.5 // aligned with LocalPlacesRepository text-search bbox
         private const val BBOX_PADDING_FACTOR = 1.5
         private const val PHOTON_MOVE_THRESHOLD_M = 300f
         private const val MAP_TAP_NEAREST_POI_MAX_M = 500f
@@ -4265,7 +4420,6 @@ class MapLibreEngineImpl(
         private const val ROUTE_TRAVELED_OPACITY = 0.85f
         private const val ROUTE_WIDTH = 14f
         private const val STOPPED_SPEED_MPS = 1.4f
-        private const val DEAD_RECKONING_INTERVAL_MS = 16L
         private const val METERS_PER_DEGREE_LAT = 111_320.0
         private const val STEP_ADVANCE_THRESHOLD_M = 25f
         private const val ARRIVAL_THRESHOLD_M = 15f

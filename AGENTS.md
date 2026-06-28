@@ -93,7 +93,7 @@ Swap map provider: change one line in `MainActivity.kt` to a new `CarMapEngine` 
 
 ## Shortcut dock behavior
 
-`ShortcutDock.kt` dock layout: driver cluster (App Drawer + Mic) | **pinned apps (up to 5)** in center | **music side control** (`DockMusicSideControl`). **Launcher settings** is in the app drawer header (gear icon). **Map settings** toggle is bottom-left on the map (above MapLibre watermark); panel still opens in media pane via `ActivePanel.MAP_DATA`.
+`ShortcutDock.kt` dock layout: driver cluster (App Drawer + Mic) | **pinned apps (up to 5)** in center | **music side control** (`DockMusicSideControl`). **Launcher settings** is in the app drawer header (gear icon). **Destination search** is a circular FAB at **top-center** of the map (`DestinationSearchFab`, 84 dp); end nav / recenter / top-view stay top-right. **Map settings** toggle is bottom-left on the map (above MapLibre watermark); panel still opens in media pane via `ActivePanel.MAP_DATA`.
 
 | Icon / control | Panel / action |
 |------|----------------|
@@ -168,7 +168,7 @@ Bundled sample asset: `python tools/build_sample_places_db.py` (writes to `mix-a
 
 **Saved places:** Up to 50 in `LauncherPreferences.savedPlaces` (same JSON schema + `isDroppedPin`). `LauncherViewModel.toggleSavedPlace()` dedupes at 50 m. Starred POIs show gold teardrop icons on map via `mapEngine.setSavedPlaces()` synced from `DashboardScreen`. Empty search field shows **Recent + Nearby** suggestions; header **star toggle** switches to saved-only list (typed search filters saved locally). Each row has a star button. **Short map tap** selects saved pin, active custom pin, or POI pin (`handleMapPointSelection()`). **Long press** on empty map drops a custom pin (`startCustomPinDraft()`); long press in free-drive GPS tracking exits to top-down view at the drop point. POI detail opens in media pane via `ActivePanel.POI_DETAIL`.
 
-**Default audio source:** `LauncherPreferences.defaultAudioPackage` — first launch with no default shows inline app list in media pane; tap sets default and launches app. Boot: `MainActivity.refreshMediaSessionsAndBootAudio()` → `ensureDefaultPlayerIfNeeded()` launches default when no active session. Overlay picker: tap launches app; long-press row sets default. Source button: tap launches active app or opens picker when idle; **long-press always opens picker**.
+**Default audio source:** `LauncherPreferences.defaultAudioPackage` — first launch with no default shows inline app list in media pane; tap sets default and launches app. Boot: `MainActivity.refreshMediaSessionsAndBootAudio()` → `ensureDefaultPlayerIfNeeded()` wakes default via `BackgroundAudioLauncher.wakeWithForegroundFallback()` (MediaBrowser bind + play, not foreground launch) when no active session; user taps still use `launchAppByPackage()`. Overlay picker: tap launches app; long-press row sets default. Source button: tap launches active app or opens picker when idle; **long-press always opens picker**.
 
 ## Manifest / launcher setup
 
@@ -206,6 +206,7 @@ After enabling Launcher Mode, press Home and select **Mix Auto** as the default 
 | App not offered as home launcher | Enable **Launcher Mode** in Settings first; verify `LauncherModeAlias` HOME+DEFAULT in manifest; reinstall if needed |
 | Map shows green/blank (no streets) | OSM tiles loading — ensure INTERNET; demotiles style has no PH coverage (use OSM raster in engine) |
 | "Location unavailable" on emulator | Grant **Precise** location permission; Extended Controls → Location → Set Location while app is open (after `GPS location listener registered` appears in Logcat) |
+| Emulator "already running" with no window | Stale AVD lock — delete `%USERPROFILE%\.android\avd\{AVD_NAME}.avd\*.lock` (e.g. `multiinstance.lock`) when no `emulator`/`qemu` process is running |
 | Emulator GPS never fires despite Set Location | `adb emu geo fix` is broken on ALL x86_64 AVD images (Google Play and AOSP, Android 11–13) — GNSS HAL delivers zero fixes; use `avd-gps.ps1` at repo root instead (test provider API bypasses GNSS HAL); requires AOSP image for `adb root` |
 | GPS working in Genymotion but not Android Studio AVD | See above — use `.\avd-gps.ps1` after each emulator cold boot; run `.\avd-gps.ps1 -Drive` to simulate road-snapped driving route (Gov Center → SM City Bacolod) |
 | AppOps `op=GPS: Operation not started` in Logcat | Location listener being torn down and re-registered too rapidly; `MapLibreEngineImpl` uses `listenersRegistered` flag — do not reset it on resume |
@@ -240,7 +241,7 @@ After enabling Launcher Mode, press Home and select **Mix Auto** as the default 
 | Catalog loads but download 404 | Release exists but assets array empty — edit release and upload both files from `places-dist/` |
 | Manual import of `.gz` fails | Import path expects uncompressed `.db`; use in-app Download or decompress first |
 | Search shows overseas / 5000 km destinations | Default 500 km cap is ON — disable **Nearby results only (within 500 km)** in Launcher Settings to include farther Photon results; routing still may fail for long/cross-water trips |
-| Empty search shows no Nearby rows | Nearby tab uses `poiCache` only — pan/zoom map (zoom ≥ 13) so camera-idle POI load runs; no network fetch for empty-query nearby list |
+| Empty search shows no Nearby rows | Nearby loads from offline DB at panel open (±0.5° bbox) merged with `poiCache` — install Map Data (PH pack); snapshot origin on open; no pan/zoom required |
 | Vector tiles show POI labels but no teardrop pins | `queryTilePois()` must use `map.queryRenderedFeatures` on Liberty layer IDs (`poi_r1`, `poi_r7`, `poi_r20`, `poi_transit`) — `VectorSource.querySourceFeatures("poi")` misses rendered POIs; zoom ≥ 15 for Liberty POI labels |
 | Pin tap does not center map | `animateTopDownCamera()` must call `clearViewportPaddingForPreview()` (zero map + tracking padding), defer animation via `mapView.post { }` so it runs after POI detail 40/60 split resize, and `handleMapLayoutChange()` must re-center on `selectedPoi` when `isInTopDownView` — do not re-apply driving padding from `OnLayoutChangeListener` during POI preview |
 | Saved tab empty | Star a place from map tap drawer or search row star button — `LauncherPreferences.savedPlaces` persists up to 50 entries |
@@ -252,7 +253,9 @@ After enabling Launcher Mode, press Home and select **Mix Auto** as the default 
 | Route line too thin | `ROUTE_WIDTH` 14f with 18f dark casing per half (traveled + remaining) in `ensureRouteLayers()` |
 | Puck renders under route line during nav | Route layers added after LocationComponent activation — call `ensurePuckAboveOverlays()` after `drawRoute()`; uses `resolvePuckLayerAnchorId()` → `layerAbove(ROUTE_REMAINING_LAYER_ID)` |
 | Passed route segment not greyed | `updateRouteProgress()` splits geometry into `ROUTE_TRAVELED_*` (grey) and `ROUTE_REMAINING_*` (cyan) on road-snapped GPS fix; monotonic advance only |
-| Puck pauses/jumps between GPS fixes | `startDeadReckoning()` extrapolates puck at 16 ms using last speed + bearing; ensure `hasSpeed()` is present on fixes |
+| Puck pauses/jumps between GPS fixes | Dead-reckoning `forceLocationUpdate` loop disabled (native render crash); free drive relies on LocationEngine; ensure `hasSpeed()` on fixes for bearing; head-unit gap between 1 Hz fixes is expected until custom LocationEngine interpolator added |
+| App SIGSEGV on emulator RenderThread after GPS fix | `libmaplibre.so` `MapRenderer::render` fault addr `0x30` — do NOT call high-frequency `forceLocationUpdate` in free drive; stay on MapLibre 11.5.1; try disabling TomTom traffic on emulator; crashes may be emulator-only — validate on Eonon |
+| Saved pins show colored streaks while driving | Use `poiIconOnlyLayerProperties()` for `mix-saved-layer` — no on-map `textField` on tilted camera |
 | Puck spins when stopped in traffic | `enrichLocationWithBearing()` freezes bearing via `lastStableBearing` when speed < `STOPPED_SPEED_MPS` (1.4 m/s) |
 | Puck size slider tap/skip has no effect | Do NOT use `onValueChangeFinished` with captured `puckScale` — stale closure reverts value same frame; use `onValueChange = onPuckScaleChange` only in `DashboardScreen.kt` |
 | Puck size slider jolts camera | `setPuckScale(scale)` is style-only via `applyStyle()` — do NOT call `forceLocationUpdateForImmediateRender()` for scale changes (unlike viewport padding) |
@@ -260,7 +263,9 @@ After enabling Launcher Mode, press Home and select **Mix Auto** as the default 
 | MapLibre ℹ overlaps logo text | `configureMapUiChrome()` must use **92 dp left** on `setAttributionMargins` (`ATTRIBUTION_LEFT_MARGIN_DP`) — SDK default clears logo width; uniform margins collapse ℹ onto logo |
 | Map settings button crowds watermark | `MapSettingsFab` in `CarMapViewContainer.kt` is bottom-start with `MapLibreAttributionReserveDp` (40 dp); bump to 44–48 dp on device if needed |
 | Nav doesn't re-route after wrong turn | Off-route reroute needs 2 GPS fixes >75 m from `routeGeometryPoints`; 5 s cooldown between reroutes; check Logcat for `Off route` / `Re-routing` |
-| Music doesn't auto-play on launch | Enable notification access; set **default audio source** in media pane (first-run list or long-press source icon → picker); `MainActivity.refreshMediaSessionsAndBootAudio()` launches default when no session; `maybeAutoPlay()` runs once per process when paused session has metadata — Logcat `MediaSessionRepository`: `Launching default audio app on boot` / `Auto-playing paused media session on launch` |
+| Minimized music pane reopens after navigation | Do not set `musicPaneEnabled = true` in nav overlay entry (`onToggleSearch`, route picker `LaunchedEffect`, POI `LaunchedEffect`, etc.) — only dock music / audio-source actions should restore `ActivePanel.MEDIA` |
+| Music doesn't auto-play on launch | Enable notification access; set **default audio source** in media pane (first-run list or long-press source icon → picker); boot wake uses `BackgroundAudioLauncher` MediaBrowser connect + play; `maybeAutoPlay()` runs once per process when paused session has metadata — Logcat `BackgroundAudioLauncher`: `Background wake succeeded` / `MediaSessionRepository`: `Auto-playing paused media session on launch` |
+| YT Music steals foreground on launcher boot | Boot should use `BackgroundAudioLauncher` not `launchAppByPackage`; if MediaBrowser fails, brief flash then Mix Auto refocus — check Logcat `Background wake failed, using foreground launch + refocus` |
 | No audio on cold boot until car Next pressed | YT Music not running yet — passive `getActiveSessions()` empty; set default in Mix Auto so boot launch runs; car media keys use OS pipeline, not Mix Auto |
 | Can't open audio source list after default set | **Long-press** source app icon in transport row (tap launches active app when session exists); short tap opens picker only when no session |
 | Shortcut bar too small on head unit | Settings → **Shortcut Icon Size** slider: Small (1×), Medium (1.5×), Large (2×) on `DockHorizontalTapTarget` / `DockHorizontalIconSize` in both horizontal and vertical dock |
@@ -275,9 +280,12 @@ After enabling Launcher Mode, press Home and select **Mix Auto** as the default 
 | TomTom route missing in picker (only OSRM cards) | Traffic Flow key test ≠ Routing API — enable TomTom **Routing** on developer key; `TomTomRoutingClient.fetchRoute()` fails silently and omits card |
 | Only one route, no picker shown | Expected when OSRM returns no distinct alternative and TomTom absent/fails — single route uses `showRouteThenDive()` once |
 | TomTom traffic HTTP 400 `Invalid style: relative-delay` | Orbis v2 raster tiles only accept `style=light` or `style=dark` — not legacy styles (`relative`, `relative-delay`, etc.); see `MapLibreEngineImpl.applyTrafficOverlay()` |
-| TomTom traffic not showing / key unknown | Map Data shortcut → paste key from developer.tomtom.com → **Test TomTom API Key**; enable **Traffic Overlay** in Launcher Settings; enable Traffic Flow product on key; Logcat tag `TomTomTrafficClient` |
+| TomTom traffic not showing / key unknown | Map Settings (layers FAB) → paste key → tap **NetworkCheck** icon on key field; enable **Traffic Overlay** toggle directly under key field; enable Traffic Flow product on key; Logcat tag `TomTomTrafficClient` |
 | Traffic tiles fail with HTTP 403 | Invalid key or Traffic Flow API not enabled for that TomTom developer key |
 | Update check fails HTTP 404 | App uses GitHub Releases API (`AppUpdateRepository.RELEASES_API_URL`), not a `version.json` asset — attach `mix-auto.apk` to the release and set tag to semver (e.g. `0.0.5`); download URL is `releases/latest/download/mix-auto.apk` |
+| No update banner on launch | Boot check deferred until onboarding completes; banner only when GitHub `tag_name` is newer than `BuildConfig.VERSION_NAME` — temporarily lower `versionName` or publish newer release to test |
+| Install button does nothing | API 26+ may need **Install unknown apps** for Mix Auto — `launchApkInstall()` opens that settings screen when permission missing |
+| Update snackbar hidden under dock | `AppUpdatePrompts` snackbar uses `padding(bottom = 88.dp)` above shortcut bar |
 | Vinyl album art shows as square/rectangle | `VinylAlbumArt`: use `clip(CircleShape)` then `graphicsLayer { rotationZ }` — not `Modifier.rotate` before clip |
 | Long-press on album art does nothing / swipes conflict with picker | Long-press opens `AlbumArtModePicker`; normal swipe gestures disabled while `isPickerOpen` in `MediaPlayerPane.kt` |
 | Album art too small in tall portrait pane | Size via `BoxWithConstraints`: `(if (maxWidth < maxHeight) maxWidth else maxHeight) * 0.92f` |
@@ -289,14 +297,17 @@ After enabling Launcher Mode, press Home and select **Mix Auto** as the default 
 | Voice button opens Assistant instead of search | Hardware key is often wired to Gemini and never reaches the app — use **shortcut dock mic** (Voice destination search); grant **Microphone** permission; Eonon may send `KEYCODE_SEARCH` instead of `KEYCODE_VOICE_ASSIST` (both handled in `MainActivity.onKeyDown` when search already open) |
 | Mic listening stops immediately | Gemini may hold the speech engine — use dock mic only; check mic permission; `SpeechRecognizer.onError` is silent — conflicts show as brief “Listening…” flash |
 | Mic button missing in search overlay / dock | `SpeechRecognizer.isRecognitionAvailable()` false on bare AOSP — install Google app; mic hidden in overlay and dock when no recognizer |
-| Nav TTS reads "800m…500m…200m" in one breath | First GPS tick inside all rings queued three `speak(QUEUE_ADD)` calls — fixed in `NavigationVoiceController`: one distance tier per tick, threshold crossing + urgent catch-up only |
+| Nav TTS reads "800m…500m…200m" in one breath | **Removed** — Option A uses ahead/prepare/turn only (`NavigationVoiceController` + `NavTtsPhrases.kt`); one cue per GPS tick via threshold crossing |
+| No nav-start traffic line | Needs TomTom API key + **Traffic Incidents** product; Tier 1 `findJamOnRoute()` or Tier 2 `trafficDelaySeconds ≥ 120`; prefetch during route overview — skip if IO not done before dive |
+| Maneuver TTS too early/late | Constants in `NavigationVoiceController`: early 35 s, prepare 12 s / 200 m, turn 3 s / 40 m; continue phrase still uses distance on long segments |
 | No nav voice / robotic voice | Map Settings → **Voice navigation** ON; install a better system TTS (Google TTS APK, NekoSpeak/Piper) — app uses `TextToSpeech`, no bundled voice |
+| Nav voice too quiet | Map Settings → **Voice volume** slider (50–100%, default 100%); tap speaker icon to preview "In 500 meters, turn right"; also check head-unit guidance volume in system settings |
 | Nav voice during route overview | By design silent until `activateNavigationTracking()` after 10 s overview + camera dive — do not speak from route fetch |
 | Onboarding wizard shows icon only, no title/body | `OnboardingWizard` root must be `Surface(color = OledBlack)` — bare `Box` leaves `LocalContentColor` black and `Car*Text` invisible on OLED background |
 | Re-test permission onboarding wizard | Clear app data or set `launcher_prefs` key `onboarding_version` to `0`; wizard shows when `onboardingVersion < CURRENT_ONBOARDING_VERSION` in `OnboardingWizard.kt` |
 | Search/POI pane too narrow or divider still draggable | Destination Search + POI Details lock split to **40% map / 60% secondary** via `OVERLAY_MAP_MEDIA_RATIO` (0.4f) in `DashboardScreen.kt`; `MapMediaDividerHandle` hidden (`showMapMediaDivider`); do NOT persist 0.4 to `LauncherPreferences` — closing restores saved ratio |
 | Destination search empty after app update (PH DB installed) | Origin could be `(0,0)` before GPS (PH bbox + Photon bias miss user area; 500 km filter drops all); DB file Installed but connection closed — `ensureDatabaseOpen()` on search; sideload latest build with hardened `resolveSearchOrigin()` + `refreshSearchOrigin()` on search open |
-| Typed search "No results" while driving (puck moving) | Check Logcat `searchDestination` log for origin coords; if unreliable, UI shows "Waiting for GPS"; `hasReliableSearchOrigin()` requires GPS/last fix/camera not PH default; `MainActivity.onResume()` refreshes location |
+| Typed search "No results" while driving (puck moving) | Fixed: snapshot origin on panel open; do not key search `LaunchedEffect` on live GPS (was cancelling Photon mid-flight); voice sets query on `onResults` only; Logcat should show one `searchDestination` per query change |
 | Map blank when tapping search result | Do not `onDismiss()` before POI detail — use `onPreviewSearchPlace` to set `POI_DETAIL` + `focusOnPoi()`; engine retries preview camera via `onMapHostLayoutChanged()` |
 | Close POI after search preview returns to media not search | Fixed via `poiReturnToSearch` in `DashboardScreen.kt` — set in `onPreviewSearchPlace`, branch `LaunchedEffect(selectedPoi)` on dismiss; clear flag on Navigate |
 | Two close buttons on POI details | Use header `OverlayCloseButton` only — no Close in `PoiDetailCardContent` action row |
@@ -308,7 +319,7 @@ After enabling Launcher Mode, press Home and select **Mix Auto** as the default 
 | Pinned shortcut missing after app uninstall | `LauncherViewModel.loadValidatedDockPinnedPackages()` removes unlaunchable packages on init |
 | Free drive camera doesn't follow puck | `applyDrivingTrackingPadding()` must skip `moveCamera(paddingTo)` when `cameraMode == TRACKING_GPS` — use `paddingWhileTracking` + `forceLocationUpdateForImmediateRender()` only; `applyAndroidLocation()` re-calls `activateFreeDriveTrackingMode()` when `!isCameraDetached`; clear `isInTopDownView` in `recenterCamera()` (before snap), `dismissSelectedPoi()`, and cancel `topDownViewportSync` in `startFreeDrive()` |
 | Puck under TomTom traffic lines | `resolvePuckLayerAnchorId()` + `ensurePuckAboveOverlays()` — puck must `layerAbove(mix-traffic-layer)` in free drive, above `ROUTE_REMAINING_LAYER_ID` when navigating; call after `applyTrafficOverlay()` and `drawRoute()` |
-| Speed readout position / size | Bottom-center `SpeedCircle` in `CarMapViewContainer.kt` — 30dp circle, 4dp bottom inset, speed + `km/h`; not puck-attached |
+| Speed readout position / size | Bottom-center `SpeedCircle` in `CarMapViewContainer.kt` — 54dp circle, 4dp bottom inset, speed 17sp + `km/h` 10sp; not puck-attached |
 | "Free Drive" text in top-left HUD | Top-left HUD shows **only when navigating** — free drive has no street placeholder; speed is on bottom-center `SpeedCircle` |
 | Status strip clock invisible | `DashboardStatusBar` must use `Surface(color = OledBlack, contentColor = OnDark)` — bare background leaves black text on black |
 | Status strip weather/city empty | Needs GPS fix in `MapUiState.currentLat/currentLng`; city from `NominatimReverseGeocodeClient`, weather from Open-Meteo; shows `—` until fetch completes |

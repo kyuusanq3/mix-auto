@@ -30,6 +30,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.kyuusanq3.mixauto.data.map.MapLibreEngineImpl
 import com.kyuusanq3.mixauto.data.media.MediaSessionRepository
+import com.kyuusanq3.mixauto.data.navigation.NavTtsPhrases
 import com.kyuusanq3.mixauto.data.navigation.NavigationVoiceController
 import com.kyuusanq3.mixauto.data.places.LocalPlacesRepository
 import com.kyuusanq3.mixauto.domain.map.CarMapEngine
@@ -54,6 +55,7 @@ class MainActivity : ComponentActivity() {
     private lateinit var mapEngine: CarMapEngine
     private lateinit var launcherViewModel: LauncherViewModel
     private lateinit var launcherPreferences: LauncherPreferences
+    private lateinit var appUpdateViewModel: AppUpdateViewModel
 
     private var showOnboarding by mutableStateOf(false)
     private var pendingOnboardingSteps = emptyList<OnboardingStep>()
@@ -77,6 +79,7 @@ class MainActivity : ComponentActivity() {
         localPlacesRepository = LocalPlacesRepository(this)
         navigationVoiceController = NavigationVoiceController(applicationContext).apply {
             enabled = launcherPreferences.navigationVoiceEnabled
+            volume = launcherPreferences.navigationVoiceVolume
         }
         mapEngine = MapLibreEngineImpl(
             localPlaces = localPlacesRepository,
@@ -95,6 +98,7 @@ class MainActivity : ComponentActivity() {
 
         MediaSessionRepository.getInstance(this)
         launcherViewModel = ViewModelProvider(this)[LauncherViewModel::class.java]
+        appUpdateViewModel = ViewModelProvider(this)[AppUpdateViewModel::class.java]
         pendingOnboardingSteps = pendingOnboardingSteps(launcherPreferences.onboardingVersion)
         val shouldShowOnboarding = launcherPreferences.onboardingVersion < CURRENT_ONBOARDING_VERSION &&
             pendingOnboardingSteps.isNotEmpty()
@@ -146,6 +150,7 @@ class MainActivity : ComponentActivity() {
                     show3dBuildings = launcherViewModel.show3dBuildings,
                     showTraffic = launcherViewModel.showTraffic,
                     navigationVoiceEnabled = launcherViewModel.navigationVoiceEnabled,
+                    navigationVoiceVolume = launcherViewModel.navigationVoiceVolume,
                     tomTomApiKey = launcherViewModel.tomTomApiKey,
                     isLauncherMode = launcherViewModel.isLauncherMode,
                     shortcutIconSize = launcherViewModel.dockShortcutIconSize,
@@ -181,6 +186,15 @@ class MainActivity : ComponentActivity() {
                     onToggleNavigationVoice = {
                         launcherViewModel.toggleNavigationVoice()
                         mapEngine.setNavigationVoiceEnabled(launcherViewModel.navigationVoiceEnabled)
+                    },
+                    onNavigationVoiceVolumeChange = { value ->
+                        launcherViewModel.updateNavigationVoiceVolume(value)
+                        navigationVoiceController.volume = launcherViewModel.navigationVoiceVolume
+                    },
+                    onTestNavigationVoice = {
+                        navigationVoiceController.speakPreview(
+                            NavTtsPhrases.buildAheadCue("turn right", "Main Street", "turn"),
+                        )
                     },
                     onTomTomApiKeyChange = { key ->
                         launcherViewModel.updateTomTomApiKey(key)
@@ -234,14 +248,15 @@ class MainActivity : ComponentActivity() {
                                 showOnboarding = false
                                 requestLocationPermissionIfNeeded()
                                 refreshMediaSessionsAndBootAudio()
+                                appUpdateViewModel.checkForUpdate(autoPrompt = true)
                             },
                         )
                     }
                 }
             }
         }
-        ViewModelProvider(this)[AppUpdateViewModel::class.java].checkForUpdate()
         if (!shouldShowOnboarding) {
+            appUpdateViewModel.checkForUpdate(autoPrompt = true)
             requestLocationPermissionIfNeeded()
         }
     }
@@ -366,6 +381,20 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun launchApkInstall(apkFile: File) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
+            !packageManager.canRequestPackageInstalls()
+        ) {
+            try {
+                startActivity(
+                    Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES).apply {
+                        data = android.net.Uri.parse("package:$packageName")
+                    },
+                )
+            } catch (_: ActivityNotFoundException) {
+                // Fall through to install intent; system may still prompt.
+            }
+            return
+        }
         val uri = FileProvider.getUriForFile(
             this,
             "${packageName}.fileprovider",

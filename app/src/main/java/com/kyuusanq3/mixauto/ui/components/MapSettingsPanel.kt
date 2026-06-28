@@ -6,8 +6,13 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.VolumeUp
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
@@ -15,6 +20,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import com.kyuusanq3.mixauto.ui.settings.LauncherPreferences
 import com.kyuusanq3.mixauto.ui.settings.MapDataViewModel
 import com.kyuusanq3.mixauto.ui.theme.CarBodyText
 import com.kyuusanq3.mixauto.ui.theme.CarDimensions
@@ -30,6 +36,7 @@ fun MapSettingsPanelContent(
     show3dBuildings: Boolean,
     showTraffic: Boolean,
     navigationVoiceEnabled: Boolean,
+    navigationVoiceVolume: Float,
     drivingZoom: Float,
     puckHorizontalOffset: Float,
     puckVerticalOffset: Float,
@@ -40,6 +47,8 @@ fun MapSettingsPanelContent(
     onToggleShow3dBuildings: () -> Unit,
     onToggleTraffic: () -> Unit,
     onToggleNavigationVoice: () -> Unit,
+    onNavigationVoiceVolumeChange: (Float) -> Unit,
+    onTestNavigationVoice: () -> Unit,
     onDrivingZoomChange: (Float) -> Unit,
     onPuckHorizontalOffsetChange: (Float) -> Unit,
     onPuckVerticalOffsetChange: (Float) -> Unit,
@@ -102,16 +111,6 @@ fun MapSettingsPanelContent(
             )
 
             SettingsSwitchRow(
-                label = "Traffic Overlay",
-                checked = showTraffic,
-                onCheckedChange = { checked ->
-                    if (checked != showTraffic) {
-                        onToggleTraffic()
-                    }
-                },
-            )
-
-            SettingsSwitchRow(
                 label = "Voice navigation",
                 checked = navigationVoiceEnabled,
                 onCheckedChange = { checked ->
@@ -119,6 +118,12 @@ fun MapSettingsPanelContent(
                         onToggleNavigationVoice()
                     }
                 },
+            )
+
+            NavigationVoiceVolumeSection(
+                volume = navigationVoiceVolume,
+                onVolumeChange = onNavigationVoiceVolumeChange,
+                onTestVoice = onTestNavigationVoice,
             )
 
             DrivingViewSettingsSection(
@@ -136,8 +141,61 @@ fun MapSettingsPanelContent(
                 viewModel = mapDataViewModel,
                 tomTomApiKey = tomTomApiKey,
                 onTomTomApiKeyChange = onTomTomApiKeyChange,
+                showTraffic = showTraffic,
+                onToggleTraffic = onToggleTraffic,
             )
         }
+    }
+}
+
+@Composable
+private fun NavigationVoiceVolumeSection(
+    volume: Float,
+    onVolumeChange: (Float) -> Unit,
+    onTestVoice: () -> Unit,
+) {
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(CarDimensions.PaneGap),
+        ) {
+            CarBodyText(
+                text = "Voice volume",
+                style = MaterialTheme.typography.bodyLarge,
+                modifier = Modifier.weight(1f),
+            )
+            IconButton(
+                onClick = onTestVoice,
+                modifier = Modifier.size(CarDimensions.PanelHeaderTapTarget),
+            ) {
+                Icon(
+                    imageVector = Icons.AutoMirrored.Filled.VolumeUp,
+                    contentDescription = "Test voice volume",
+                    modifier = Modifier.size(CarDimensions.PanelHeaderIconSize),
+                    tint = MaterialTheme.colorScheme.primary,
+                )
+            }
+        }
+        Slider(
+            value = volume.coerceIn(
+                LauncherPreferences.MIN_NAVIGATION_VOICE_VOLUME,
+                LauncherPreferences.MAX_NAVIGATION_VOICE_VOLUME,
+            ),
+            onValueChange = onVolumeChange,
+            valueRange = LauncherPreferences.MIN_NAVIGATION_VOICE_VOLUME..
+                LauncherPreferences.MAX_NAVIGATION_VOICE_VOLUME,
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(CarDimensions.MinTapTarget),
+        )
+        CarLabelText(
+            text = "${(volume * 100).roundToInt()}%",
+            style = MaterialTheme.typography.labelMedium,
+        )
     }
 }
 

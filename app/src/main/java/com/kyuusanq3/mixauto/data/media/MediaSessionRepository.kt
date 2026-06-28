@@ -15,7 +15,6 @@ import android.support.v4.media.session.PlaybackStateCompat
 import android.util.Log
 import com.kyuusanq3.mixauto.domain.media.MediaPlaybackState
 import com.kyuusanq3.mixauto.service.MixAutoNotificationListenerService
-import com.kyuusanq3.mixauto.ui.components.launchAppByPackage
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -96,8 +95,8 @@ class MediaSessionRepository(context: Context) {
         if (hasAttemptedBootLaunch) return
         if (_state.value.hasActiveSession) return
         hasAttemptedBootLaunch = true
-        Log.i(TAG, "Launching default audio app on boot: $defaultPackage")
-        launchAppByPackage(appContext, defaultPackage)
+        Log.i(TAG, "Waking default audio app on boot: $defaultPackage")
+        BackgroundAudioLauncher.wakeWithForegroundFallback(appContext, defaultPackage)
         for (delayMs in BOOT_REFRESH_DELAYS_MS) {
             scope.launch {
                 delay(delayMs)

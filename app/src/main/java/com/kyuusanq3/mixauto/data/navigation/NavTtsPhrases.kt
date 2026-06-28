@@ -1,8 +1,13 @@
 package com.kyuusanq3.mixauto.data.navigation
 
+import com.kyuusanq3.mixauto.data.map.TrafficFlowLevel
+import kotlin.math.ceil
+import kotlin.math.roundToInt
+
 object NavTtsPhrases {
 
     const val MIN_CONTINUE_SEGMENT_M = 150.0
+    private const val MIN_NAV_START_DELAY_SEC = 120
 
     fun buildFullInstruction(type: String, modifier: String, name: String): String {
         val action = maneuverAction(type, modifier, capitalize = true)
@@ -76,28 +81,50 @@ object NavTtsPhrases {
         }
     }
 
-    fun buildDistanceWarning(distanceMeters: Int, shortInstruction: String): String {
-        return "In ${formatDistance(distanceMeters.toDouble())}, $shortInstruction."
-    }
-
-    fun buildCountdownIntro(shortInstruction: String): String {
-        val phrase = shortInstruction.trim()
-        return if (phrase.endsWith(".")) {
-            "${phrase.dropLast(1)} in"
+    /** Street-first early cue — no distance numbers. */
+    fun buildAheadCue(shortInstruction: String, streetName: String, maneuverType: String): String {
+        val action = capitalizePhrase(shortInstruction.trim().trimEnd('.'))
+        val street = streetName.trim()
+        return if (street.isNotBlank() && maneuverType != "arrive") {
+            "Ahead, $action onto $street."
         } else {
-            "$phrase in"
-        }.replaceFirstChar { if (it.isLowerCase()) it.titlecase() else it.toString() }
+            "Ahead, $action."
+        }
     }
 
-    fun buildImmediate(shortInstruction: String): String {
-        val phrase = shortInstruction.trim().trimEnd('.')
-        return "${phrase.replaceFirstChar { if (it.isLowerCase()) it.titlecase() else it.toString() }} now."
+    fun buildPrepareCue(shortInstruction: String): String {
+        val action = shortInstruction.trim().trimEnd('.')
+        return "Prepare to $action."
+    }
+
+    fun buildTurnCue(shortInstruction: String): String {
+        return "${capitalizePhrase(shortInstruction.trim().trimEnd('.'))}."
+    }
+
+    fun buildNavStartTrafficOnRoute(level: TrafficFlowLevel, streetName: String): String? {
+        val street = streetName.trim()
+        if (street.isBlank()) return null
+        return when (level) {
+            TrafficFlowLevel.HEAVY -> "Heavy traffic ahead on $street."
+            TrafficFlowLevel.MODERATE -> "Traffic ahead on $street."
+            TrafficFlowLevel.LIGHT, TrafficFlowLevel.CLEAR -> null
+        }
+    }
+
+    fun buildNavStartTrafficDelay(delaySeconds: Int): String? {
+        if (delaySeconds < MIN_NAV_START_DELAY_SEC) return null
+        val minutes = ceil(delaySeconds / 60.0).roundToInt().coerceAtLeast(2)
+        val unit = if (minutes == 1) "minute" else "minutes"
+        return "Traffic may add about $minutes $unit to your trip."
     }
 
     fun formatDistance(meters: Double): String = when {
         meters >= 1000 -> "%.1f kilometers".format(meters / 1000.0)
         else -> "${meters.toInt()} meters"
     }
+
+    private fun capitalizePhrase(phrase: String): String =
+        phrase.replaceFirstChar { if (it.isLowerCase()) it.titlecase() else it.toString() }
 
     private fun maneuverAction(type: String, modifier: String, capitalize: Boolean): String {
         val action = when (type) {

@@ -55,6 +55,7 @@ import com.kyuusanq3.mixauto.data.apps.LaunchableAppEntry
 import com.kyuusanq3.mixauto.domain.map.CarMapEngine
 import com.kyuusanq3.mixauto.domain.map.SearchResultPlace
 import com.kyuusanq3.mixauto.domain.media.MediaPlaybackState
+import com.kyuusanq3.mixauto.ui.components.AppUpdatePrompts
 import com.kyuusanq3.mixauto.ui.components.CarMapViewContainer
 import com.kyuusanq3.mixauto.ui.components.DashboardStatusBar
 import com.kyuusanq3.mixauto.ui.components.carScrollbar
@@ -150,6 +151,7 @@ fun DashboardScreen(
     show3dBuildings: Boolean,
     showTraffic: Boolean,
     navigationVoiceEnabled: Boolean,
+    navigationVoiceVolume: Float,
     tomTomApiKey: String,
     isLauncherMode: Boolean,
     shortcutIconSize: DockShortcutIconSize,
@@ -171,6 +173,8 @@ fun DashboardScreen(
     onToggleShow3dBuildings: () -> Unit,
     onToggleTraffic: () -> Unit,
     onToggleNavigationVoice: () -> Unit,
+    onNavigationVoiceVolumeChange: (Float) -> Unit,
+    onTestNavigationVoice: () -> Unit,
     onTomTomApiKeyChange: (String) -> Unit,
     onToggleLauncherMode: () -> Unit,
     onShortcutIconSizeChange: (DockShortcutIconSize) -> Unit,
@@ -264,7 +268,6 @@ fun DashboardScreen(
         activePanel == ActivePanel.SEARCH || activePanel == ActivePanel.POI_DETAIL
     val isMapSettingsPanelOpen = activePanel == ActivePanel.MAP_DATA
     val onToggleSearch = {
-        musicPaneEnabled = true
         when (activePanel) {
             ActivePanel.SEARCH -> {
                 launcherViewModel.isDestinationSearchOpen = false
@@ -278,7 +281,6 @@ fun DashboardScreen(
         }
     }
     val onToggleMapSettings = {
-        musicPaneEnabled = true
         when (activePanel) {
             ActivePanel.MAP_DATA -> activePanel = dismissToBasePanel(musicPaneEnabled)
             ActivePanel.POI_DETAIL -> mapEngine.dismissSelectedPoi()
@@ -286,7 +288,6 @@ fun DashboardScreen(
         }
     }
     val onVoiceSearch = {
-        musicPaneEnabled = true
         if (activePanel == ActivePanel.POI_DETAIL) {
             mapEngine.dismissSelectedPoi()
         }
@@ -301,13 +302,14 @@ fun DashboardScreen(
     val onPreviewSearchPlace: (SearchResultPlace) -> Unit = { place ->
         poiReturnToSearch = true
         mapEngine.focusOnPoi(place)
-        musicPaneEnabled = true
         launcherViewModel.isDestinationSearchOpen = false
         activePanel = ActivePanel.POI_DETAIL
     }
     val mapUiState by mapEngine.uiState.collectAsStateWithLifecycle()
     val appUpdateViewModel: AppUpdateViewModel = viewModel()
     val appUpdateState by appUpdateViewModel.uiState.collectAsStateWithLifecycle()
+    val showDownloadOffer by appUpdateViewModel.showDownloadOffer.collectAsStateWithLifecycle()
+    val showInstallOffer by appUpdateViewModel.showInstallOffer.collectAsStateWithLifecycle()
     val configuration = LocalConfiguration.current
     val context = LocalContext.current
     val voiceSearchAvailable = remember(context) {
@@ -346,7 +348,6 @@ fun DashboardScreen(
 
     LaunchedEffect(mapUiState.isRouteSelecting) {
         if (mapUiState.isRouteSelecting) {
-            musicPaneEnabled = true
             activePanel = ActivePanel.ROUTE_PICKER
         } else if (activePanel == ActivePanel.ROUTE_PICKER) {
             activePanel = dismissToBasePanel(musicPaneEnabled)
@@ -355,7 +356,6 @@ fun DashboardScreen(
 
     LaunchedEffect(mapUiState.selectedPoi) {
         if (mapUiState.selectedPoi != null) {
-            musicPaneEnabled = true
             activePanel = ActivePanel.POI_DETAIL
         } else if (activePanel == ActivePanel.POI_DETAIL) {
             if (poiReturnToSearch) {
@@ -460,6 +460,7 @@ fun DashboardScreen(
                                     show3dBuildings = show3dBuildings,
                                     showTraffic = showTraffic,
                                     navigationVoiceEnabled = navigationVoiceEnabled,
+                                    navigationVoiceVolume = navigationVoiceVolume,
                                     tomTomApiKey = tomTomApiKey,
                                     isLauncherMode = isLauncherMode,
                                     shortcutIconSize = shortcutIconSize,
@@ -473,6 +474,8 @@ fun DashboardScreen(
                                     onToggleShow3dBuildings = onToggleShow3dBuildings,
                                     onToggleTraffic = onToggleTraffic,
                                     onToggleNavigationVoice = onToggleNavigationVoice,
+                                    onNavigationVoiceVolumeChange = onNavigationVoiceVolumeChange,
+                                    onTestNavigationVoice = onTestNavigationVoice,
                                     onTomTomApiKeyChange = onTomTomApiKeyChange,
                                     onToggleLauncherMode = onToggleLauncherMode,
                                     onShortcutIconSizeChange = onShortcutIconSizeChange,
@@ -592,6 +595,7 @@ fun DashboardScreen(
                                     show3dBuildings = show3dBuildings,
                                     showTraffic = showTraffic,
                                     navigationVoiceEnabled = navigationVoiceEnabled,
+                                    navigationVoiceVolume = navigationVoiceVolume,
                                     tomTomApiKey = tomTomApiKey,
                                     isLauncherMode = isLauncherMode,
                                     shortcutIconSize = shortcutIconSize,
@@ -605,6 +609,8 @@ fun DashboardScreen(
                                     onToggleShow3dBuildings = onToggleShow3dBuildings,
                                     onToggleTraffic = onToggleTraffic,
                                     onToggleNavigationVoice = onToggleNavigationVoice,
+                                    onNavigationVoiceVolumeChange = onNavigationVoiceVolumeChange,
+                                    onTestNavigationVoice = onTestNavigationVoice,
                                     onTomTomApiKeyChange = onTomTomApiKeyChange,
                                     onToggleLauncherMode = onToggleLauncherMode,
                                     onShortcutIconSizeChange = onShortcutIconSizeChange,
@@ -658,6 +664,7 @@ fun DashboardScreen(
                                     show3dBuildings = show3dBuildings,
                                     showTraffic = showTraffic,
                                     navigationVoiceEnabled = navigationVoiceEnabled,
+                                    navigationVoiceVolume = navigationVoiceVolume,
                                     tomTomApiKey = tomTomApiKey,
                                     isLauncherMode = isLauncherMode,
                                     shortcutIconSize = shortcutIconSize,
@@ -671,6 +678,8 @@ fun DashboardScreen(
                                     onToggleShow3dBuildings = onToggleShow3dBuildings,
                                     onToggleTraffic = onToggleTraffic,
                                     onToggleNavigationVoice = onToggleNavigationVoice,
+                                    onNavigationVoiceVolumeChange = onNavigationVoiceVolumeChange,
+                                    onTestNavigationVoice = onTestNavigationVoice,
                                     onTomTomApiKeyChange = onTomTomApiKeyChange,
                                     onToggleLauncherMode = onToggleLauncherMode,
                                     onShortcutIconSizeChange = onShortcutIconSizeChange,
@@ -815,6 +824,7 @@ fun DashboardScreen(
                                         show3dBuildings = show3dBuildings,
                                         showTraffic = showTraffic,
                                         navigationVoiceEnabled = navigationVoiceEnabled,
+                                        navigationVoiceVolume = navigationVoiceVolume,
                                         tomTomApiKey = tomTomApiKey,
                                         isLauncherMode = isLauncherMode,
                                         shortcutIconSize = shortcutIconSize,
@@ -828,6 +838,8 @@ fun DashboardScreen(
                                         onToggleShow3dBuildings = onToggleShow3dBuildings,
                                         onToggleTraffic = onToggleTraffic,
                                         onToggleNavigationVoice = onToggleNavigationVoice,
+                                        onNavigationVoiceVolumeChange = onNavigationVoiceVolumeChange,
+                                        onTestNavigationVoice = onTestNavigationVoice,
                                         onTomTomApiKeyChange = onTomTomApiKeyChange,
                                         onToggleLauncherMode = onToggleLauncherMode,
                                         onShortcutIconSizeChange = onShortcutIconSizeChange,
@@ -961,6 +973,7 @@ fun DashboardScreen(
                                         show3dBuildings = show3dBuildings,
                                         showTraffic = showTraffic,
                                         navigationVoiceEnabled = navigationVoiceEnabled,
+                                        navigationVoiceVolume = navigationVoiceVolume,
                                         tomTomApiKey = tomTomApiKey,
                                         isLauncherMode = isLauncherMode,
                                         shortcutIconSize = shortcutIconSize,
@@ -974,6 +987,8 @@ fun DashboardScreen(
                                         onToggleShow3dBuildings = onToggleShow3dBuildings,
                                         onToggleTraffic = onToggleTraffic,
                                         onToggleNavigationVoice = onToggleNavigationVoice,
+                                        onNavigationVoiceVolumeChange = onNavigationVoiceVolumeChange,
+                                        onTestNavigationVoice = onTestNavigationVoice,
                                         onTomTomApiKeyChange = onTomTomApiKeyChange,
                                         onToggleLauncherMode = onToggleLauncherMode,
                                         onShortcutIconSizeChange = onShortcutIconSizeChange,
@@ -1013,6 +1028,16 @@ fun DashboardScreen(
                 }
             }
         }
+        AppUpdatePrompts(
+            uiState = appUpdateState,
+            showDownloadOffer = showDownloadOffer,
+            showInstallOffer = showInstallOffer,
+            onDownloadUpdate = appUpdateViewModel::downloadUpdate,
+            onDismissDownloadOffer = appUpdateViewModel::dismissDownloadOffer,
+            onInstallApk = onInstallApk,
+            onDismissInstallOffer = appUpdateViewModel::dismissInstallOffer,
+            modifier = Modifier.zIndex(3f),
+        )
         }
     }
 }
@@ -1047,6 +1072,7 @@ private fun DashboardSecondaryPane(
     show3dBuildings: Boolean,
     showTraffic: Boolean,
     navigationVoiceEnabled: Boolean,
+    navigationVoiceVolume: Float,
     tomTomApiKey: String,
     isLauncherMode: Boolean,
     shortcutIconSize: DockShortcutIconSize,
@@ -1060,6 +1086,8 @@ private fun DashboardSecondaryPane(
     onToggleShow3dBuildings: () -> Unit,
     onToggleTraffic: () -> Unit,
     onToggleNavigationVoice: () -> Unit,
+    onNavigationVoiceVolumeChange: (Float) -> Unit,
+    onTestNavigationVoice: () -> Unit,
     onTomTomApiKeyChange: (String) -> Unit,
     onToggleLauncherMode: () -> Unit,
     onShortcutIconSizeChange: (DockShortcutIconSize) -> Unit,
@@ -1108,6 +1136,7 @@ private fun DashboardSecondaryPane(
         show3dBuildings = show3dBuildings,
         showTraffic = showTraffic,
         navigationVoiceEnabled = navigationVoiceEnabled,
+        navigationVoiceVolume = navigationVoiceVolume,
         tomTomApiKey = tomTomApiKey,
         isLauncherMode = isLauncherMode,
         shortcutIconSize = shortcutIconSize,
@@ -1121,6 +1150,8 @@ private fun DashboardSecondaryPane(
         onToggleShow3dBuildings = onToggleShow3dBuildings,
         onToggleTraffic = onToggleTraffic,
         onToggleNavigationVoice = onToggleNavigationVoice,
+        onNavigationVoiceVolumeChange = onNavigationVoiceVolumeChange,
+        onTestNavigationVoice = onTestNavigationVoice,
         onTomTomApiKeyChange = onTomTomApiKeyChange,
         onToggleLauncherMode = onToggleLauncherMode,
                                         onShortcutIconSizeChange = onShortcutIconSizeChange,
@@ -1172,6 +1203,7 @@ private fun MediaOrSettingsPane(
     show3dBuildings: Boolean,
     showTraffic: Boolean,
     navigationVoiceEnabled: Boolean,
+    navigationVoiceVolume: Float,
     tomTomApiKey: String,
     isLauncherMode: Boolean,
     shortcutIconSize: DockShortcutIconSize,
@@ -1185,6 +1217,8 @@ private fun MediaOrSettingsPane(
     onToggleShow3dBuildings: () -> Unit,
     onToggleTraffic: () -> Unit,
     onToggleNavigationVoice: () -> Unit,
+    onNavigationVoiceVolumeChange: (Float) -> Unit,
+    onTestNavigationVoice: () -> Unit,
     onTomTomApiKeyChange: (String) -> Unit,
     onToggleLauncherMode: () -> Unit,
     onShortcutIconSizeChange: (DockShortcutIconSize) -> Unit,
@@ -1285,6 +1319,7 @@ private fun MediaOrSettingsPane(
                     show3dBuildings = show3dBuildings,
                     showTraffic = showTraffic,
                     navigationVoiceEnabled = navigationVoiceEnabled,
+                    navigationVoiceVolume = navigationVoiceVolume,
                     drivingZoom = drivingZoom,
                     puckHorizontalOffset = puckHorizontalOffset,
                     puckVerticalOffset = puckVerticalOffset,
@@ -1295,6 +1330,8 @@ private fun MediaOrSettingsPane(
                     onToggleShow3dBuildings = onToggleShow3dBuildings,
                     onToggleTraffic = onToggleTraffic,
                     onToggleNavigationVoice = onToggleNavigationVoice,
+                    onNavigationVoiceVolumeChange = onNavigationVoiceVolumeChange,
+                    onTestNavigationVoice = onTestNavigationVoice,
                     onDrivingZoomChange = onDrivingZoomChange,
                     onPuckHorizontalOffsetChange = onPuckHorizontalOffsetChange,
                     onPuckVerticalOffsetChange = onPuckVerticalOffsetChange,

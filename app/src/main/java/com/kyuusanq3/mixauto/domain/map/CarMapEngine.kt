@@ -49,6 +49,9 @@ interface CarMapEngine {
     /** Re-read system location and sync into search origin before querying. */
     fun refreshSearchOrigin()
 
+    /** True when an offline Overture places database is installed on device. */
+    fun hasOfflinePlacesDatabase(): Boolean
+
     fun setSavedPlaces(places: List<SearchResultPlace>)
 
     /** Compose/host resized the map pane — engine should re-apply preview camera if needed. */

@@ -40,6 +40,8 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import com.kyuusanq3.mixauto.domain.map.CarMapEngine
 import com.kyuusanq3.mixauto.domain.map.RouteProvider
 import com.kyuusanq3.mixauto.ui.theme.CarBodyText
@@ -59,7 +61,6 @@ fun CarMapViewContainer(
     modifier: Modifier = Modifier,
 ) {
     val lifecycleOwner = LocalLifecycleOwner.current
-    val mapUiState by engine.uiState.collectAsState()
 
     DisposableEffect(lifecycleOwner, engine) {
         val observer = LifecycleEventObserver { _, event ->
@@ -98,129 +99,27 @@ fun CarMapViewContainer(
             modifier = Modifier.fillMaxSize(),
         )
 
-        if (mapUiState.isNavigating) {
-            Column(
-                modifier = Modifier
-                    .align(Alignment.TopStart)
-                    .padding(CarDimensions.PaneGap)
-                    .background(OledBlack.copy(alpha = 0.72f))
-                    .padding(CarDimensions.PaneGap),
-            ) {
-                if (mapUiState.isRouteSelecting) {
-                    CarBodyText(
-                        text = "Choose a route",
-                        style = MaterialTheme.typography.bodyLarge,
-                    )
-                    val remainingSec = ((1f - mapUiState.routeOverviewProgress) * 10f).toInt().coerceAtLeast(0)
-                    CarLabelText(
-                        text = "Tap again on selected route to start · auto-start in ${remainingSec}s",
-                        modifier = Modifier.padding(top = CarDimensions.PaneGap / 2),
-                        style = MaterialTheme.typography.labelMedium,
-                    )
-                } else {
-                    CarBodyText(
-                        text = mapUiState.streetName,
-                        style = MaterialTheme.typography.bodyLarge,
-                    )
-                    mapUiState.turnInstruction?.let { instruction ->
-                        CarLabelText(
-                            text = instruction,
-                            modifier = Modifier.padding(top = CarDimensions.PaneGap / 2),
-                            style = MaterialTheme.typography.labelLarge,
-                        )
-                    }
-                    mapUiState.distanceToNextTurn?.let { distance ->
-                        CarLabelText(
-                            text = distance,
-                            modifier = Modifier.padding(top = CarDimensions.PaneGap / 4),
-                            style = MaterialTheme.typography.labelMedium,
-                        )
-                    }
-                }
-            }
-        }
+        NavHudOverlay(
+            engine = engine,
+            modifier = Modifier
+                .align(Alignment.TopStart)
+                .padding(CarDimensions.PaneGap),
+        )
 
-        Column(
+        DestinationSearchFab(
+            isOpen = isDestinationPanelOpen,
+            onClick = onToggleSearch,
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .padding(top = CarDimensions.PaneGap),
+        )
+
+        MapToolbarOverlay(
+            engine = engine,
             modifier = Modifier
                 .align(Alignment.TopEnd)
                 .padding(CarDimensions.PaneGap),
-            horizontalAlignment = Alignment.End,
-        ) {
-            IconButton(
-                onClick = onToggleSearch,
-                modifier = Modifier
-                    .size(CarDimensions.MinTapTarget)
-                    .background(
-                        if (isDestinationPanelOpen) {
-                            ElectricCyan
-                        } else {
-                            OledBlack.copy(alpha = 0.72f)
-                        },
-                        MaterialTheme.shapes.small,
-                    ),
-            ) {
-                Icon(
-                    imageVector = Icons.Filled.Search,
-                    contentDescription = if (isDestinationPanelOpen) {
-                        "Hide destination search"
-                    } else {
-                        "Show destination search"
-                    },
-                    tint = if (isDestinationPanelOpen) {
-                        OledBlack
-                    } else {
-                        MaterialTheme.colorScheme.primary
-                    },
-                )
-            }
-
-            if (mapUiState.isNavigating) {
-                Spacer(modifier = Modifier.height(CarDimensions.PaneGap))
-                IconButton(
-                    onClick = { engine.startFreeDrive() },
-                    modifier = Modifier
-                        .size(CarDimensions.MinTapTarget)
-                        .background(Color(0xBBCC2200), MaterialTheme.shapes.small),
-                ) {
-                    Icon(
-                        imageVector = Icons.Filled.Close,
-                        contentDescription = "End navigation",
-                        tint = Color.White,
-                    )
-                }
-            }
-
-            if (mapUiState.isCameraDetached && !mapUiState.isNavigating) {
-                if (!mapUiState.isInTopDownView) {
-                    Spacer(modifier = Modifier.height(CarDimensions.PaneGap))
-                    IconButton(
-                        onClick = { engine.enterTopDownView() },
-                        modifier = Modifier
-                            .size(CarDimensions.MinTapTarget)
-                            .background(OledBlack.copy(alpha = 0.72f), MaterialTheme.shapes.small),
-                    ) {
-                        Icon(
-                            imageVector = Icons.Filled.CropFree,
-                            contentDescription = "Top-down view",
-                            tint = MaterialTheme.colorScheme.primary,
-                        )
-                    }
-                }
-                Spacer(modifier = Modifier.height(CarDimensions.PaneGap))
-                IconButton(
-                    onClick = { engine.recenterCamera() },
-                    modifier = Modifier
-                        .size(CarDimensions.MinTapTarget)
-                        .background(OledBlack.copy(alpha = 0.72f), MaterialTheme.shapes.small),
-                ) {
-                    Icon(
-                        imageVector = Icons.Filled.GpsFixed,
-                        contentDescription = "Recenter map",
-                        tint = MaterialTheme.colorScheme.primary,
-                    )
-                }
-            }
-        }
+        )
 
         MapSettingsFab(
             isOpen = isMapSettingsPanelOpen,
@@ -233,37 +132,268 @@ fun CarMapViewContainer(
                 ),
         )
 
-        if (mapUiState.isRouteSelecting) {
-            RouteSelectionLegend(
-                routeProviders = mapUiState.routeOptions.map { it.provider }.distinct(),
-                modifier = Modifier
-                    .align(Alignment.BottomStart)
-                    .padding(
-                        start = CarDimensions.PaneGap,
-                        bottom = MapLibreAttributionReserveDp + CarDimensions.PanelHeaderTapTarget + CarDimensions.PaneGap,
-                    ),
-            )
-        }
+        RouteSelectionLegendOverlay(
+            engine = engine,
+            modifier = Modifier
+                .align(Alignment.BottomStart)
+                .padding(
+                    start = CarDimensions.PaneGap,
+                    bottom = MapLibreAttributionReserveDp + CarDimensions.PanelHeaderTapTarget + CarDimensions.PaneGap,
+                ),
+        )
 
-        if (mapUiState.isRouteSelecting || mapUiState.routeOverviewProgress > 0f) {
-            LinearProgressIndicator(
-                progress = { mapUiState.routeOverviewProgress },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .align(Alignment.BottomCenter)
-                    .height(6.dp),
-                color = ElectricCyan,
-                trackColor = OledBlack.copy(alpha = 0.5f),
-            )
-        }
+        RouteOverviewProgressOverlay(
+            engine = engine,
+            modifier = Modifier.align(Alignment.BottomCenter),
+        )
 
-        SpeedCircle(
-            speedKmh = mapUiState.currentSpeed,
+        SpeedCircleOverlay(
+            engine = engine,
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .padding(bottom = SpeedCircleBottomInset),
         )
     }
+}
+
+@Composable
+private fun NavHudOverlay(
+    engine: CarMapEngine,
+    modifier: Modifier = Modifier,
+) {
+    val isNavigating by engine.uiState
+        .map { it.isNavigating }
+        .distinctUntilChanged()
+        .collectAsState(initial = false)
+    if (!isNavigating) return
+
+    val streetName by engine.uiState
+        .map { it.streetName }
+        .distinctUntilChanged()
+        .collectAsState(initial = "")
+    val isRouteSelecting by engine.uiState
+        .map { it.isRouteSelecting }
+        .distinctUntilChanged()
+        .collectAsState(initial = false)
+    val routeOverviewProgress by engine.uiState
+        .map { it.routeOverviewProgress }
+        .distinctUntilChanged()
+        .collectAsState(initial = 0f)
+    val turnInstruction by engine.uiState
+        .map { it.turnInstruction }
+        .distinctUntilChanged()
+        .collectAsState(initial = null)
+    val distanceToNextTurn by engine.uiState
+        .map { it.distanceToNextTurn }
+        .distinctUntilChanged()
+        .collectAsState(initial = null)
+
+    Column(
+        modifier = modifier
+            .background(OledBlack.copy(alpha = 0.72f))
+            .padding(CarDimensions.PaneGap),
+    ) {
+        if (isRouteSelecting) {
+            CarBodyText(
+                text = "Choose a route",
+                style = MaterialTheme.typography.bodyLarge,
+            )
+            val remainingSec = ((1f - routeOverviewProgress) * 10f).toInt().coerceAtLeast(0)
+            CarLabelText(
+                text = "Tap again on selected route to start · auto-start in ${remainingSec}s",
+                modifier = Modifier.padding(top = CarDimensions.PaneGap / 2),
+                style = MaterialTheme.typography.labelMedium,
+            )
+        } else {
+            CarBodyText(
+                text = streetName,
+                style = MaterialTheme.typography.bodyLarge,
+            )
+            turnInstruction?.let { instruction ->
+                CarLabelText(
+                    text = instruction,
+                    modifier = Modifier.padding(top = CarDimensions.PaneGap / 2),
+                    style = MaterialTheme.typography.labelLarge,
+                )
+            }
+            distanceToNextTurn?.let { distance ->
+                CarLabelText(
+                    text = distance,
+                    modifier = Modifier.padding(top = CarDimensions.PaneGap / 4),
+                    style = MaterialTheme.typography.labelMedium,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun DestinationSearchFab(
+    isOpen: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    IconButton(
+        onClick = onClick,
+        modifier = modifier
+            .size(CarDimensions.PrimaryTapTarget)
+            .background(
+                if (isOpen) {
+                    ElectricCyan
+                } else {
+                    OledBlack.copy(alpha = 0.72f)
+                },
+                CircleShape,
+            ),
+    ) {
+        Icon(
+            imageVector = Icons.Filled.Search,
+            contentDescription = if (isOpen) {
+                "Hide destination search"
+            } else {
+                "Show destination search"
+            },
+            modifier = Modifier.size(40.dp),
+            tint = if (isOpen) {
+                OledBlack
+            } else {
+                MaterialTheme.colorScheme.primary
+            },
+        )
+    }
+}
+
+@Composable
+private fun MapToolbarOverlay(
+    engine: CarMapEngine,
+    modifier: Modifier = Modifier,
+) {
+    val isNavigating by engine.uiState
+        .map { it.isNavigating }
+        .distinctUntilChanged()
+        .collectAsState(initial = false)
+    val isCameraDetached by engine.uiState
+        .map { it.isCameraDetached }
+        .distinctUntilChanged()
+        .collectAsState(initial = false)
+    val isInTopDownView by engine.uiState
+        .map { it.isInTopDownView }
+        .distinctUntilChanged()
+        .collectAsState(initial = false)
+
+    Column(
+        modifier = modifier,
+        horizontalAlignment = Alignment.End,
+    ) {
+        if (isNavigating) {
+            Spacer(modifier = Modifier.height(CarDimensions.PaneGap))
+            IconButton(
+                onClick = { engine.startFreeDrive() },
+                modifier = Modifier
+                    .size(CarDimensions.MinTapTarget)
+                    .background(Color(0xBBCC2200), MaterialTheme.shapes.small),
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.Close,
+                    contentDescription = "End navigation",
+                    tint = Color.White,
+                )
+            }
+        }
+
+        if (isCameraDetached && !isNavigating) {
+            if (!isInTopDownView) {
+                Spacer(modifier = Modifier.height(CarDimensions.PaneGap))
+                IconButton(
+                    onClick = { engine.enterTopDownView() },
+                    modifier = Modifier
+                        .size(CarDimensions.MinTapTarget)
+                        .background(OledBlack.copy(alpha = 0.72f), MaterialTheme.shapes.small),
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.CropFree,
+                        contentDescription = "Top-down view",
+                        tint = MaterialTheme.colorScheme.primary,
+                    )
+                }
+            }
+            Spacer(modifier = Modifier.height(CarDimensions.PaneGap))
+            IconButton(
+                onClick = { engine.recenterCamera() },
+                modifier = Modifier
+                    .size(CarDimensions.MinTapTarget)
+                    .background(OledBlack.copy(alpha = 0.72f), MaterialTheme.shapes.small),
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.GpsFixed,
+                    contentDescription = "Recenter map",
+                    tint = MaterialTheme.colorScheme.primary,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun RouteSelectionLegendOverlay(
+    engine: CarMapEngine,
+    modifier: Modifier = Modifier,
+) {
+    val isRouteSelecting by engine.uiState
+        .map { it.isRouteSelecting }
+        .distinctUntilChanged()
+        .collectAsState(initial = false)
+    if (!isRouteSelecting) return
+
+    val routeProviders by engine.uiState
+        .map { state -> state.routeOptions.map { it.provider }.distinct() }
+        .distinctUntilChanged()
+        .collectAsState(initial = emptyList())
+
+    RouteSelectionLegend(
+        routeProviders = routeProviders,
+        modifier = modifier,
+    )
+}
+
+@Composable
+private fun RouteOverviewProgressOverlay(
+    engine: CarMapEngine,
+    modifier: Modifier = Modifier,
+) {
+    val isRouteSelecting by engine.uiState
+        .map { it.isRouteSelecting }
+        .distinctUntilChanged()
+        .collectAsState(initial = false)
+    val routeOverviewProgress by engine.uiState
+        .map { it.routeOverviewProgress }
+        .distinctUntilChanged()
+        .collectAsState(initial = 0f)
+    if (!isRouteSelecting && routeOverviewProgress <= 0f) return
+
+    LinearProgressIndicator(
+        progress = { routeOverviewProgress },
+        modifier = modifier
+            .fillMaxWidth()
+            .height(6.dp),
+        color = ElectricCyan,
+        trackColor = OledBlack.copy(alpha = 0.5f),
+    )
+}
+
+@Composable
+private fun SpeedCircleOverlay(
+    engine: CarMapEngine,
+    modifier: Modifier = Modifier,
+) {
+    val speedKmh by engine.uiState
+        .map { it.currentSpeed }
+        .distinctUntilChanged()
+        .collectAsState(initial = 0)
+    SpeedCircle(
+        speedKmh = speedKmh,
+        modifier = modifier,
+    )
 }
 
 private val MapLibreAttributionReserveDp = 40.dp
@@ -321,8 +451,8 @@ private fun SpeedCircle(
                 text = speedKmh.toString(),
                 style = MaterialTheme.typography.labelSmall.copy(
                     color = ElectricCyan,
-                    fontSize = 11.sp,
-                    lineHeight = 11.sp,
+                    fontSize = 17.sp,
+                    lineHeight = 17.sp,
                     textAlign = TextAlign.Center,
                 ),
                 maxLines = 1,
@@ -332,8 +462,8 @@ private fun SpeedCircle(
                 text = "km/h",
                 style = MaterialTheme.typography.labelSmall.copy(
                     color = ElectricCyan.copy(alpha = 0.75f),
-                    fontSize = 7.sp,
-                    lineHeight = 7.sp,
+                    fontSize = 10.sp,
+                    lineHeight = 10.sp,
                     textAlign = TextAlign.Center,
                 ),
                 maxLines = 1,
@@ -343,7 +473,7 @@ private fun SpeedCircle(
     }
 }
 
-private val SpeedCircleSize = 30.dp
+private val SpeedCircleSize = 54.dp
 private val SpeedCircleBottomInset = 4.dp
 
 private val RouteLegendFastestColor = Color(0xFF00CBD6)

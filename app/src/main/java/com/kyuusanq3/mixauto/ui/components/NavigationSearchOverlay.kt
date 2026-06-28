@@ -42,7 +42,6 @@ import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -127,8 +126,9 @@ fun NavigationSearchContent(
 ) {
     val context = LocalContext.current
     val launcherViewModel: LauncherViewModel = viewModel()
-    val uiState by engine.uiState.collectAsState()
     var query by remember { mutableStateOf("") }
+    var snapshotOrigin by remember { mutableStateOf<Pair<Double, Double>?>(null) }
+    var snapshotOriginReliable by remember { mutableStateOf(false) }
     var results by remember { mutableStateOf<List<SearchResultPlace>>(emptyList()) }
     var nearbyPois by remember { mutableStateOf<List<SearchResultPlace>>(emptyList()) }
     var isLoading by remember { mutableStateOf(false) }
@@ -188,11 +188,7 @@ fun NavigationSearchContent(
                 isListening = false
             }
 
-            override fun onPartialResults(partialResults: Bundle) {
-                partialResults.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
-                    ?.firstOrNull()
-                    ?.let { query = it }
-            }
+            override fun onPartialResults(partialResults: Bundle) = Unit
 
             override fun onEvent(eventType: Int, params: Bundle?) = Unit
         })
@@ -224,6 +220,8 @@ fun NavigationSearchContent(
 
     LaunchedEffect(Unit) {
         engine.refreshSearchOrigin()
+        snapshotOrigin = engine.resolveSearchOrigin()
+        snapshotOriginReliable = engine.hasReliableSearchOrigin()
         if (launcherViewModel.consumeStartVoiceOnSearchOpen()) {
             tryStartVoiceSearch.value()
         }
@@ -247,20 +245,14 @@ fun NavigationSearchContent(
     )
     val micPulseAlpha = if (isListening) pulsingAlpha else 1f
 
-    val searchOrigin = engine.resolveSearchOrigin()
-    val currentLat = searchOrigin.first
-    val currentLng = searchOrigin.second
-    val hasReliableOrigin = engine.hasReliableSearchOrigin()
+    val snapshotLat = snapshotOrigin?.first
+    val snapshotLng = snapshotOrigin?.second
 
     LaunchedEffect(
         query,
         savedFilterActive,
-        uiState.currentLat,
-        uiState.currentLng,
-        currentLat,
-        currentLng,
-        hasReliableOrigin,
         limitSearchDistance,
+        snapshotOrigin,
     ) {
         if (savedFilterActive || query.length < 2) {
             results = emptyList()
@@ -269,6 +261,7 @@ fun NavigationSearchContent(
             isLoadingRemote = false
             return@LaunchedEffect
         }
+        val origin = snapshotOrigin ?: return@LaunchedEffect
         delay(300)
         results = emptyList()
         isLoading = true
@@ -277,8 +270,8 @@ fun NavigationSearchContent(
         try {
             results = engine.searchDestination(
                 query = query,
-                currentLat = currentLat,
-                currentLng = currentLng,
+                currentLat = origin.first,
+                currentLng = origin.second,
                 limitDistance = limitSearchDistance,
                 onLocalResults = { local ->
                     results = local
@@ -292,12 +285,9 @@ fun NavigationSearchContent(
     }
 
     LaunchedEffect(
+        snapshotOrigin,
         query,
         savedFilterActive,
-        uiState.currentLat,
-        uiState.currentLng,
-        currentLat,
-        currentLng,
         recentDestinations,
         savedPlaces,
     ) {
@@ -305,24 +295,41 @@ fun NavigationSearchContent(
             nearbyPois = emptyList()
             return@LaunchedEffect
         }
+        val origin = snapshotOrigin ?: return@LaunchedEffect
         nearbyPois = withContext(Dispatchers.IO) {
-            engine.getNearbyPois(currentLat, currentLng, LauncherPreferences.MAX_RECENT_DESTINATIONS)
+            engine.getNearbyPois(
+                origin.first,
+                origin.second,
+                LauncherPreferences.MAX_RECENT_DESTINATIONS,
+            )
         }.filterNot { nearby ->
-                recentDestinations.any { recent -> isWithinDedupThreshold(recent, nearby) } ||
-                    savedPlaces.any { saved -> isWithinDedupThreshold(saved, nearby) }
-            }
+            recentDestinations.any { recent -> isWithinDedupThreshold(recent, nearby) } ||
+                savedPlaces.any { saved -> isWithinDedupThreshold(saved, nearby) }
+        }
     }
 
-    val displayedRecents = remember(recentDestinations, currentLat, currentLng) {
-        recentDestinations.map { it.withDistanceFrom(currentLat, currentLng) }
+    val displayedRecents = remember(recentDestinations, snapshotLat, snapshotLng) {
+        if (snapshotLat == null || snapshotLng == null) {
+            recentDestinations
+        } else {
+            recentDestinations.map { it.withDistanceFrom(snapshotLat, snapshotLng) }
+        }
     }
 
-    val displayedSaved = remember(savedPlaces, currentLat, currentLng) {
-        savedPlaces.map { it.withDistanceFrom(currentLat, currentLng) }
+    val displayedSaved = remember(savedPlaces, snapshotLat, snapshotLng) {
+        if (snapshotLat == null || snapshotLng == null) {
+            savedPlaces
+        } else {
+            savedPlaces.map { it.withDistanceFrom(snapshotLat, snapshotLng) }
+        }
     }
 
-    val displayedNearby = remember(nearbyPois, currentLat, currentLng) {
-        nearbyPois.map { it.withDistanceFrom(currentLat, currentLng) }
+    val displayedNearby = remember(nearbyPois, snapshotLat, snapshotLng) {
+        if (snapshotLat == null || snapshotLng == null) {
+            nearbyPois
+        } else {
+            nearbyPois.map { it.withDistanceFrom(snapshotLat, snapshotLng) }
+        }
     }
 
     val displayedSuggestionsNearby = remember(displayedNearby, displayedRecents) {
@@ -492,10 +499,13 @@ fun NavigationSearchContent(
 
                         if (suggestionsEmpty) {
                             CarBodyText(
-                                text = if (hasReliableOrigin) {
-                                    "No recent destinations — pan the map to load nearby POIs"
-                                } else {
-                                    "Waiting for GPS — nearby suggestions appear once location is available"
+                                text = when {
+                                    !snapshotOriginReliable ->
+                                        "Waiting for GPS — nearby suggestions appear once location is available"
+                                    engine.hasOfflinePlacesDatabase() ->
+                                        "No recent destinations — no nearby places found"
+                                    else ->
+                                        "No recent destinations — install Map Data for nearby suggestions"
                                 },
                                 style = MaterialTheme.typography.bodyLarge,
                             )
@@ -566,7 +576,7 @@ fun NavigationSearchContent(
                     }
                     hasSearched && !isLoading && !isLoadingRemote && results.isEmpty() -> {
                         CarBodyText(
-                            text = if (hasReliableOrigin) {
+                            text = if (snapshotOriginReliable) {
                                 "No results found"
                             } else {
                                 "Waiting for GPS — try again in a moment"

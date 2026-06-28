@@ -5,6 +5,7 @@ import android.media.AudioAttributes
 import android.media.AudioFocusRequest
 import android.media.AudioManager
 import android.os.Build
+import android.os.Bundle
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
 import android.util.Log
@@ -29,16 +30,20 @@ class NavigationVoiceController(context: Context) {
 
     var enabled: Boolean = true
 
+    /** Utterance volume scale (0.5–1.0); applied via [TextToSpeech.Engine.KEY_PARAM_VOLUME]. */
+    var volume: Float = DEFAULT_VOLUME
+        set(value) {
+            field = value.coerceIn(MIN_VOLUME, MAX_VOLUME)
+        }
+
     private var navStartSpoken = false
     private var trackedStepIndex = -1
-    private var announced800 = false
-    private var announced500 = false
-    private var announced200 = false
+    private var aheadSpoken = false
+    private var prepareSpoken = false
+    private var turnSpoken = false
     private var lastDistToManeuverM: Float? = null
+    private var lastTimeToTurnSec: Float? = null
     private var continueAnnounced = false
-    private var countdownIntroSpoken = false
-    private var lastCountdownSecond: Int? = null
-    private var immediateSpoken = false
 
     init {
         tts = TextToSpeech(appContext) { status ->
@@ -73,13 +78,16 @@ class NavigationVoiceController(context: Context) {
         }
     }
 
-    fun onNavigationDrivingStarted(firstStep: NavStepPhrase) {
+    fun onNavigationDrivingStarted(firstStep: NavStepPhrase, trafficPhrase: String? = null) {
         if (!enabled || !ttsReady) return
         if (navStartSpoken) return
         navStartSpoken = true
         trackedStepIndex = 0
         resetManeuverFlags()
         speak("Starting navigation.", flush = true)
+        trafficPhrase?.takeIf { it.isNotBlank() }?.let { phrase ->
+            speak(phrase, flush = false)
+        }
         NavTtsPhrases.buildContinuePhrase(firstStep)?.let { phrase ->
             speak(phrase, flush = false)
             continueAnnounced = true
@@ -100,37 +108,52 @@ class NavigationVoiceController(context: Context) {
         if (nextIdx >= context.steps.size) return
 
         val upcoming = context.steps[nextIdx]
+        if (upcoming.maneuverType == "arrive") {
+            lastDistToManeuverM = context.distToNextManeuverM
+            lastTimeToTurnSec = timeToTurnSec(context.distToNextManeuverM, context.speedMps)
+            return
+        }
+
         val distM = context.distToNextManeuverM
+        val timeToTurn = timeToTurnSec(distM, context.speedMps)
+        val lastDist = lastDistToManeuverM
+        val lastTime = lastTimeToTurnSec
 
-        maybeAnnounceDistanceWarning(distM, upcoming.shortInstruction)
+        val phase = selectManeuverPhaseToAnnounce(
+            distM = distM,
+            timeToTurnSec = timeToTurn,
+            lastDistM = lastDist,
+            lastTimeToTurnSec = lastTime,
+        )
 
-        if (distM <= IMMEDIATE_DISTANCE_M && !immediateSpoken) {
-            immediateSpoken = true
-            speak(NavTtsPhrases.buildImmediate(upcoming.shortInstruction), flush = true)
+        when (phase) {
+            ManeuverPhase.TURN -> {
+                turnSpoken = true
+                prepareSpoken = true
+                aheadSpoken = true
+                speak(NavTtsPhrases.buildTurnCue(upcoming.shortInstruction), flush = false)
+            }
+            ManeuverPhase.PREPARE -> {
+                prepareSpoken = true
+                markAheadSkipped(timeToTurn)
+                speak(NavTtsPhrases.buildPrepareCue(upcoming.shortInstruction), flush = false)
+            }
+            ManeuverPhase.AHEAD -> {
+                aheadSpoken = true
+                speak(
+                    NavTtsPhrases.buildAheadCue(
+                        upcoming.shortInstruction,
+                        upcoming.streetName,
+                        upcoming.maneuverType,
+                    ),
+                    flush = false,
+                )
+            }
+            null -> Unit
         }
 
-        val speedMps = context.speedMps
-        val speedKmh = speedMps * 3.6f
-        if (speedMps < MIN_COUNTDOWN_SPEED_MPS || speedKmh >= COUNTDOWN_MAX_SPEED_KMH) {
-            return
-        }
-
-        val effectiveSpeed = maxOf(speedMps, MIN_COUNTDOWN_SPEED_MPS)
-        val timeToTurnSec = distM / effectiveSpeed
-        if (timeToTurnSec > COUNTDOWN_ENTRY_SEC || distM <= COUNTDOWN_MIN_DISTANCE_M) {
-            return
-        }
-
-        if (!countdownIntroSpoken) {
-            countdownIntroSpoken = true
-            speak(NavTtsPhrases.buildCountdownIntro(upcoming.shortInstruction), flush = true)
-        }
-
-        val secondsLeft = timeToTurnSec.toInt().coerceIn(1, COUNTDOWN_SECONDS)
-        if (secondsLeft <= COUNTDOWN_SECONDS && lastCountdownSecond != secondsLeft) {
-            lastCountdownSecond = secondsLeft
-            speak(secondsLeft.toString(), flush = false)
-        }
+        lastDistToManeuverM = distM
+        lastTimeToTurnSec = timeToTurn
     }
 
     fun onStepAdvanced(stepIndex: Int, newStep: NavStepPhrase) {
@@ -159,18 +182,17 @@ class NavigationVoiceController(context: Context) {
         speak("You have arrived at your destination.", flush = true)
     }
 
+    /** Preview phrase for map settings; ignores [enabled] so volume can be tested while voice nav is off. */
+    fun speakPreview(text: String) {
+        if (!ttsReady || text.isBlank()) return
+        speak(text, flush = true, force = true)
+    }
+
     fun onNavigationEnded() {
         stopSpeaking()
         navStartSpoken = false
         trackedStepIndex = -1
-        announced800 = false
-        announced500 = false
-        announced200 = false
-        lastDistToManeuverM = null
-        continueAnnounced = false
-        countdownIntroSpoken = false
-        lastCountdownSecond = null
-        immediateSpoken = false
+        resetManeuverFlags()
     }
 
     fun shutdown() {
@@ -181,91 +203,92 @@ class NavigationVoiceController(context: Context) {
         ttsReady = false
     }
 
-    private fun maybeAnnounceDistanceWarning(distM: Float, shortInstruction: String) {
-        if (distM <= IMMEDIATE_DISTANCE_M) {
-            lastDistToManeuverM = distM
-            return
-        }
-        val tierToSpeak = selectDistanceTierToAnnounce(distM) ?: run {
-            lastDistToManeuverM = distM
-            return
-        }
-        markDistanceTierAnnounced(tierToSpeak, distM)
-        speak(
-            NavTtsPhrases.buildDistanceWarning(tierToSpeak, shortInstruction),
-            flush = false,
-        )
-        lastDistToManeuverM = distM
+    private enum class ManeuverPhase {
+        AHEAD,
+        PREPARE,
+        TURN,
     }
+
+    private fun timeToTurnSec(distM: Float, speedMps: Float): Float {
+        val effectiveSpeed = maxOf(speedMps, MIN_SPEED_MPS)
+        return distM / effectiveSpeed
+    }
+
+    private fun isTurnDue(distM: Float, timeToTurnSec: Float): Boolean =
+        distM <= TURN_DISTANCE_M || timeToTurnSec <= TURN_TIME_SEC
+
+    private fun isPrepareDue(distM: Float, timeToTurnSec: Float): Boolean =
+        distM <= PREPARE_DISTANCE_M || timeToTurnSec <= PREPARE_TIME_SEC
+
+    private fun isAheadDue(timeToTurnSec: Float): Boolean =
+        timeToTurnSec <= EARLY_WARNING_SEC
 
     /**
-     * At most one distance cue per GPS tick. Uses threshold crossing when [lastDistToManeuverM]
-     * is known; on first sample or after a GPS jump, speaks only the most urgent applicable tier
-     * and marks skipped outer tiers so they are not read back-to-back.
+     * At most one maneuver cue per GPS tick. Uses threshold crossing when prior sample exists;
+     * on first sample or GPS jump, speaks only the most urgent applicable phase (turn > prepare > ahead).
      */
-    private fun selectDistanceTierToAnnounce(distM: Float): Int? {
-        val lastDist = lastDistToManeuverM
-
-        if (lastDist != null) {
-            DISTANCE_WARNING_TIERS.firstOrNull { tier ->
-                lastDist > tier && distM <= tier && !isDistanceTierAnnounced(tier)
-            }?.let { return it }
+    private fun selectManeuverPhaseToAnnounce(
+        distM: Float,
+        timeToTurnSec: Float,
+        lastDistM: Float?,
+        lastTimeToTurnSec: Float?,
+    ): ManeuverPhase? {
+        if (lastDistM != null && lastTimeToTurnSec != null) {
+            if (
+                !turnSpoken &&
+                (lastDistM > TURN_DISTANCE_M && distM <= TURN_DISTANCE_M ||
+                    lastTimeToTurnSec > TURN_TIME_SEC && timeToTurnSec <= TURN_TIME_SEC)
+            ) {
+                return ManeuverPhase.TURN
+            }
+            if (
+                !prepareSpoken &&
+                (lastDistM > PREPARE_DISTANCE_M && distM <= PREPARE_DISTANCE_M ||
+                    lastTimeToTurnSec > PREPARE_TIME_SEC && timeToTurnSec <= PREPARE_TIME_SEC)
+            ) {
+                return ManeuverPhase.PREPARE
+            }
+            if (
+                !aheadSpoken &&
+                lastTimeToTurnSec > EARLY_WARNING_SEC &&
+                timeToTurnSec <= EARLY_WARNING_SEC
+            ) {
+                return ManeuverPhase.AHEAD
+            }
+            return null
         }
 
-        val stillRelevant = DISTANCE_WARNING_TIERS.filter { tier ->
-            distM <= tier &&
-                !isDistanceTierAnnounced(tier) &&
-                isDistanceTierStillRelevant(tier, distM)
-        }
-        if (stillRelevant.isEmpty()) return null
-
-        return stillRelevant.minOrNull()
+        if (isTurnDue(distM, timeToTurnSec) && !turnSpoken) return ManeuverPhase.TURN
+        if (isPrepareDue(distM, timeToTurnSec) && !prepareSpoken) return ManeuverPhase.PREPARE
+        if (isAheadDue(timeToTurnSec) && !aheadSpoken) return ManeuverPhase.AHEAD
+        return null
     }
 
-    /** Do not catch up a far tier when already deep inside it (e.g. skip 800 m at 400 m out). */
-    private fun isDistanceTierStillRelevant(tierM: Int, distM: Float): Boolean {
-        return distM > tierM * DISTANCE_TIER_RELEVANCE_FRACTION
-    }
-
-    private fun markDistanceTierAnnounced(spokenTier: Int, distM: Float) {
-        DISTANCE_WARNING_TIERS
-            .filter { tier -> distM <= tier && tier >= spokenTier }
-            .forEach { setDistanceTierAnnounced(it, true) }
-    }
-
-    private fun isDistanceTierAnnounced(tierM: Int): Boolean = when (tierM) {
-        800 -> announced800
-        500 -> announced500
-        200 -> announced200
-        else -> false
-    }
-
-    private fun setDistanceTierAnnounced(tierM: Int, announced: Boolean) {
-        when (tierM) {
-            800 -> announced800 = announced
-            500 -> announced500 = announced
-            200 -> announced200 = announced
+    private fun markAheadSkipped(timeToTurnSec: Float) {
+        if (timeToTurnSec <= EARLY_WARNING_SEC) {
+            aheadSpoken = true
         }
     }
 
     private fun resetManeuverFlags() {
-        announced800 = false
-        announced500 = false
-        announced200 = false
+        aheadSpoken = false
+        prepareSpoken = false
+        turnSpoken = false
         lastDistToManeuverM = null
+        lastTimeToTurnSec = null
         continueAnnounced = false
-        countdownIntroSpoken = false
-        lastCountdownSecond = null
-        immediateSpoken = false
     }
 
-    private fun speak(text: String, flush: Boolean) {
-        if (!enabled || !ttsReady || text.isBlank()) return
+    private fun speak(text: String, flush: Boolean, force: Boolean = false) {
+        if ((!enabled && !force) || !ttsReady || text.isBlank()) return
         requestAudioFocus()
         val utteranceId = "nav-${utteranceCounter.incrementAndGet()}"
         activeFocusUtteranceId = utteranceId
         val queueMode = if (flush) TextToSpeech.QUEUE_FLUSH else TextToSpeech.QUEUE_ADD
-        tts?.speak(text, queueMode, null, utteranceId)
+        val params = Bundle().apply {
+            putFloat(TextToSpeech.Engine.KEY_PARAM_VOLUME, volume)
+        }
+        tts?.speak(text, queueMode, params, utteranceId)
     }
 
     private fun stopSpeaking() {
@@ -278,7 +301,7 @@ class NavigationVoiceController(context: Context) {
         val manager = audioManager ?: return
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             if (audioFocusRequest == null) {
-                audioFocusRequest = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK)
+                audioFocusRequest = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT)
                     .setAudioAttributes(audioAttributes)
                     .build()
             }
@@ -288,7 +311,7 @@ class NavigationVoiceController(context: Context) {
             manager.requestAudioFocus(
                 null,
                 AudioManager.STREAM_MUSIC,
-                AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK,
+                AudioManager.AUDIOFOCUS_GAIN_TRANSIENT,
             )
         }
     }
@@ -305,14 +328,14 @@ class NavigationVoiceController(context: Context) {
 
     companion object {
         private const val TAG = "NavigationVoiceController"
-        private const val IMMEDIATE_DISTANCE_M = 50f
-        private const val COUNTDOWN_SECONDS = 5
-        private const val COUNTDOWN_ENTRY_SEC = 5.5f
-        private const val COUNTDOWN_MIN_DISTANCE_M = 30f
-        private const val COUNTDOWN_MAX_SPEED_KMH = 70f
-        private const val MIN_COUNTDOWN_SPEED_MPS = 1.4f
-        private val DISTANCE_WARNING_TIERS = listOf(800, 500, 200)
-        /** Below this fraction of a tier, a missed outer warning is skipped on catch-up. */
-        private const val DISTANCE_TIER_RELEVANCE_FRACTION = 0.6f
+        private const val EARLY_WARNING_SEC = 35f
+        private const val PREPARE_TIME_SEC = 12f
+        private const val PREPARE_DISTANCE_M = 200f
+        private const val TURN_TIME_SEC = 3f
+        private const val TURN_DISTANCE_M = 40f
+        private const val MIN_SPEED_MPS = 1.4f
+        const val MIN_VOLUME = 0.5f
+        const val MAX_VOLUME = 1.0f
+        const val DEFAULT_VOLUME = 1.0f
     }
 }
