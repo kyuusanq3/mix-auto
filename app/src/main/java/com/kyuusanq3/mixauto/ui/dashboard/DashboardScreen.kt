@@ -31,7 +31,6 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Switch
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -41,7 +40,6 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.onSizeChanged
@@ -53,22 +51,27 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.kyuusanq3.mixauto.data.apps.LaunchableAppEntry
 import com.kyuusanq3.mixauto.domain.map.CarMapEngine
 import com.kyuusanq3.mixauto.domain.map.SearchResultPlace
 import com.kyuusanq3.mixauto.domain.media.MediaPlaybackState
+import com.kyuusanq3.mixauto.ui.components.AppUpdatePrompts
 import com.kyuusanq3.mixauto.ui.components.CarMapViewContainer
+import com.kyuusanq3.mixauto.ui.components.DashboardStatusBar
 import com.kyuusanq3.mixauto.ui.components.carScrollbar
-import com.kyuusanq3.mixauto.ui.components.MapDataPanelContent
+import com.kyuusanq3.mixauto.ui.components.MapSettingsPanelContent
 import com.kyuusanq3.mixauto.ui.components.NavigationSearchContent
-import com.kyuusanq3.mixauto.ui.components.OverlayCloseButton
+import com.kyuusanq3.mixauto.ui.components.PanelHeaderRow
 import com.kyuusanq3.mixauto.ui.components.PoiDetailPane
+import com.kyuusanq3.mixauto.ui.components.RoutePickerPane
+import com.kyuusanq3.mixauto.ui.components.SettingsSwitchRow
 import com.kyuusanq3.mixauto.ui.settings.AppUpdateState
 import com.kyuusanq3.mixauto.ui.settings.AppUpdateViewModel
+import com.kyuusanq3.mixauto.ui.settings.LauncherPreferences
 import com.kyuusanq3.mixauto.ui.settings.LauncherViewModel
 import com.kyuusanq3.mixauto.ui.settings.MapDataViewModel
 import com.kyuusanq3.mixauto.ui.theme.CarBodyText
 import com.kyuusanq3.mixauto.ui.theme.CarDimensions
-import com.kyuusanq3.mixauto.ui.theme.CarHeadlineText
 import com.kyuusanq3.mixauto.ui.theme.CarLabelText
 import com.kyuusanq3.mixauto.ui.theme.ElectricCyan
 import com.kyuusanq3.mixauto.ui.theme.OledBlack
@@ -95,14 +98,29 @@ private fun dismissToBasePanel(musicPaneEnabled: Boolean): ActivePanel =
 @Composable
 private fun BoxScope.SplitScreenAppDrawerSlot(
     visible: Boolean,
+    launchableApps: List<LaunchableAppEntry>,
+    audioPlayerPackages: Set<String>,
+    isAppDrawerLoading: Boolean,
+    dockPinnedPackages: List<String>,
+    onToggleDockPin: (String) -> Unit,
+    onSelectAudioSource: (String) -> Unit,
+    onOpenLauncherSettings: () -> Unit,
     onDismiss: () -> Unit,
 ) {
     if (!visible) return
     AppDrawerOverlay(
+        launchableApps = launchableApps,
+        audioPlayerPackages = audioPlayerPackages,
+        isLoading = isAppDrawerLoading,
+        dockPinnedPackages = dockPinnedPackages,
+        maxDockPinnedApps = LauncherPreferences.MAX_DOCK_PINNED_APPS,
+        onToggleDockPin = onToggleDockPin,
+        onSelectAudioSource = onSelectAudioSource,
+        onOpenLauncherSettings = onOpenLauncherSettings,
         onDismiss = onDismiss,
         modifier = Modifier
             .fillMaxSize()
-            .padding(CarDimensions.PaneGap),
+            .zIndex(1f),
     )
 }
 
@@ -113,10 +131,13 @@ fun DashboardScreen(
     mediaState: MediaPlaybackState,
     defaultAudioPackage: String,
     onSetDefaultAudioPackage: (String) -> Unit,
+    onSelectAudioSource: (String) -> Unit,
     onMediaPlayPause: () -> Unit,
     onMediaSkipPrevious: () -> Unit,
     onMediaSkipNext: () -> Unit,
     onMediaToggleLike: () -> Unit,
+    albumArtMode: AlbumArtMode,
+    onAlbumArtModeChange: (AlbumArtMode) -> Unit,
     isLeftHandDrive: Boolean,
     isShortcutsHorizontal: Boolean,
     mapMediaRatio: Float,
@@ -129,9 +150,17 @@ fun DashboardScreen(
     useVectorTiles: Boolean,
     show3dBuildings: Boolean,
     showTraffic: Boolean,
+    navigationVoiceEnabled: Boolean,
+    navigationVoiceVolume: Float,
     tomTomApiKey: String,
     isLauncherMode: Boolean,
-    isLargeShortcutIcons: Boolean,
+    shortcutIconSize: DockShortcutIconSize,
+    dockPinnedPackages: List<String>,
+    onToggleDockPin: (String) -> Unit,
+    launchableApps: List<LaunchableAppEntry>,
+    audioPlayerPackages: Set<String>,
+    isAppDrawerLoading: Boolean,
+    onEnsureLaunchableAppsLoaded: () -> Unit,
     drivingZoom: Float,
     puckHorizontalOffset: Float,
     puckVerticalOffset: Float,
@@ -143,98 +172,146 @@ fun DashboardScreen(
     onToggleVectorTiles: () -> Unit,
     onToggleShow3dBuildings: () -> Unit,
     onToggleTraffic: () -> Unit,
+    onToggleNavigationVoice: () -> Unit,
+    onNavigationVoiceVolumeChange: (Float) -> Unit,
+    onTestNavigationVoice: () -> Unit,
     onTomTomApiKeyChange: (String) -> Unit,
     onToggleLauncherMode: () -> Unit,
-    onToggleLargeShortcutIcons: () -> Unit,
+    onShortcutIconSizeChange: (DockShortcutIconSize) -> Unit,
     onDrivingZoomChange: (Float) -> Unit,
     onPuckHorizontalOffsetChange: (Float) -> Unit,
     onPuckVerticalOffsetChange: (Float) -> Unit,
     onPuckScaleChange: (Float) -> Unit,
+    showStatusStrip: Boolean,
+    showSystemStatusBar: Boolean,
+    onToggleShowStatusStrip: () -> Unit,
+    onToggleShowSystemStatusBar: () -> Unit,
     onInstallApk: (File) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    var activePanel by remember { mutableStateOf(ActivePanel.MEDIA) }
-    var musicPaneEnabled by remember { mutableStateOf(true) }
     val launcherViewModel: LauncherViewModel = viewModel()
+    val musicPaneEnabled = launcherViewModel.musicPaneEnabled
+    val activePanel = launcherViewModel.activePanel
+    val poiReturnToSearch = launcherViewModel.poiReturnToSearch
+    val onClearPoiReturnToSearch = launcherViewModel::clearPoiReturnToSearch
     val showSecondaryPane = activePanel != ActivePanel.HIDDEN
     val onTogglePanel: (ActivePanel) -> Unit = { target ->
         when (target) {
             ActivePanel.MEDIA -> when (activePanel) {
                 ActivePanel.MEDIA -> {
-                    musicPaneEnabled = false
-                    activePanel = ActivePanel.HIDDEN
+                    launcherViewModel.updateMusicPaneEnabled(false)
+                    launcherViewModel.setActivePanel(ActivePanel.HIDDEN)
                 }
                 ActivePanel.HIDDEN -> {
-                    musicPaneEnabled = true
-                    activePanel = ActivePanel.MEDIA
+                    launcherViewModel.updateMusicPaneEnabled(true)
+                    launcherViewModel.setActivePanel(ActivePanel.MEDIA)
                 }
                 else -> {
-                    musicPaneEnabled = true
-                    activePanel = ActivePanel.MEDIA
+                    launcherViewModel.updateMusicPaneEnabled(true)
+                    launcherViewModel.setActivePanel(ActivePanel.MEDIA)
                 }
             }
             ActivePanel.SETTINGS -> when (activePanel) {
-                ActivePanel.SETTINGS -> activePanel = dismissToBasePanel(musicPaneEnabled)
-                else -> activePanel = ActivePanel.SETTINGS
-            }
-            ActivePanel.MAP_DATA -> when (activePanel) {
-                ActivePanel.MAP_DATA -> activePanel = dismissToBasePanel(musicPaneEnabled)
-                else -> activePanel = ActivePanel.MAP_DATA
+                ActivePanel.SETTINGS -> launcherViewModel.setActivePanel(dismissToBasePanel(musicPaneEnabled))
+                else -> launcherViewModel.setActivePanel(ActivePanel.SETTINGS)
             }
             ActivePanel.APP_DRAWER -> when (activePanel) {
-                ActivePanel.APP_DRAWER -> activePanel = dismissToBasePanel(musicPaneEnabled)
-                else -> activePanel = ActivePanel.APP_DRAWER
+                ActivePanel.APP_DRAWER -> launcherViewModel.setActivePanel(dismissToBasePanel(musicPaneEnabled))
+                else -> launcherViewModel.setActivePanel(ActivePanel.APP_DRAWER)
             }
             ActivePanel.SEARCH,
             ActivePanel.POI_DETAIL,
+            ActivePanel.MAP_DATA,
+            ActivePanel.ROUTE_PICKER,
             -> Unit
             ActivePanel.HIDDEN -> {
-                musicPaneEnabled = true
-                activePanel = ActivePanel.MEDIA
+                launcherViewModel.updateMusicPaneEnabled(true)
+                launcherViewModel.setActivePanel(ActivePanel.MEDIA)
             }
         }
+    }
+    val handleSelectAudioSource: (String) -> Unit = { packageName ->
+        val isActiveSource = if (mediaState.hasActiveSession) {
+            mediaState.sourcePackage == packageName
+        } else {
+            defaultAudioPackage == packageName
+        }
+        if (isActiveSource) {
+            onTogglePanel(ActivePanel.MEDIA)
+        } else {
+            onSelectAudioSource(packageName)
+            launcherViewModel.updateMusicPaneEnabled(true)
+            launcherViewModel.setActivePanel(ActivePanel.MEDIA)
+        }
+    }
+    val openAudioSource: (String) -> Unit = { packageName ->
+        onSelectAudioSource(packageName)
+        launcherViewModel.updateMusicPaneEnabled(true)
+        launcherViewModel.setActivePanel(ActivePanel.MEDIA)
     }
     val onDismissPanel = {
         if (activePanel == ActivePanel.SEARCH) {
             launcherViewModel.isDestinationSearchOpen = false
+            launcherViewModel.clearDestinationSearchState()
         }
-        activePanel = dismissToBasePanel(musicPaneEnabled)
+        launcherViewModel.setActivePanel(dismissToBasePanel(musicPaneEnabled))
     }
-    val onDismissAppDrawer = { activePanel = dismissToBasePanel(musicPaneEnabled) }
+    val onDismissAppDrawer = { launcherViewModel.setActivePanel(dismissToBasePanel(musicPaneEnabled)) }
+    val onOpenLauncherSettingsFromDrawer = { launcherViewModel.setActivePanel(ActivePanel.SETTINGS) }
+
+    LaunchedEffect(activePanel) {
+        if (activePanel == ActivePanel.APP_DRAWER) {
+            onEnsureLaunchableAppsLoaded()
+        }
+    }
+
     val isDestinationPanelOpen =
         activePanel == ActivePanel.SEARCH || activePanel == ActivePanel.POI_DETAIL
+    val isMapSettingsPanelOpen = activePanel == ActivePanel.MAP_DATA
     val onToggleSearch = {
-        musicPaneEnabled = true
         when (activePanel) {
             ActivePanel.SEARCH -> {
                 launcherViewModel.isDestinationSearchOpen = false
-                activePanel = dismissToBasePanel(musicPaneEnabled)
+                launcherViewModel.clearDestinationSearchState()
+                launcherViewModel.setActivePanel(dismissToBasePanel(musicPaneEnabled))
             }
             ActivePanel.POI_DETAIL -> mapEngine.dismissSelectedPoi()
             else -> {
                 launcherViewModel.isDestinationSearchOpen = true
-                activePanel = ActivePanel.SEARCH
+                launcherViewModel.setActivePanel(ActivePanel.SEARCH)
             }
         }
     }
-    val onToggleVoiceSearch = {
-        musicPaneEnabled = true
+    val onToggleMapSettings = {
         when (activePanel) {
-            ActivePanel.SEARCH -> {
-                launcherViewModel.isDestinationSearchOpen = false
-                activePanel = dismissToBasePanel(musicPaneEnabled)
-            }
+            ActivePanel.MAP_DATA -> launcherViewModel.setActivePanel(dismissToBasePanel(musicPaneEnabled))
             ActivePanel.POI_DETAIL -> mapEngine.dismissSelectedPoi()
-            else -> {
-                launcherViewModel.setStartVoiceOnSearchOpen()
-                launcherViewModel.isDestinationSearchOpen = true
-                activePanel = ActivePanel.SEARCH
-            }
+            else -> launcherViewModel.setActivePanel(ActivePanel.MAP_DATA)
         }
+    }
+    val onVoiceSearch = {
+        if (activePanel == ActivePanel.POI_DETAIL) {
+            mapEngine.dismissSelectedPoi()
+        }
+        if (activePanel == ActivePanel.SEARCH) {
+            launcherViewModel.triggerVoiceSearch()
+        } else {
+            launcherViewModel.setStartVoiceOnSearchOpen()
+            launcherViewModel.isDestinationSearchOpen = true
+            launcherViewModel.setActivePanel(ActivePanel.SEARCH)
+        }
+    }
+    val onPreviewSearchPlace: (SearchResultPlace) -> Unit = { place ->
+        launcherViewModel.setPoiReturnToSearch(true)
+        mapEngine.focusOnPoi(place)
+        launcherViewModel.isDestinationSearchOpen = false
+        launcherViewModel.setActivePanel(ActivePanel.POI_DETAIL)
     }
     val mapUiState by mapEngine.uiState.collectAsStateWithLifecycle()
     val appUpdateViewModel: AppUpdateViewModel = viewModel()
     val appUpdateState by appUpdateViewModel.uiState.collectAsStateWithLifecycle()
+    val showDownloadOffer by appUpdateViewModel.showDownloadOffer.collectAsStateWithLifecycle()
+    val showInstallOffer by appUpdateViewModel.showInstallOffer.collectAsStateWithLifecycle()
     val configuration = LocalConfiguration.current
     val context = LocalContext.current
     val voiceSearchAvailable = remember(context) {
@@ -242,7 +319,10 @@ fun DashboardScreen(
     }
     val isPortrait = configuration.orientation == Configuration.ORIENTATION_PORTRAIT
     val isSplitLockedForOverlay =
-        activePanel == ActivePanel.SEARCH || activePanel == ActivePanel.POI_DETAIL
+        activePanel == ActivePanel.SEARCH ||
+            activePanel == ActivePanel.POI_DETAIL ||
+            activePanel == ActivePanel.MAP_DATA ||
+            activePanel == ActivePanel.ROUTE_PICKER
     val effectiveMapMediaRatio =
         if (isSplitLockedForOverlay) OVERLAY_MAP_MEDIA_RATIO else mapMediaRatio
     val effectiveMediaWeight = 1f - effectiveMapMediaRatio
@@ -260,23 +340,66 @@ fun DashboardScreen(
 
     LaunchedEffect(activePanel) {
         launcherViewModel.isDestinationSearchOpen = activePanel == ActivePanel.SEARCH
+        when (activePanel) {
+            ActivePanel.SEARCH,
+            ActivePanel.MAP_DATA,
+            -> mapEngine.setMapTapDismissHandler(onDismissPanel)
+            else -> mapEngine.setMapTapDismissHandler(null)
+        }
+    }
+
+    LaunchedEffect(mapUiState.isRouteSelecting) {
+        if (mapUiState.isRouteSelecting) {
+            launcherViewModel.setActivePanel(ActivePanel.ROUTE_PICKER)
+        } else if (activePanel == ActivePanel.ROUTE_PICKER) {
+            launcherViewModel.setActivePanel(dismissToBasePanel(musicPaneEnabled))
+        }
     }
 
     LaunchedEffect(mapUiState.selectedPoi) {
         if (mapUiState.selectedPoi != null) {
-            musicPaneEnabled = true
-            activePanel = ActivePanel.POI_DETAIL
+            launcherViewModel.setActivePanel(ActivePanel.POI_DETAIL)
         } else if (activePanel == ActivePanel.POI_DETAIL) {
-            activePanel = dismissToBasePanel(musicPaneEnabled)
+            if (poiReturnToSearch) {
+                launcherViewModel.clearPoiReturnToSearch()
+                launcherViewModel.setActivePanel(ActivePanel.SEARCH)
+            } else {
+                launcherViewModel.setActivePanel(dismissToBasePanel(musicPaneEnabled))
+            }
         }
     }
 
-    Box(
+    LaunchedEffect(activePanel, effectiveMapMediaRatio, mapUiState.selectedPoi) {
+        mapEngine.onMapHostLayoutChanged()
+    }
+
+    val reduceTopInsetBelowStatusStrip = showStatusStrip
+    val reduceMediaTopInsetBelowStatusStrip = showStatusStrip && !isPortrait
+
+    Column(
         modifier = modifier
             .fillMaxSize()
             .background(OledBlack)
-            .systemBarsPadding(),
+            .then(
+                if (showSystemStatusBar) {
+                    Modifier.systemBarsPadding()
+                } else {
+                    Modifier
+                },
+            ),
     ) {
+        if (showStatusStrip) {
+            DashboardStatusBar(
+                mapEngine = mapEngine,
+                showTraffic = showTraffic,
+                tomTomApiKey = tomTomApiKey,
+            )
+        }
+        Box(
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxWidth(),
+        ) {
         when {
             isPortrait -> {
                 Column(modifier = Modifier.fillMaxSize()) {
@@ -294,6 +417,9 @@ fun DashboardScreen(
                                 engine = mapEngine,
                                 onToggleSearch = onToggleSearch,
                                 isDestinationPanelOpen = isDestinationPanelOpen,
+                                onToggleMapSettings = onToggleMapSettings,
+                                isMapSettingsPanelOpen = isMapSettingsPanelOpen,
+                                reduceTopInset = reduceTopInsetBelowStatusStrip,
                                 modifier = Modifier
                                     .weight(if (showSecondaryPane) effectiveMapMediaRatio else 1f)
                                     .fillMaxWidth(),
@@ -312,12 +438,14 @@ fun DashboardScreen(
                                     mapEngine = mapEngine,
                                     mapDataViewModel = mapDataViewModel,
                                     onDismissPanel = onDismissPanel,
+                                    onPreviewSearchPlace = onPreviewSearchPlace,
                                     recentDestinations = recentDestinations,
                                     savedPlaces = savedPlaces,
                                     onDestinationSelected = onDestinationSelected,
                                     onToggleSavedPlace = onToggleSavedPlace,
                                     onUpdateSavedPlace = onUpdateSavedPlace,
                                     onDismissSelectedPoi = { mapEngine.dismissSelectedPoi() },
+                                    onClearPoiReturnToSearch = onClearPoiReturnToSearch,
                                     mediaState = mediaState,
                                     defaultAudioPackage = defaultAudioPackage,
                                     onSetDefaultAudioPackage = onSetDefaultAudioPackage,
@@ -325,15 +453,19 @@ fun DashboardScreen(
                                     onMediaSkipPrevious = onMediaSkipPrevious,
                                     onMediaSkipNext = onMediaSkipNext,
                                     onMediaToggleLike = onMediaToggleLike,
+                                    albumArtMode = albumArtMode,
+                                    onAlbumArtModeChange = onAlbumArtModeChange,
                                     isLeftHandDrive = isLeftHandDrive,
                                     isShortcutsHorizontal = isShortcutsHorizontal,
                                     limitSearchDistance = limitSearchDistance,
                                     useVectorTiles = useVectorTiles,
                                     show3dBuildings = show3dBuildings,
                                     showTraffic = showTraffic,
+                                    navigationVoiceEnabled = navigationVoiceEnabled,
+                                    navigationVoiceVolume = navigationVoiceVolume,
                                     tomTomApiKey = tomTomApiKey,
                                     isLauncherMode = isLauncherMode,
-                                    isLargeShortcutIcons = isLargeShortcutIcons,
+                                    shortcutIconSize = shortcutIconSize,
                                     drivingZoom = drivingZoom,
                                     puckHorizontalOffset = puckHorizontalOffset,
                                     puckVerticalOffset = puckVerticalOffset,
@@ -343,14 +475,22 @@ fun DashboardScreen(
                                     onToggleVectorTiles = onToggleVectorTiles,
                                     onToggleShow3dBuildings = onToggleShow3dBuildings,
                                     onToggleTraffic = onToggleTraffic,
+                                    onToggleNavigationVoice = onToggleNavigationVoice,
+                                    onNavigationVoiceVolumeChange = onNavigationVoiceVolumeChange,
+                                    onTestNavigationVoice = onTestNavigationVoice,
                                     onTomTomApiKeyChange = onTomTomApiKeyChange,
                                     onToggleLauncherMode = onToggleLauncherMode,
-                                    onToggleLargeShortcutIcons = onToggleLargeShortcutIcons,
+                                    onShortcutIconSizeChange = onShortcutIconSizeChange,
                                     onDrivingZoomChange = onDrivingZoomChange,
                                     onPuckHorizontalOffsetChange = onPuckHorizontalOffsetChange,
                                     onPuckVerticalOffsetChange = onPuckVerticalOffsetChange,
                                     puckScale = puckScale,
                                     onPuckScaleChange = onPuckScaleChange,
+                                    showStatusStrip = showStatusStrip,
+                                    showSystemStatusBar = showSystemStatusBar,
+                                    onToggleShowStatusStrip = onToggleShowStatusStrip,
+                                    onToggleShowSystemStatusBar = onToggleShowSystemStatusBar,
+                                    reduceTopInset = reduceMediaTopInsetBelowStatusStrip,
                                     appUpdateState = appUpdateState,
                                     onCheckForUpdate = appUpdateViewModel::checkForUpdate,
                                     onDownloadUpdate = appUpdateViewModel::downloadUpdate,
@@ -363,18 +503,29 @@ fun DashboardScreen(
                         }
                         SplitScreenAppDrawerSlot(
                             visible = activePanel == ActivePanel.APP_DRAWER,
+                            launchableApps = launchableApps,
+                            audioPlayerPackages = audioPlayerPackages,
+                            isAppDrawerLoading = isAppDrawerLoading,
+                            dockPinnedPackages = dockPinnedPackages,
+                            onToggleDockPin = onToggleDockPin,
+                            onSelectAudioSource = openAudioSource,
+                            onOpenLauncherSettings = onOpenLauncherSettingsFromDrawer,
                             onDismiss = onDismissAppDrawer,
                         )
                     }
                     ShortcutDock(
                         isHorizontal = true,
-                        isLargeIcons = isLargeShortcutIcons,
+                        shortcutIconSize = shortcutIconSize,
                         isLeftHandDrive = isLeftHandDrive,
                         activePanel = activePanel,
+                        mediaState = mediaState,
                         voiceSearchAvailable = voiceSearchAvailable,
-                        sourcePackage = mediaState.sourcePackage,
+                        defaultAudioPackage = defaultAudioPackage,
+                        dockPinnedPackages = dockPinnedPackages,
+                        onToggleDockPin = onToggleDockPin,
+                        onSelectAudioSource = handleSelectAudioSource,
                         onTogglePanel = onTogglePanel,
-                        onToggleVoiceSearch = onToggleVoiceSearch,
+                        onVoiceSearch = onVoiceSearch,
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(bottom = CarDimensions.PaneGap)
@@ -401,6 +552,9 @@ fun DashboardScreen(
                                 engine = mapEngine,
                                 onToggleSearch = onToggleSearch,
                                 isDestinationPanelOpen = isDestinationPanelOpen,
+                                onToggleMapSettings = onToggleMapSettings,
+                                isMapSettingsPanelOpen = isMapSettingsPanelOpen,
+                                reduceTopInset = reduceTopInsetBelowStatusStrip,
                                 modifier = Modifier
                                     .weight(if (showSecondaryPane) effectiveMapMediaRatio else 1f)
                                     .fillMaxSize(),
@@ -419,12 +573,14 @@ fun DashboardScreen(
                                     mapEngine = mapEngine,
                                     mapDataViewModel = mapDataViewModel,
                                     onDismissPanel = onDismissPanel,
+                                    onPreviewSearchPlace = onPreviewSearchPlace,
                                     recentDestinations = recentDestinations,
                                     savedPlaces = savedPlaces,
                                     onDestinationSelected = onDestinationSelected,
                                     onToggleSavedPlace = onToggleSavedPlace,
                                 onUpdateSavedPlace = onUpdateSavedPlace,
                                     onDismissSelectedPoi = { mapEngine.dismissSelectedPoi() },
+                                    onClearPoiReturnToSearch = onClearPoiReturnToSearch,
                                     mediaState = mediaState,
                                     defaultAudioPackage = defaultAudioPackage,
                                     onSetDefaultAudioPackage = onSetDefaultAudioPackage,
@@ -432,15 +588,19 @@ fun DashboardScreen(
                                     onMediaSkipPrevious = onMediaSkipPrevious,
                                     onMediaSkipNext = onMediaSkipNext,
                                     onMediaToggleLike = onMediaToggleLike,
+                                    albumArtMode = albumArtMode,
+                                    onAlbumArtModeChange = onAlbumArtModeChange,
                                     isLeftHandDrive = isLeftHandDrive,
                                     isShortcutsHorizontal = isShortcutsHorizontal,
                                     limitSearchDistance = limitSearchDistance,
                                     useVectorTiles = useVectorTiles,
                                     show3dBuildings = show3dBuildings,
                                     showTraffic = showTraffic,
+                                    navigationVoiceEnabled = navigationVoiceEnabled,
+                                    navigationVoiceVolume = navigationVoiceVolume,
                                     tomTomApiKey = tomTomApiKey,
                                     isLauncherMode = isLauncherMode,
-                                    isLargeShortcutIcons = isLargeShortcutIcons,
+                                    shortcutIconSize = shortcutIconSize,
                                     drivingZoom = drivingZoom,
                                     puckHorizontalOffset = puckHorizontalOffset,
                                     puckVerticalOffset = puckVerticalOffset,
@@ -450,14 +610,22 @@ fun DashboardScreen(
                                     onToggleVectorTiles = onToggleVectorTiles,
                                     onToggleShow3dBuildings = onToggleShow3dBuildings,
                                     onToggleTraffic = onToggleTraffic,
+                                    onToggleNavigationVoice = onToggleNavigationVoice,
+                                    onNavigationVoiceVolumeChange = onNavigationVoiceVolumeChange,
+                                    onTestNavigationVoice = onTestNavigationVoice,
                                     onTomTomApiKeyChange = onTomTomApiKeyChange,
                                     onToggleLauncherMode = onToggleLauncherMode,
-                                    onToggleLargeShortcutIcons = onToggleLargeShortcutIcons,
+                                    onShortcutIconSizeChange = onShortcutIconSizeChange,
                                     onDrivingZoomChange = onDrivingZoomChange,
                                     onPuckHorizontalOffsetChange = onPuckHorizontalOffsetChange,
                                     onPuckVerticalOffsetChange = onPuckVerticalOffsetChange,
                                     puckScale = puckScale,
                                     onPuckScaleChange = onPuckScaleChange,
+                                    showStatusStrip = showStatusStrip,
+                                    showSystemStatusBar = showSystemStatusBar,
+                                    onToggleShowStatusStrip = onToggleShowStatusStrip,
+                                    onToggleShowSystemStatusBar = onToggleShowSystemStatusBar,
+                                    reduceTopInset = reduceMediaTopInsetBelowStatusStrip,
                                     appUpdateState = appUpdateState,
                                     onCheckForUpdate = appUpdateViewModel::checkForUpdate,
                                     onDownloadUpdate = appUpdateViewModel::downloadUpdate,
@@ -474,12 +642,14 @@ fun DashboardScreen(
                                     mapEngine = mapEngine,
                                     mapDataViewModel = mapDataViewModel,
                                     onDismissPanel = onDismissPanel,
+                                    onPreviewSearchPlace = onPreviewSearchPlace,
                                     recentDestinations = recentDestinations,
                                     savedPlaces = savedPlaces,
                                     onDestinationSelected = onDestinationSelected,
                                     onToggleSavedPlace = onToggleSavedPlace,
                                 onUpdateSavedPlace = onUpdateSavedPlace,
                                     onDismissSelectedPoi = { mapEngine.dismissSelectedPoi() },
+                                    onClearPoiReturnToSearch = onClearPoiReturnToSearch,
                                     mediaState = mediaState,
                                     defaultAudioPackage = defaultAudioPackage,
                                     onSetDefaultAudioPackage = onSetDefaultAudioPackage,
@@ -487,15 +657,19 @@ fun DashboardScreen(
                                     onMediaSkipPrevious = onMediaSkipPrevious,
                                     onMediaSkipNext = onMediaSkipNext,
                                     onMediaToggleLike = onMediaToggleLike,
+                                    albumArtMode = albumArtMode,
+                                    onAlbumArtModeChange = onAlbumArtModeChange,
                                     isLeftHandDrive = isLeftHandDrive,
                                     isShortcutsHorizontal = isShortcutsHorizontal,
                                     limitSearchDistance = limitSearchDistance,
                                     useVectorTiles = useVectorTiles,
                                     show3dBuildings = show3dBuildings,
                                     showTraffic = showTraffic,
+                                    navigationVoiceEnabled = navigationVoiceEnabled,
+                                    navigationVoiceVolume = navigationVoiceVolume,
                                     tomTomApiKey = tomTomApiKey,
                                     isLauncherMode = isLauncherMode,
-                                    isLargeShortcutIcons = isLargeShortcutIcons,
+                                    shortcutIconSize = shortcutIconSize,
                                     drivingZoom = drivingZoom,
                                     puckHorizontalOffset = puckHorizontalOffset,
                                     puckVerticalOffset = puckVerticalOffset,
@@ -505,14 +679,22 @@ fun DashboardScreen(
                                     onToggleVectorTiles = onToggleVectorTiles,
                                     onToggleShow3dBuildings = onToggleShow3dBuildings,
                                     onToggleTraffic = onToggleTraffic,
+                                    onToggleNavigationVoice = onToggleNavigationVoice,
+                                    onNavigationVoiceVolumeChange = onNavigationVoiceVolumeChange,
+                                    onTestNavigationVoice = onTestNavigationVoice,
                                     onTomTomApiKeyChange = onTomTomApiKeyChange,
                                     onToggleLauncherMode = onToggleLauncherMode,
-                                    onToggleLargeShortcutIcons = onToggleLargeShortcutIcons,
+                                    onShortcutIconSizeChange = onShortcutIconSizeChange,
                                     onDrivingZoomChange = onDrivingZoomChange,
                                     onPuckHorizontalOffsetChange = onPuckHorizontalOffsetChange,
                                     onPuckVerticalOffsetChange = onPuckVerticalOffsetChange,
                                     puckScale = puckScale,
                                     onPuckScaleChange = onPuckScaleChange,
+                                    showStatusStrip = showStatusStrip,
+                                    showSystemStatusBar = showSystemStatusBar,
+                                    onToggleShowStatusStrip = onToggleShowStatusStrip,
+                                    onToggleShowSystemStatusBar = onToggleShowSystemStatusBar,
+                                    reduceTopInset = reduceMediaTopInsetBelowStatusStrip,
                                     appUpdateState = appUpdateState,
                                     onCheckForUpdate = appUpdateViewModel::checkForUpdate,
                                     onDownloadUpdate = appUpdateViewModel::downloadUpdate,
@@ -535,6 +717,9 @@ fun DashboardScreen(
                                 engine = mapEngine,
                                 onToggleSearch = onToggleSearch,
                                 isDestinationPanelOpen = isDestinationPanelOpen,
+                                onToggleMapSettings = onToggleMapSettings,
+                                isMapSettingsPanelOpen = isMapSettingsPanelOpen,
+                                reduceTopInset = reduceTopInsetBelowStatusStrip,
                                 modifier = Modifier
                                     .weight(if (showSecondaryPane) effectiveMapMediaRatio else 1f)
                                     .fillMaxSize(),
@@ -543,18 +728,29 @@ fun DashboardScreen(
                         }
                         SplitScreenAppDrawerSlot(
                             visible = activePanel == ActivePanel.APP_DRAWER,
+                            launchableApps = launchableApps,
+                            audioPlayerPackages = audioPlayerPackages,
+                            isAppDrawerLoading = isAppDrawerLoading,
+                            dockPinnedPackages = dockPinnedPackages,
+                            onToggleDockPin = onToggleDockPin,
+                            onSelectAudioSource = openAudioSource,
+                            onOpenLauncherSettings = onOpenLauncherSettingsFromDrawer,
                             onDismiss = onDismissAppDrawer,
                         )
                     }
                     ShortcutDock(
                         isHorizontal = true,
-                        isLargeIcons = isLargeShortcutIcons,
+                        shortcutIconSize = shortcutIconSize,
                         isLeftHandDrive = isLeftHandDrive,
                         activePanel = activePanel,
+                        mediaState = mediaState,
                         voiceSearchAvailable = voiceSearchAvailable,
-                        sourcePackage = mediaState.sourcePackage,
+                        defaultAudioPackage = defaultAudioPackage,
+                        dockPinnedPackages = dockPinnedPackages,
+                        onToggleDockPin = onToggleDockPin,
+                        onSelectAudioSource = handleSelectAudioSource,
                         onTogglePanel = onTogglePanel,
-                        onToggleVoiceSearch = onToggleVoiceSearch,
+                        onVoiceSearch = onVoiceSearch,
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(bottom = CarDimensions.PaneGap)
@@ -579,6 +775,9 @@ fun DashboardScreen(
                                     engine = mapEngine,
                                     onToggleSearch = onToggleSearch,
                                 isDestinationPanelOpen = isDestinationPanelOpen,
+                                onToggleMapSettings = onToggleMapSettings,
+                                isMapSettingsPanelOpen = isMapSettingsPanelOpen,
+                                    reduceTopInset = reduceTopInsetBelowStatusStrip,
                                     modifier = Modifier
                                         .weight(
                                             if (showSecondaryPane) {
@@ -603,12 +802,14 @@ fun DashboardScreen(
                                         mapEngine = mapEngine,
                                         mapDataViewModel = mapDataViewModel,
                                         onDismissPanel = onDismissPanel,
+                                        onPreviewSearchPlace = onPreviewSearchPlace,
                                         recentDestinations = recentDestinations,
                                         savedPlaces = savedPlaces,
                                         onDestinationSelected = onDestinationSelected,
                                         onToggleSavedPlace = onToggleSavedPlace,
                                         onUpdateSavedPlace = onUpdateSavedPlace,
                                         onDismissSelectedPoi = { mapEngine.dismissSelectedPoi() },
+                                        onClearPoiReturnToSearch = onClearPoiReturnToSearch,
                                         mediaState = mediaState,
                                         defaultAudioPackage = defaultAudioPackage,
                                         onSetDefaultAudioPackage = onSetDefaultAudioPackage,
@@ -616,15 +817,19 @@ fun DashboardScreen(
                                         onMediaSkipPrevious = onMediaSkipPrevious,
                                         onMediaSkipNext = onMediaSkipNext,
                                         onMediaToggleLike = onMediaToggleLike,
+                                        albumArtMode = albumArtMode,
+                                        onAlbumArtModeChange = onAlbumArtModeChange,
                                         isLeftHandDrive = isLeftHandDrive,
                                         isShortcutsHorizontal = isShortcutsHorizontal,
                                         limitSearchDistance = limitSearchDistance,
                                         useVectorTiles = useVectorTiles,
                                         show3dBuildings = show3dBuildings,
                                         showTraffic = showTraffic,
+                                        navigationVoiceEnabled = navigationVoiceEnabled,
+                                        navigationVoiceVolume = navigationVoiceVolume,
                                         tomTomApiKey = tomTomApiKey,
                                         isLauncherMode = isLauncherMode,
-                                        isLargeShortcutIcons = isLargeShortcutIcons,
+                                        shortcutIconSize = shortcutIconSize,
                                         drivingZoom = drivingZoom,
                                         puckHorizontalOffset = puckHorizontalOffset,
                                         puckVerticalOffset = puckVerticalOffset,
@@ -634,14 +839,22 @@ fun DashboardScreen(
                                         onToggleVectorTiles = onToggleVectorTiles,
                                         onToggleShow3dBuildings = onToggleShow3dBuildings,
                                         onToggleTraffic = onToggleTraffic,
+                                        onToggleNavigationVoice = onToggleNavigationVoice,
+                                        onNavigationVoiceVolumeChange = onNavigationVoiceVolumeChange,
+                                        onTestNavigationVoice = onTestNavigationVoice,
                                         onTomTomApiKeyChange = onTomTomApiKeyChange,
                                         onToggleLauncherMode = onToggleLauncherMode,
-                                        onToggleLargeShortcutIcons = onToggleLargeShortcutIcons,
+                                        onShortcutIconSizeChange = onShortcutIconSizeChange,
                                         onDrivingZoomChange = onDrivingZoomChange,
                                         onPuckHorizontalOffsetChange = onPuckHorizontalOffsetChange,
                                         onPuckVerticalOffsetChange = onPuckVerticalOffsetChange,
                                         puckScale = puckScale,
                                         onPuckScaleChange = onPuckScaleChange,
+                                        showStatusStrip = showStatusStrip,
+                                        showSystemStatusBar = showSystemStatusBar,
+                                        onToggleShowStatusStrip = onToggleShowStatusStrip,
+                                        onToggleShowSystemStatusBar = onToggleShowSystemStatusBar,
+                                        reduceTopInset = reduceMediaTopInsetBelowStatusStrip,
                                         appUpdateState = appUpdateState,
                                         onCheckForUpdate = appUpdateViewModel::checkForUpdate,
                                         onDownloadUpdate = appUpdateViewModel::downloadUpdate,
@@ -654,18 +867,29 @@ fun DashboardScreen(
                             }
                             SplitScreenAppDrawerSlot(
                                 visible = activePanel == ActivePanel.APP_DRAWER,
+                                launchableApps = launchableApps,
+                                audioPlayerPackages = audioPlayerPackages,
+                                isAppDrawerLoading = isAppDrawerLoading,
+                                dockPinnedPackages = dockPinnedPackages,
+                                onToggleDockPin = onToggleDockPin,
+                                onSelectAudioSource = openAudioSource,
+                                onOpenLauncherSettings = onOpenLauncherSettingsFromDrawer,
                                 onDismiss = onDismissAppDrawer,
                             )
                         }
                         ShortcutDock(
                             isHorizontal = false,
-                            isLargeIcons = isLargeShortcutIcons,
+                            shortcutIconSize = shortcutIconSize,
                             isLeftHandDrive = isLeftHandDrive,
                             activePanel = activePanel,
+                            mediaState = mediaState,
                             voiceSearchAvailable = voiceSearchAvailable,
-                            sourcePackage = mediaState.sourcePackage,
+                            defaultAudioPackage = defaultAudioPackage,
+                            dockPinnedPackages = dockPinnedPackages,
+                            onToggleDockPin = onToggleDockPin,
+                            onSelectAudioSource = handleSelectAudioSource,
                             onTogglePanel = onTogglePanel,
-                            onToggleVoiceSearch = onToggleVoiceSearch,
+                            onVoiceSearch = onVoiceSearch,
                             modifier = Modifier
                                 .wrapContentWidth()
                                 .fillMaxHeight()
@@ -674,13 +898,17 @@ fun DashboardScreen(
                     } else {
                         ShortcutDock(
                             isHorizontal = false,
-                            isLargeIcons = isLargeShortcutIcons,
+                            shortcutIconSize = shortcutIconSize,
                             isLeftHandDrive = isLeftHandDrive,
                             activePanel = activePanel,
+                            mediaState = mediaState,
                             voiceSearchAvailable = voiceSearchAvailable,
-                            sourcePackage = mediaState.sourcePackage,
+                            defaultAudioPackage = defaultAudioPackage,
+                            dockPinnedPackages = dockPinnedPackages,
+                            onToggleDockPin = onToggleDockPin,
+                            onSelectAudioSource = handleSelectAudioSource,
                             onTogglePanel = onTogglePanel,
-                            onToggleVoiceSearch = onToggleVoiceSearch,
+                            onVoiceSearch = onVoiceSearch,
                             modifier = Modifier
                                 .wrapContentWidth()
                                 .fillMaxHeight()
@@ -696,6 +924,9 @@ fun DashboardScreen(
                                     engine = mapEngine,
                                     onToggleSearch = onToggleSearch,
                                 isDestinationPanelOpen = isDestinationPanelOpen,
+                                onToggleMapSettings = onToggleMapSettings,
+                                isMapSettingsPanelOpen = isMapSettingsPanelOpen,
+                                    reduceTopInset = reduceTopInsetBelowStatusStrip,
                                     modifier = Modifier
                                         .weight(
                                             if (showSecondaryPane) {
@@ -720,12 +951,14 @@ fun DashboardScreen(
                                         mapEngine = mapEngine,
                                         mapDataViewModel = mapDataViewModel,
                                         onDismissPanel = onDismissPanel,
+                                        onPreviewSearchPlace = onPreviewSearchPlace,
                                         recentDestinations = recentDestinations,
                                         savedPlaces = savedPlaces,
                                         onDestinationSelected = onDestinationSelected,
                                         onToggleSavedPlace = onToggleSavedPlace,
                                         onUpdateSavedPlace = onUpdateSavedPlace,
                                         onDismissSelectedPoi = { mapEngine.dismissSelectedPoi() },
+                                        onClearPoiReturnToSearch = onClearPoiReturnToSearch,
                                         mediaState = mediaState,
                                         defaultAudioPackage = defaultAudioPackage,
                                         onSetDefaultAudioPackage = onSetDefaultAudioPackage,
@@ -733,15 +966,19 @@ fun DashboardScreen(
                                         onMediaSkipPrevious = onMediaSkipPrevious,
                                         onMediaSkipNext = onMediaSkipNext,
                                         onMediaToggleLike = onMediaToggleLike,
+                                        albumArtMode = albumArtMode,
+                                        onAlbumArtModeChange = onAlbumArtModeChange,
                                         isLeftHandDrive = isLeftHandDrive,
                                         isShortcutsHorizontal = isShortcutsHorizontal,
                                         limitSearchDistance = limitSearchDistance,
                                         useVectorTiles = useVectorTiles,
                                         show3dBuildings = show3dBuildings,
                                         showTraffic = showTraffic,
+                                        navigationVoiceEnabled = navigationVoiceEnabled,
+                                        navigationVoiceVolume = navigationVoiceVolume,
                                         tomTomApiKey = tomTomApiKey,
                                         isLauncherMode = isLauncherMode,
-                                        isLargeShortcutIcons = isLargeShortcutIcons,
+                                        shortcutIconSize = shortcutIconSize,
                                         drivingZoom = drivingZoom,
                                         puckHorizontalOffset = puckHorizontalOffset,
                                         puckVerticalOffset = puckVerticalOffset,
@@ -751,14 +988,22 @@ fun DashboardScreen(
                                         onToggleVectorTiles = onToggleVectorTiles,
                                         onToggleShow3dBuildings = onToggleShow3dBuildings,
                                         onToggleTraffic = onToggleTraffic,
+                                        onToggleNavigationVoice = onToggleNavigationVoice,
+                                        onNavigationVoiceVolumeChange = onNavigationVoiceVolumeChange,
+                                        onTestNavigationVoice = onTestNavigationVoice,
                                         onTomTomApiKeyChange = onTomTomApiKeyChange,
                                         onToggleLauncherMode = onToggleLauncherMode,
-                                        onToggleLargeShortcutIcons = onToggleLargeShortcutIcons,
+                                        onShortcutIconSizeChange = onShortcutIconSizeChange,
                                         onDrivingZoomChange = onDrivingZoomChange,
                                         onPuckHorizontalOffsetChange = onPuckHorizontalOffsetChange,
                                         onPuckVerticalOffsetChange = onPuckVerticalOffsetChange,
                                         puckScale = puckScale,
                                         onPuckScaleChange = onPuckScaleChange,
+                                        showStatusStrip = showStatusStrip,
+                                        showSystemStatusBar = showSystemStatusBar,
+                                        onToggleShowStatusStrip = onToggleShowStatusStrip,
+                                        onToggleShowSystemStatusBar = onToggleShowSystemStatusBar,
+                                        reduceTopInset = reduceMediaTopInsetBelowStatusStrip,
                                         appUpdateState = appUpdateState,
                                         onCheckForUpdate = appUpdateViewModel::checkForUpdate,
                                         onDownloadUpdate = appUpdateViewModel::downloadUpdate,
@@ -771,12 +1016,30 @@ fun DashboardScreen(
                             }
                             SplitScreenAppDrawerSlot(
                                 visible = activePanel == ActivePanel.APP_DRAWER,
+                                launchableApps = launchableApps,
+                                audioPlayerPackages = audioPlayerPackages,
+                                isAppDrawerLoading = isAppDrawerLoading,
+                                dockPinnedPackages = dockPinnedPackages,
+                                onToggleDockPin = onToggleDockPin,
+                                onSelectAudioSource = openAudioSource,
+                                onOpenLauncherSettings = onOpenLauncherSettingsFromDrawer,
                                 onDismiss = onDismissAppDrawer,
                             )
                         }
                     }
                 }
             }
+        }
+        AppUpdatePrompts(
+            uiState = appUpdateState,
+            showDownloadOffer = showDownloadOffer,
+            showInstallOffer = showInstallOffer,
+            onDownloadUpdate = appUpdateViewModel::downloadUpdate,
+            onDismissDownloadOffer = appUpdateViewModel::dismissDownloadOffer,
+            onInstallApk = onInstallApk,
+            onDismissInstallOffer = appUpdateViewModel::dismissInstallOffer,
+            modifier = Modifier.zIndex(3f),
+        )
         }
     }
 }
@@ -787,12 +1050,14 @@ private fun DashboardSecondaryPane(
     mapEngine: CarMapEngine,
     mapDataViewModel: MapDataViewModel,
     onDismissPanel: () -> Unit,
+    onPreviewSearchPlace: (SearchResultPlace) -> Unit,
     recentDestinations: List<SearchResultPlace>,
     savedPlaces: List<SearchResultPlace>,
     onDestinationSelected: (SearchResultPlace) -> Unit,
     onToggleSavedPlace: (SearchResultPlace) -> Unit,
     onUpdateSavedPlace: (SearchResultPlace) -> Unit,
     onDismissSelectedPoi: () -> Unit,
+    onClearPoiReturnToSearch: () -> Unit,
     mediaState: MediaPlaybackState,
     defaultAudioPackage: String,
     onSetDefaultAudioPackage: (String) -> Unit,
@@ -800,15 +1065,19 @@ private fun DashboardSecondaryPane(
     onMediaSkipPrevious: () -> Unit,
     onMediaSkipNext: () -> Unit,
     onMediaToggleLike: () -> Unit,
+    albumArtMode: AlbumArtMode,
+    onAlbumArtModeChange: (AlbumArtMode) -> Unit,
     isLeftHandDrive: Boolean,
     isShortcutsHorizontal: Boolean,
     limitSearchDistance: Boolean,
     useVectorTiles: Boolean,
     show3dBuildings: Boolean,
     showTraffic: Boolean,
+    navigationVoiceEnabled: Boolean,
+    navigationVoiceVolume: Float,
     tomTomApiKey: String,
     isLauncherMode: Boolean,
-    isLargeShortcutIcons: Boolean,
+    shortcutIconSize: DockShortcutIconSize,
     drivingZoom: Float,
     puckHorizontalOffset: Float,
     puckVerticalOffset: Float,
@@ -818,14 +1087,22 @@ private fun DashboardSecondaryPane(
     onToggleVectorTiles: () -> Unit,
     onToggleShow3dBuildings: () -> Unit,
     onToggleTraffic: () -> Unit,
+    onToggleNavigationVoice: () -> Unit,
+    onNavigationVoiceVolumeChange: (Float) -> Unit,
+    onTestNavigationVoice: () -> Unit,
     onTomTomApiKeyChange: (String) -> Unit,
     onToggleLauncherMode: () -> Unit,
-    onToggleLargeShortcutIcons: () -> Unit,
+    onShortcutIconSizeChange: (DockShortcutIconSize) -> Unit,
     onDrivingZoomChange: (Float) -> Unit,
     onPuckHorizontalOffsetChange: (Float) -> Unit,
     onPuckVerticalOffsetChange: (Float) -> Unit,
     puckScale: Float,
     onPuckScaleChange: (Float) -> Unit,
+    showStatusStrip: Boolean,
+    showSystemStatusBar: Boolean,
+    onToggleShowStatusStrip: () -> Unit,
+    onToggleShowSystemStatusBar: () -> Unit,
+    reduceTopInset: Boolean,
     appUpdateState: AppUpdateState,
     onCheckForUpdate: () -> Unit,
     onDownloadUpdate: () -> Unit,
@@ -837,12 +1114,14 @@ private fun DashboardSecondaryPane(
         mapEngine = mapEngine,
         mapDataViewModel = mapDataViewModel,
         onDismissPanel = onDismissPanel,
+        onPreviewSearchPlace = onPreviewSearchPlace,
         recentDestinations = recentDestinations,
         savedPlaces = savedPlaces,
         onDestinationSelected = onDestinationSelected,
         onToggleSavedPlace = onToggleSavedPlace,
         onUpdateSavedPlace = onUpdateSavedPlace,
         onDismissSelectedPoi = onDismissSelectedPoi,
+        onClearPoiReturnToSearch = onClearPoiReturnToSearch,
         mediaState = mediaState,
         defaultAudioPackage = defaultAudioPackage,
         onSetDefaultAudioPackage = onSetDefaultAudioPackage,
@@ -850,15 +1129,19 @@ private fun DashboardSecondaryPane(
         onMediaSkipPrevious = onMediaSkipPrevious,
         onMediaSkipNext = onMediaSkipNext,
         onMediaToggleLike = onMediaToggleLike,
+        albumArtMode = albumArtMode,
+        onAlbumArtModeChange = onAlbumArtModeChange,
         isLeftHandDrive = isLeftHandDrive,
         isShortcutsHorizontal = isShortcutsHorizontal,
         limitSearchDistance = limitSearchDistance,
         useVectorTiles = useVectorTiles,
         show3dBuildings = show3dBuildings,
         showTraffic = showTraffic,
+        navigationVoiceEnabled = navigationVoiceEnabled,
+        navigationVoiceVolume = navigationVoiceVolume,
         tomTomApiKey = tomTomApiKey,
         isLauncherMode = isLauncherMode,
-        isLargeShortcutIcons = isLargeShortcutIcons,
+        shortcutIconSize = shortcutIconSize,
         drivingZoom = drivingZoom,
         puckHorizontalOffset = puckHorizontalOffset,
         puckVerticalOffset = puckVerticalOffset,
@@ -868,14 +1151,22 @@ private fun DashboardSecondaryPane(
         onToggleVectorTiles = onToggleVectorTiles,
         onToggleShow3dBuildings = onToggleShow3dBuildings,
         onToggleTraffic = onToggleTraffic,
+        onToggleNavigationVoice = onToggleNavigationVoice,
+        onNavigationVoiceVolumeChange = onNavigationVoiceVolumeChange,
+        onTestNavigationVoice = onTestNavigationVoice,
         onTomTomApiKeyChange = onTomTomApiKeyChange,
         onToggleLauncherMode = onToggleLauncherMode,
-        onToggleLargeShortcutIcons = onToggleLargeShortcutIcons,
+                                        onShortcutIconSizeChange = onShortcutIconSizeChange,
         onDrivingZoomChange = onDrivingZoomChange,
         onPuckHorizontalOffsetChange = onPuckHorizontalOffsetChange,
         onPuckVerticalOffsetChange = onPuckVerticalOffsetChange,
         puckScale = puckScale,
         onPuckScaleChange = onPuckScaleChange,
+        showStatusStrip = showStatusStrip,
+        showSystemStatusBar = showSystemStatusBar,
+        onToggleShowStatusStrip = onToggleShowStatusStrip,
+        onToggleShowSystemStatusBar = onToggleShowSystemStatusBar,
+        reduceTopInset = reduceTopInset,
         appUpdateState = appUpdateState,
         onCheckForUpdate = onCheckForUpdate,
         onDownloadUpdate = onDownloadUpdate,
@@ -890,12 +1181,14 @@ private fun MediaOrSettingsPane(
     mapEngine: CarMapEngine,
     mapDataViewModel: MapDataViewModel,
     onDismissPanel: () -> Unit,
+    onPreviewSearchPlace: (SearchResultPlace) -> Unit,
     recentDestinations: List<SearchResultPlace>,
     savedPlaces: List<SearchResultPlace>,
     onDestinationSelected: (SearchResultPlace) -> Unit,
     onToggleSavedPlace: (SearchResultPlace) -> Unit,
     onUpdateSavedPlace: (SearchResultPlace) -> Unit,
     onDismissSelectedPoi: () -> Unit,
+    onClearPoiReturnToSearch: () -> Unit,
     mediaState: MediaPlaybackState,
     defaultAudioPackage: String,
     onSetDefaultAudioPackage: (String) -> Unit,
@@ -903,15 +1196,19 @@ private fun MediaOrSettingsPane(
     onMediaSkipPrevious: () -> Unit,
     onMediaSkipNext: () -> Unit,
     onMediaToggleLike: () -> Unit,
+    albumArtMode: AlbumArtMode,
+    onAlbumArtModeChange: (AlbumArtMode) -> Unit,
     isLeftHandDrive: Boolean,
     isShortcutsHorizontal: Boolean,
     limitSearchDistance: Boolean,
     useVectorTiles: Boolean,
     show3dBuildings: Boolean,
     showTraffic: Boolean,
+    navigationVoiceEnabled: Boolean,
+    navigationVoiceVolume: Float,
     tomTomApiKey: String,
     isLauncherMode: Boolean,
-    isLargeShortcutIcons: Boolean,
+    shortcutIconSize: DockShortcutIconSize,
     drivingZoom: Float,
     puckHorizontalOffset: Float,
     puckVerticalOffset: Float,
@@ -921,14 +1218,22 @@ private fun MediaOrSettingsPane(
     onToggleVectorTiles: () -> Unit,
     onToggleShow3dBuildings: () -> Unit,
     onToggleTraffic: () -> Unit,
+    onToggleNavigationVoice: () -> Unit,
+    onNavigationVoiceVolumeChange: (Float) -> Unit,
+    onTestNavigationVoice: () -> Unit,
     onTomTomApiKeyChange: (String) -> Unit,
     onToggleLauncherMode: () -> Unit,
-    onToggleLargeShortcutIcons: () -> Unit,
+    onShortcutIconSizeChange: (DockShortcutIconSize) -> Unit,
     onDrivingZoomChange: (Float) -> Unit,
     onPuckHorizontalOffsetChange: (Float) -> Unit,
     onPuckVerticalOffsetChange: (Float) -> Unit,
     puckScale: Float,
     onPuckScaleChange: (Float) -> Unit,
+    showStatusStrip: Boolean,
+    showSystemStatusBar: Boolean,
+    onToggleShowStatusStrip: () -> Unit,
+    onToggleShowSystemStatusBar: () -> Unit,
+    reduceTopInset: Boolean,
     appUpdateState: AppUpdateState,
     onCheckForUpdate: () -> Unit,
     onDownloadUpdate: () -> Unit,
@@ -947,6 +1252,7 @@ private fun MediaOrSettingsPane(
                     recentDestinations = recentDestinations,
                     savedPlaces = savedPlaces,
                     onToggleSavedPlace = onToggleSavedPlace,
+                    onPreviewPlace = onPreviewSearchPlace,
                     onDismiss = onDismissPanel,
                     modifier = Modifier.fillMaxSize(),
                 )
@@ -962,6 +1268,7 @@ private fun MediaOrSettingsPane(
                             onToggleSavedPlace(namedPoi)
                         },
                         onNavigate = { customName ->
+                            onClearPoiReturnToSearch()
                             val namedPoi = poi.copy(name = customName)
                             onDestinationSelected(namedPoi)
                             if (savedPlaces.any { saved -> isSavedPlaceMatch(saved, poi) }) {
@@ -975,32 +1282,29 @@ private fun MediaOrSettingsPane(
                     )
                 }
             }
+            ActivePanel.ROUTE_PICKER -> {
+                RoutePickerPane(
+                    routeOptions = mapUiState.routeOptions,
+                    selectedRouteId = mapUiState.selectedRouteId,
+                    engine = mapEngine,
+                    onDismiss = { mapEngine.startFreeDrive() },
+                    modifier = Modifier.fillMaxSize(),
+                )
+            }
             ActivePanel.SETTINGS -> {
                 SettingsContent(
                     isLeftHandDrive = isLeftHandDrive,
                     isShortcutsHorizontal = isShortcutsHorizontal,
-                    limitSearchDistance = limitSearchDistance,
-                    useVectorTiles = useVectorTiles,
-                    show3dBuildings = show3dBuildings,
-                    showTraffic = showTraffic,
                     isLauncherMode = isLauncherMode,
-                    isLargeShortcutIcons = isLargeShortcutIcons,
-                    drivingZoom = drivingZoom,
-                    puckHorizontalOffset = puckHorizontalOffset,
-                    puckVerticalOffset = puckVerticalOffset,
+                    shortcutIconSize = shortcutIconSize,
+                    showStatusStrip = showStatusStrip,
+                    showSystemStatusBar = showSystemStatusBar,
+                    onToggleShowStatusStrip = onToggleShowStatusStrip,
+                    onToggleShowSystemStatusBar = onToggleShowSystemStatusBar,
                     onToggleLhd = onToggleLhd,
                     onToggleShortcutsHorizontal = onToggleShortcutsHorizontal,
-                    onToggleLimitSearchDistance = onToggleLimitSearchDistance,
-                    onToggleVectorTiles = onToggleVectorTiles,
-                    onToggleShow3dBuildings = onToggleShow3dBuildings,
-                    onToggleTraffic = onToggleTraffic,
                     onToggleLauncherMode = onToggleLauncherMode,
-                    onToggleLargeShortcutIcons = onToggleLargeShortcutIcons,
-                    onDrivingZoomChange = onDrivingZoomChange,
-                    onPuckHorizontalOffsetChange = onPuckHorizontalOffsetChange,
-                    onPuckVerticalOffsetChange = onPuckVerticalOffsetChange,
-                    puckScale = puckScale,
-                    onPuckScaleChange = onPuckScaleChange,
+                                        onShortcutIconSizeChange = onShortcutIconSizeChange,
                     appUpdateState = appUpdateState,
                     onCheckForUpdate = onCheckForUpdate,
                     onDownloadUpdate = onDownloadUpdate,
@@ -1010,18 +1314,34 @@ private fun MediaOrSettingsPane(
                 )
             }
             ActivePanel.MAP_DATA -> {
-                Surface(
+                MapSettingsPanelContent(
+                    mapDataViewModel = mapDataViewModel,
+                    limitSearchDistance = limitSearchDistance,
+                    useVectorTiles = useVectorTiles,
+                    show3dBuildings = show3dBuildings,
+                    showTraffic = showTraffic,
+                    navigationVoiceEnabled = navigationVoiceEnabled,
+                    navigationVoiceVolume = navigationVoiceVolume,
+                    drivingZoom = drivingZoom,
+                    puckHorizontalOffset = puckHorizontalOffset,
+                    puckVerticalOffset = puckVerticalOffset,
+                    puckScale = puckScale,
+                    tomTomApiKey = tomTomApiKey,
+                    onToggleLimitSearchDistance = onToggleLimitSearchDistance,
+                    onToggleVectorTiles = onToggleVectorTiles,
+                    onToggleShow3dBuildings = onToggleShow3dBuildings,
+                    onToggleTraffic = onToggleTraffic,
+                    onToggleNavigationVoice = onToggleNavigationVoice,
+                    onNavigationVoiceVolumeChange = onNavigationVoiceVolumeChange,
+                    onTestNavigationVoice = onTestNavigationVoice,
+                    onDrivingZoomChange = onDrivingZoomChange,
+                    onPuckHorizontalOffsetChange = onPuckHorizontalOffsetChange,
+                    onPuckVerticalOffsetChange = onPuckVerticalOffsetChange,
+                    onPuckScaleChange = onPuckScaleChange,
+                    onTomTomApiKeyChange = onTomTomApiKeyChange,
+                    onDismiss = onDismissPanel,
                     modifier = Modifier.fillMaxSize(),
-                    color = OledBlack,
-                ) {
-                    MapDataPanelContent(
-                        viewModel = mapDataViewModel,
-                        onDismiss = onDismissPanel,
-                        tomTomApiKey = tomTomApiKey,
-                        onTomTomApiKeyChange = onTomTomApiKeyChange,
-                        modifier = Modifier.fillMaxSize(),
-                    )
-                }
+                )
             }
             ActivePanel.APP_DRAWER,
             ActivePanel.MEDIA,
@@ -1031,10 +1351,13 @@ private fun MediaOrSettingsPane(
                     mediaState = mediaState,
                     defaultAudioPackage = defaultAudioPackage,
                     onSetDefaultAudioPackage = onSetDefaultAudioPackage,
+                    albumArtMode = albumArtMode,
+                    onAlbumArtModeChange = onAlbumArtModeChange,
                     onPlayPause = onMediaPlayPause,
                     onSkipPrevious = onMediaSkipPrevious,
                     onSkipNext = onMediaSkipNext,
                     onToggleLike = onMediaToggleLike,
+                    reduceTopInset = reduceTopInset,
                     modifier = Modifier.fillMaxSize(),
                 )
             }
@@ -1046,28 +1369,16 @@ private fun MediaOrSettingsPane(
 private fun SettingsContent(
     isLeftHandDrive: Boolean,
     isShortcutsHorizontal: Boolean,
-    limitSearchDistance: Boolean,
-    useVectorTiles: Boolean,
-    show3dBuildings: Boolean,
-    showTraffic: Boolean,
     isLauncherMode: Boolean,
-    isLargeShortcutIcons: Boolean,
-    drivingZoom: Float,
-    puckHorizontalOffset: Float,
-    puckVerticalOffset: Float,
+    shortcutIconSize: DockShortcutIconSize,
+    showStatusStrip: Boolean,
+    showSystemStatusBar: Boolean,
+    onToggleShowStatusStrip: () -> Unit,
+    onToggleShowSystemStatusBar: () -> Unit,
     onToggleLhd: () -> Unit,
     onToggleShortcutsHorizontal: () -> Unit,
-    onToggleLimitSearchDistance: () -> Unit,
-    onToggleVectorTiles: () -> Unit,
-    onToggleShow3dBuildings: () -> Unit,
-    onToggleTraffic: () -> Unit,
     onToggleLauncherMode: () -> Unit,
-    onToggleLargeShortcutIcons: () -> Unit,
-    onDrivingZoomChange: (Float) -> Unit,
-    onPuckHorizontalOffsetChange: (Float) -> Unit,
-    onPuckVerticalOffsetChange: (Float) -> Unit,
-    puckScale: Float,
-    onPuckScaleChange: (Float) -> Unit,
+    onShortcutIconSizeChange: (DockShortcutIconSize) -> Unit,
     appUpdateState: AppUpdateState,
     onCheckForUpdate: () -> Unit,
     onDownloadUpdate: () -> Unit,
@@ -1084,24 +1395,17 @@ private fun SettingsContent(
             modifier = Modifier
                 .fillMaxWidth()
                 .verticalScroll(scrollState)
-                .padding(CarDimensions.PaneGap * 2),
+                .padding(
+                    horizontal = CarDimensions.PaneGap * 2,
+                    vertical = CarDimensions.PaneGap,
+                ),
             verticalArrangement = Arrangement.spacedBy(CarDimensions.DockItemSpacing),
         ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                CarHeadlineText(
-                    text = "Launcher Settings",
-                    style = MaterialTheme.typography.headlineMedium,
-                    modifier = Modifier.weight(1f),
-                )
-                OverlayCloseButton(
-                    onClick = onDismiss,
-                    contentDescription = "Close settings",
-                )
-            }
+            PanelHeaderRow(
+                title = "Launcher Settings",
+                onClose = onDismiss,
+                closeContentDescription = "Close settings",
+            )
 
             SettingsSwitchRow(
                     label = "Left-Hand Drive Layout",
@@ -1123,53 +1427,47 @@ private fun SettingsContent(
                     },
                 )
 
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    CarBodyText(
+                        text = "Shortcut Icon Size",
+                        style = MaterialTheme.typography.bodyLarge,
+                    )
+                    Slider(
+                        value = shortcutIconSize.ordinal.toFloat(),
+                        onValueChange = { raw ->
+                            onShortcutIconSizeChange(DockShortcutIconSize.fromOrdinal(raw.roundToInt()))
+                        },
+                        valueRange = 0f..2f,
+                        steps = 1,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(CarDimensions.MinTapTarget),
+                    )
+                    CarLabelText(
+                        text = shortcutIconSize.label,
+                        style = MaterialTheme.typography.labelMedium,
+                    )
+                }
+
                 SettingsSwitchRow(
-                    label = "Large Shortcut Icons",
-                    checked = isLargeShortcutIcons,
+                    label = "Status strip (time, date, weather)",
+                    checked = showStatusStrip,
                     onCheckedChange = { checked ->
-                        if (checked != isLargeShortcutIcons) {
-                            onToggleLargeShortcutIcons()
+                        if (checked != showStatusStrip) {
+                            onToggleShowStatusStrip()
                         }
                     },
                 )
 
                 SettingsSwitchRow(
-                    label = "Nearby results only (within 500 km)",
-                    checked = limitSearchDistance,
+                    label = "System status bar",
+                    checked = showSystemStatusBar,
                     onCheckedChange = { checked ->
-                        if (checked != limitSearchDistance) {
-                            onToggleLimitSearchDistance()
-                        }
-                    },
-                )
-
-                SettingsSwitchRow(
-                    label = "Vector Map Tiles (sharper 3D)",
-                    checked = useVectorTiles,
-                    onCheckedChange = { checked ->
-                        if (checked != useVectorTiles) {
-                            onToggleVectorTiles()
-                        }
-                    },
-                )
-
-                SettingsSwitchRow(
-                    label = "3D Buildings (vector tiles only)",
-                    checked = show3dBuildings,
-                    enabled = useVectorTiles,
-                    onCheckedChange = { checked ->
-                        if (checked != show3dBuildings) {
-                            onToggleShow3dBuildings()
-                        }
-                    },
-                )
-
-                SettingsSwitchRow(
-                    label = "Traffic Overlay",
-                    checked = showTraffic,
-                    onCheckedChange = { checked ->
-                        if (checked != showTraffic) {
-                            onToggleTraffic()
+                        if (checked != showSystemStatusBar) {
+                            onToggleShowSystemStatusBar()
                         }
                     },
                 )
@@ -1183,105 +1481,6 @@ private fun SettingsContent(
                         }
                     },
                 )
-
-                Column(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalArrangement = Arrangement.spacedBy(CarDimensions.PaneGap),
-                ) {
-                    CarBodyText(
-                        text = "Driving View",
-                        style = MaterialTheme.typography.bodyLarge,
-                    )
-
-                    Column(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalArrangement = Arrangement.spacedBy(4.dp),
-                    ) {
-                        CarBodyText(
-                            text = "Puck Left / Right",
-                            style = MaterialTheme.typography.bodyLarge,
-                        )
-                        Slider(
-                            value = puckHorizontalOffset,
-                            onValueChange = onPuckHorizontalOffsetChange,
-                            valueRange = 0f..0.8f,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(CarDimensions.MinTapTarget),
-                        )
-                        CarLabelText(
-                            text = "Left ${(puckHorizontalOffset * 100).roundToInt()}%",
-                            style = MaterialTheme.typography.labelMedium,
-                        )
-                    }
-
-                    Column(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalArrangement = Arrangement.spacedBy(4.dp),
-                    ) {
-                        CarBodyText(
-                            text = "Puck Up / Down",
-                            style = MaterialTheme.typography.bodyLarge,
-                        )
-                        Slider(
-                            value = puckVerticalOffset,
-                            onValueChange = onPuckVerticalOffsetChange,
-                            valueRange = 0f..0.8f,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(CarDimensions.MinTapTarget),
-                        )
-                        CarLabelText(
-                            text = "Top ${(puckVerticalOffset * 100).roundToInt()}%",
-                            style = MaterialTheme.typography.labelMedium,
-                        )
-                    }
-
-                    Column(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalArrangement = Arrangement.spacedBy(4.dp),
-                    ) {
-                        CarBodyText(
-                            text = "Puck Size",
-                            style = MaterialTheme.typography.bodyLarge,
-                        )
-                        Slider(
-                            value = puckScale,
-                            onValueChange = onPuckScaleChange,
-                            valueRange = 0.5f..3.0f,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(CarDimensions.MinTapTarget),
-                        )
-                        CarLabelText(
-                            text = "${"%.1f".format(puckScale)}×",
-                            style = MaterialTheme.typography.labelMedium,
-                        )
-                    }
-
-                    Column(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalArrangement = Arrangement.spacedBy(4.dp),
-                    ) {
-                        CarBodyText(
-                            text = "Zoom",
-                            style = MaterialTheme.typography.bodyLarge,
-                        )
-                        Slider(
-                            value = drivingZoom,
-                            onValueChange = onDrivingZoomChange,
-                            valueRange = 15f..21f,
-                            steps = 12,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(CarDimensions.MinTapTarget),
-                        )
-                        CarLabelText(
-                            text = "Zoom ${"%.1f".format(drivingZoom)}",
-                            style = MaterialTheme.typography.labelMedium,
-                        )
-                    }
-                }
 
             AppUpdateSection(
                 state = appUpdateState,
@@ -1527,37 +1726,5 @@ private fun Modifier.seamTouchTarget(
         layout(placeable.width, layoutPx) {
             placeable.place(0, -((touchPx - layoutPx) / 2f).roundToInt())
         }
-    }
-}
-
-@Composable
-private fun SettingsSwitchRow(
-    label: String,
-    checked: Boolean,
-    onCheckedChange: (Boolean) -> Unit,
-    enabled: Boolean = true,
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(CarDimensions.MinTapTarget)
-            .then(if (!enabled) Modifier.alpha(0.38f) else Modifier),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        CarBodyText(
-            text = label,
-            modifier = Modifier
-                .weight(1f)
-                .widthIn(min = 0.dp),
-            style = MaterialTheme.typography.bodyLarge,
-            maxLines = 2,
-        )
-        Switch(
-            checked = checked,
-            onCheckedChange = onCheckedChange,
-            enabled = enabled,
-            modifier = Modifier.size(CarDimensions.MinTapTarget),
-        )
     }
 }

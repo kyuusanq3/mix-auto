@@ -2,6 +2,7 @@ package com.kyuusanq3.mixauto.ui.settings
 
 import android.content.Context
 import com.kyuusanq3.mixauto.domain.map.SearchResultPlace
+import com.kyuusanq3.mixauto.ui.dashboard.DockShortcutIconSize
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -50,10 +51,18 @@ class LauncherPreferences(context: Context) {
             prefs.edit().putBoolean(KEY_LAUNCHER_MODE, value).apply()
         }
 
-    var isLargeShortcutIcons: Boolean
-        get() = prefs.getBoolean(KEY_LARGE_SHORTCUT_ICONS, true)
+    var dockShortcutIconSize: DockShortcutIconSize
+        get() {
+            if (prefs.contains(KEY_SHORTCUT_ICON_SIZE)) {
+                return DockShortcutIconSize.fromOrdinal(
+                    prefs.getInt(KEY_SHORTCUT_ICON_SIZE, DockShortcutIconSize.LARGE.ordinal),
+                )
+            }
+            val legacyLarge = prefs.getBoolean(KEY_LARGE_SHORTCUT_ICONS, true)
+            return if (legacyLarge) DockShortcutIconSize.LARGE else DockShortcutIconSize.SMALL
+        }
         set(value) {
-            prefs.edit().putBoolean(KEY_LARGE_SHORTCUT_ICONS, value).apply()
+            prefs.edit().putInt(KEY_SHORTCUT_ICON_SIZE, value.ordinal).apply()
         }
 
     var drivingZoom: Float
@@ -84,6 +93,24 @@ class LauncherPreferences(context: Context) {
         get() = prefs.getBoolean(KEY_SHOW_TRAFFIC, false)
         set(value) {
             prefs.edit().putBoolean(KEY_SHOW_TRAFFIC, value).apply()
+        }
+
+    var navigationVoiceEnabled: Boolean
+        get() = prefs.getBoolean(KEY_NAVIGATION_VOICE_ENABLED, true)
+        set(value) {
+            prefs.edit().putBoolean(KEY_NAVIGATION_VOICE_ENABLED, value).apply()
+        }
+
+    var navigationVoiceVolume: Float
+        get() = prefs.getFloat(KEY_NAVIGATION_VOICE_VOLUME, DEFAULT_NAVIGATION_VOICE_VOLUME)
+            .coerceIn(MIN_NAVIGATION_VOICE_VOLUME, MAX_NAVIGATION_VOICE_VOLUME)
+        set(value) {
+            prefs.edit()
+                .putFloat(
+                    KEY_NAVIGATION_VOICE_VOLUME,
+                    value.coerceIn(MIN_NAVIGATION_VOICE_VOLUME, MAX_NAVIGATION_VOICE_VOLUME),
+                )
+                .apply()
         }
 
     var tomTomApiKey: String
@@ -130,6 +157,43 @@ class LauncherPreferences(context: Context) {
             prefs.edit().putString(KEY_DEFAULT_AUDIO_PACKAGE, value).apply()
         }
 
+    var dockPinnedPackages: List<String>
+        get() {
+            val json = prefs.getString(KEY_DOCK_PINNED_PACKAGES, null) ?: return emptyList()
+            return parsePackageListJson(json)
+        }
+        set(value) {
+            val array = JSONArray()
+            value.take(MAX_DOCK_PINNED_APPS).forEach { pkg ->
+                array.put(pkg)
+            }
+            prefs.edit().putString(KEY_DOCK_PINNED_PACKAGES, array.toString()).apply()
+        }
+
+    var albumArtMode: String
+        get() = prefs.getString(KEY_ALBUM_ART_MODE, DEFAULT_ALBUM_ART_MODE) ?: DEFAULT_ALBUM_ART_MODE
+        set(value) {
+            prefs.edit().putString(KEY_ALBUM_ART_MODE, value).apply()
+        }
+
+    var showStatusStrip: Boolean
+        get() = prefs.getBoolean(KEY_SHOW_STATUS_STRIP, true)
+        set(value) {
+            prefs.edit().putBoolean(KEY_SHOW_STATUS_STRIP, value).apply()
+        }
+
+    var showSystemStatusBar: Boolean
+        get() = prefs.getBoolean(KEY_SHOW_SYSTEM_STATUS_BAR, true)
+        set(value) {
+            prefs.edit().putBoolean(KEY_SHOW_SYSTEM_STATUS_BAR, value).apply()
+        }
+
+    var musicPaneEnabled: Boolean
+        get() = prefs.getBoolean(KEY_MUSIC_PANE_ENABLED, true)
+        set(value) {
+            prefs.edit().putBoolean(KEY_MUSIC_PANE_ENABLED, value).apply()
+        }
+
     companion object {
         private const val PREFS_NAME = "launcher_prefs"
         private const val KEY_LEFT_HAND_DRIVE = "lhd"
@@ -140,23 +204,36 @@ class LauncherPreferences(context: Context) {
         private const val KEY_3D_BUILDINGS = "show_3d_buildings"
         private const val KEY_LAUNCHER_MODE = "launcher_mode"
         private const val KEY_LARGE_SHORTCUT_ICONS = "large_shortcut_icons"
+        private const val KEY_SHORTCUT_ICON_SIZE = "shortcut_icon_size"
         private const val KEY_DRIVING_ZOOM = "driving_zoom"
         private const val KEY_PUCK_H_OFFSET = "puck_h_offset"
         private const val KEY_PUCK_V_OFFSET = "puck_v_offset"
         private const val KEY_PUCK_SCALE = "puck_scale"
         private const val KEY_SHOW_TRAFFIC = "show_traffic"
+        private const val KEY_NAVIGATION_VOICE_ENABLED = "navigation_voice_enabled"
+        private const val KEY_NAVIGATION_VOICE_VOLUME = "navigation_voice_volume"
         private const val KEY_TOMTOM_API_KEY = "tomtom_api_key"
         private const val KEY_RECENT_DESTINATIONS = "recent_destinations"
         private const val KEY_SAVED_PLACES = "saved_places"
         private const val KEY_ONBOARDING_VERSION = "onboarding_version"
         private const val KEY_DEFAULT_AUDIO_PACKAGE = "default_audio_package"
+        private const val KEY_DOCK_PINNED_PACKAGES = "dock_pinned_packages"
+        private const val KEY_ALBUM_ART_MODE = "album_art_mode"
+        private const val KEY_SHOW_STATUS_STRIP = "show_status_strip"
+        private const val KEY_SHOW_SYSTEM_STATUS_BAR = "show_system_status_bar"
+        private const val KEY_MUSIC_PANE_ENABLED = "music_pane_enabled"
+        const val DEFAULT_ALBUM_ART_MODE = "PLAIN"
         const val MAX_RECENT_DESTINATIONS = 10
         const val MAX_SAVED_PLACES = 50
+        const val MAX_DOCK_PINNED_APPS = 5
         const val DEFAULT_MAP_MEDIA_RATIO = 0.6f
         const val DEFAULT_DRIVING_ZOOM = 17.5f
         const val DEFAULT_PUCK_H_OFFSET = 0.3f
         const val DEFAULT_PUCK_V_OFFSET = 0.4f
         const val DEFAULT_PUCK_SCALE = 1.0f
+        const val MIN_NAVIGATION_VOICE_VOLUME = 0.5f
+        const val MAX_NAVIGATION_VOICE_VOLUME = 1.0f
+        const val DEFAULT_NAVIGATION_VOICE_VOLUME = 1.0f
 
         private fun placeToJson(place: SearchResultPlace): JSONObject =
             JSONObject().apply {
@@ -168,6 +245,20 @@ class LauncherPreferences(context: Context) {
                 put("category", place.category)
                 put("isDroppedPin", place.isDroppedPin)
             }
+
+        private fun parsePackageListJson(json: String): List<String> {
+            return try {
+                val array = JSONArray(json)
+                buildList {
+                    for (i in 0 until array.length()) {
+                        val pkg = array.optString(i, "").trim()
+                        if (pkg.isNotEmpty()) add(pkg)
+                    }
+                }
+            } catch (_: Exception) {
+                emptyList()
+            }
+        }
 
         private fun parsePlacesJson(json: String): List<SearchResultPlace> {
             return try {

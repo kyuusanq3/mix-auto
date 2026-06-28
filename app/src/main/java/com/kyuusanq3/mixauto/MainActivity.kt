@@ -15,6 +15,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -27,11 +28,11 @@ import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.kyuusanq3.mixauto.data.map.MapLibreEngineImpl
 import com.kyuusanq3.mixauto.data.media.MediaSessionRepository
-import com.kyuusanq3.mixauto.data.places.LocalPlacesRepository
+import com.kyuusanq3.mixauto.data.navigation.NavTtsPhrases
 import com.kyuusanq3.mixauto.domain.map.CarMapEngine
 import com.kyuusanq3.mixauto.ui.dashboard.DashboardScreen
+import com.kyuusanq3.mixauto.ui.map.MapHostViewModel
 import com.kyuusanq3.mixauto.ui.media.MediaPlayerViewModel
 import com.kyuusanq3.mixauto.ui.onboarding.CURRENT_ONBOARDING_VERSION
 import com.kyuusanq3.mixauto.ui.onboarding.OnboardingStep
@@ -47,10 +48,10 @@ import java.io.File
 
 class MainActivity : ComponentActivity() {
 
-    private lateinit var localPlacesRepository: LocalPlacesRepository
-    private lateinit var mapEngine: CarMapEngine
+    private lateinit var mapHostViewModel: MapHostViewModel
     private lateinit var launcherViewModel: LauncherViewModel
     private lateinit var launcherPreferences: LauncherPreferences
+    private lateinit var appUpdateViewModel: AppUpdateViewModel
 
     private var showOnboarding by mutableStateOf(false)
     private var pendingOnboardingSteps = emptyList<OnboardingStep>()
@@ -58,8 +59,8 @@ class MainActivity : ComponentActivity() {
     private val locationPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions(),
     ) { results ->
-        if (results.values.any { it }) {
-            mapEngine.retryLocationActivation()
+        if (results.values.any { it } && ::mapHostViewModel.isInitialized) {
+            mapHostViewModel.mapEngine.retryLocationActivation()
         }
     }
 
@@ -71,32 +72,19 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         launcherPreferences = LauncherPreferences(this)
         applyLauncherMode(launcherPreferences.isLauncherMode)
-        localPlacesRepository = LocalPlacesRepository(this)
-        mapEngine = MapLibreEngineImpl(
-            localPlaces = localPlacesRepository,
-            initialUseVectorTiles = launcherPreferences.useVectorTiles,
-            initialShow3dBuildings = launcherPreferences.show3dBuildings,
-            initialDrivingZoom = launcherPreferences.drivingZoom.toDouble(),
-            initialPuckHOffset = launcherPreferences.puckHorizontalOffset,
-            initialPuckVOffset = launcherPreferences.puckVerticalOffset,
-            initialPuckScale = launcherPreferences.puckScale,
-        )
-        mapEngine.setTrafficEnabled(
-            launcherPreferences.showTraffic,
-            launcherPreferences.tomTomApiKey,
-        )
+        mapHostViewModel = ViewModelProvider(this)[MapHostViewModel::class.java]
+        val mapEngine: CarMapEngine = mapHostViewModel.mapEngine
+        val navigationVoiceController = mapHostViewModel.navigationVoiceController
 
         MediaSessionRepository.getInstance(this)
         launcherViewModel = ViewModelProvider(this)[LauncherViewModel::class.java]
+        appUpdateViewModel = ViewModelProvider(this)[AppUpdateViewModel::class.java]
         pendingOnboardingSteps = pendingOnboardingSteps(launcherPreferences.onboardingVersion)
         val shouldShowOnboarding = launcherPreferences.onboardingVersion < CURRENT_ONBOARDING_VERSION &&
             pendingOnboardingSteps.isNotEmpty()
         showOnboarding = shouldShowOnboarding
         WindowCompat.setDecorFitsSystemWindows(window, false)
-        WindowInsetsControllerCompat(window, window.decorView).apply {
-            show(WindowInsetsCompat.Type.systemBars())
-            systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_DEFAULT
-        }
+        applySystemBarVisibility(launcherPreferences.showSystemStatusBar)
         setContent {
             MixAutoTheme {
                 Box(modifier = Modifier.fillMaxSize()) {
@@ -104,10 +92,14 @@ class MainActivity : ComponentActivity() {
                     val mapDataViewModel: MapDataViewModel = viewModel(
                         factory = MapDataViewModelFactory(
                             application = application,
-                            localPlacesRepository = localPlacesRepository,
+                            localPlacesRepository = mapHostViewModel.localPlacesRepository,
                         ),
                     )
                     val mediaState by mediaViewModel.mediaState.collectAsStateWithLifecycle()
+
+                    SideEffect {
+                        applySystemBarVisibility(launcherViewModel.showSystemStatusBar)
+                    }
 
                     DashboardScreen(
                     mapEngine = mapEngine,
@@ -115,10 +107,16 @@ class MainActivity : ComponentActivity() {
                     mediaState = mediaState,
                     defaultAudioPackage = launcherViewModel.defaultAudioPackage,
                     onSetDefaultAudioPackage = launcherViewModel::updateDefaultAudioPackage,
+                    onSelectAudioSource = { packageName ->
+                        launcherViewModel.updateDefaultAudioPackage(packageName)
+                        mediaViewModel.selectAudioSource(packageName)
+                    },
                     onMediaPlayPause = mediaViewModel::playPause,
                     onMediaSkipPrevious = mediaViewModel::skipToPrevious,
                     onMediaSkipNext = mediaViewModel::skipToNext,
                     onMediaToggleLike = mediaViewModel::toggleLike,
+                    albumArtMode = launcherViewModel.albumArtMode,
+                    onAlbumArtModeChange = launcherViewModel::updateAlbumArtMode,
                     isLeftHandDrive = launcherViewModel.isLeftHandDrive,
                     isShortcutsHorizontal = launcherViewModel.isShortcutsHorizontal,
                     mapMediaRatio = launcherViewModel.mapMediaRatio,
@@ -131,9 +129,17 @@ class MainActivity : ComponentActivity() {
                     useVectorTiles = launcherViewModel.useVectorTiles,
                     show3dBuildings = launcherViewModel.show3dBuildings,
                     showTraffic = launcherViewModel.showTraffic,
+                    navigationVoiceEnabled = launcherViewModel.navigationVoiceEnabled,
+                    navigationVoiceVolume = launcherViewModel.navigationVoiceVolume,
                     tomTomApiKey = launcherViewModel.tomTomApiKey,
                     isLauncherMode = launcherViewModel.isLauncherMode,
-                    isLargeShortcutIcons = launcherViewModel.isLargeShortcutIcons,
+                    shortcutIconSize = launcherViewModel.dockShortcutIconSize,
+                    dockPinnedPackages = launcherViewModel.dockPinnedPackages,
+                    onToggleDockPin = launcherViewModel::toggleDockPinnedPackage,
+                    launchableApps = launcherViewModel.launchableApps,
+                    audioPlayerPackages = launcherViewModel.audioPlayerPackages,
+                    isAppDrawerLoading = launcherViewModel.isAppDrawerLoading,
+                    onEnsureLaunchableAppsLoaded = launcherViewModel::ensureLaunchableAppsLoaded,
                     drivingZoom = launcherViewModel.drivingZoom,
                     puckHorizontalOffset = launcherViewModel.puckHorizontalOffset,
                     puckVerticalOffset = launcherViewModel.puckVerticalOffset,
@@ -157,6 +163,19 @@ class MainActivity : ComponentActivity() {
                             launcherViewModel.tomTomApiKey,
                         )
                     },
+                    onToggleNavigationVoice = {
+                        launcherViewModel.toggleNavigationVoice()
+                        mapEngine.setNavigationVoiceEnabled(launcherViewModel.navigationVoiceEnabled)
+                    },
+                    onNavigationVoiceVolumeChange = { value ->
+                        launcherViewModel.updateNavigationVoiceVolume(value)
+                        navigationVoiceController.volume = launcherViewModel.navigationVoiceVolume
+                    },
+                    onTestNavigationVoice = {
+                        navigationVoiceController.speakPreview(
+                            NavTtsPhrases.buildAheadCue("turn right", "Main Street", "turn"),
+                        )
+                    },
                     onTomTomApiKeyChange = { key ->
                         launcherViewModel.updateTomTomApiKey(key)
                         mapEngine.setTrafficEnabled(
@@ -171,7 +190,7 @@ class MainActivity : ComponentActivity() {
                             promptSetAsDefaultHome()
                         }
                     },
-                    onToggleLargeShortcutIcons = launcherViewModel::toggleLargeShortcutIcons,
+                    onShortcutIconSizeChange = launcherViewModel::updateDockShortcutIconSize,
                     onDrivingZoomChange = { value ->
                         launcherViewModel.updateDrivingZoom(value)
                         mapEngine.setDrivingZoom(value.toDouble())
@@ -194,6 +213,10 @@ class MainActivity : ComponentActivity() {
                         launcherViewModel.updatePuckScale(value)
                         mapEngine.setPuckScale(value)
                     },
+                    showStatusStrip = launcherViewModel.showStatusStrip,
+                    showSystemStatusBar = launcherViewModel.showSystemStatusBar,
+                    onToggleShowStatusStrip = launcherViewModel::toggleShowStatusStrip,
+                    onToggleShowSystemStatusBar = launcherViewModel::toggleShowSystemStatusBar,
                     onInstallApk = ::launchApkInstall,
                 )
 
@@ -205,13 +228,16 @@ class MainActivity : ComponentActivity() {
                                 showOnboarding = false
                                 requestLocationPermissionIfNeeded()
                                 refreshMediaSessionsAndBootAudio()
+                                appUpdateViewModel.checkForUpdate(autoPrompt = true)
                             },
                         )
                     }
                 }
             }
         }
-        ViewModelProvider(this)[AppUpdateViewModel::class.java].checkForUpdate()
+        if (!shouldShowOnboarding && savedInstanceState == null) {
+            appUpdateViewModel.checkForUpdate(autoPrompt = true)
+        }
         if (!shouldShowOnboarding) {
             requestLocationPermissionIfNeeded()
         }
@@ -219,7 +245,13 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
+        if (::launcherPreferences.isInitialized) {
+            applySystemBarVisibility(launcherPreferences.showSystemStatusBar)
+        }
         refreshMediaSessionsAndBootAudio()
+        if (::mapHostViewModel.isInitialized && hasLocationPermission()) {
+            mapHostViewModel.mapEngine.retryLocationActivation()
+        }
     }
 
     private fun refreshMediaSessionsAndBootAudio() {
@@ -245,7 +277,7 @@ class MainActivity : ComponentActivity() {
 
     private fun requestLocationPermissionIfNeeded() {
         if (hasLocationPermission()) {
-            mapEngine.retryLocationActivation()
+            mapHostViewModel.mapEngine.retryLocationActivation()
         } else {
             locationPermissionLauncher.launch(
                 arrayOf(
@@ -266,6 +298,18 @@ class MainActivity : ComponentActivity() {
             Manifest.permission.ACCESS_COARSE_LOCATION,
         ) == PackageManager.PERMISSION_GRANTED
         return fineGranted || coarseGranted
+    }
+
+    private fun applySystemBarVisibility(show: Boolean) {
+        WindowInsetsControllerCompat(window, window.decorView).apply {
+            if (show) {
+                show(WindowInsetsCompat.Type.systemBars())
+                systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_DEFAULT
+            } else {
+                systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+                hide(WindowInsetsCompat.Type.systemBars())
+            }
+        }
     }
 
     private fun applyLauncherMode(enabled: Boolean) {
@@ -312,6 +356,20 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun launchApkInstall(apkFile: File) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
+            !packageManager.canRequestPackageInstalls()
+        ) {
+            try {
+                startActivity(
+                    Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES).apply {
+                        data = android.net.Uri.parse("package:$packageName")
+                    },
+                )
+            } catch (_: ActivityNotFoundException) {
+                // Fall through to install intent; system may still prompt.
+            }
+            return
+        }
         val uri = FileProvider.getUriForFile(
             this,
             "${packageName}.fileprovider",

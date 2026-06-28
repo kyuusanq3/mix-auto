@@ -30,14 +30,29 @@ class AppUpdateViewModel(application: Application) : AndroidViewModel(applicatio
     private val _uiState = MutableStateFlow<AppUpdateState>(AppUpdateState.Idle)
     val uiState: StateFlow<AppUpdateState> = _uiState.asStateFlow()
 
-    private var availableUpdate: UpdateInfo? = null
+    private val _showDownloadOffer = MutableStateFlow(false)
+    val showDownloadOffer: StateFlow<Boolean> = _showDownloadOffer.asStateFlow()
 
-    fun checkForUpdate() {
+    private val _showInstallOffer = MutableStateFlow(false)
+    val showInstallOffer: StateFlow<Boolean> = _showInstallOffer.asStateFlow()
+
+    private var availableUpdate: UpdateInfo? = null
+    private var pendingAutoPrompt = false
+    private var bootAutoCheckDone = false
+
+    fun checkForUpdate(autoPrompt: Boolean = false) {
+        if (autoPrompt && bootAutoCheckDone) return
+
         if (_uiState.value is AppUpdateState.Checking ||
             _uiState.value is AppUpdateState.Downloading
         ) {
             return
         }
+
+        if (autoPrompt) {
+            bootAutoCheckDone = true
+        }
+        pendingAutoPrompt = autoPrompt
 
         viewModelScope.launch {
             _uiState.value = AppUpdateState.Checking
@@ -47,12 +62,17 @@ class AppUpdateViewModel(application: Application) : AndroidViewModel(applicatio
                     if (update != null) {
                         availableUpdate = update
                         _uiState.value = AppUpdateState.Available(update.versionName)
+                        if (pendingAutoPrompt) {
+                            _showDownloadOffer.value = true
+                        }
                     } else {
                         availableUpdate = null
                         _uiState.value = AppUpdateState.UpToDate
                     }
+                    pendingAutoPrompt = false
                 },
                 onFailure = { error ->
+                    pendingAutoPrompt = false
                     _uiState.value = AppUpdateState.Error(
                         error.message ?: "Could not check for updates",
                     )
@@ -65,6 +85,8 @@ class AppUpdateViewModel(application: Application) : AndroidViewModel(applicatio
         if (_uiState.value is AppUpdateState.Downloading) return
         if (availableUpdate == null && _uiState.value !is AppUpdateState.Available) return
 
+        _showDownloadOffer.value = false
+
         viewModelScope.launch {
             _uiState.value = AppUpdateState.Downloading(progress = 0f)
             val result = withContext(Dispatchers.IO) {
@@ -75,6 +97,7 @@ class AppUpdateViewModel(application: Application) : AndroidViewModel(applicatio
             result.fold(
                 onSuccess = { apkFile ->
                     _uiState.value = AppUpdateState.ReadyToInstall(apkFile)
+                    _showInstallOffer.value = true
                 },
                 onFailure = { error ->
                     _uiState.value = AppUpdateState.Error(
@@ -83,5 +106,18 @@ class AppUpdateViewModel(application: Application) : AndroidViewModel(applicatio
                 },
             )
         }
+    }
+
+    fun dismissDownloadOffer() {
+        _showDownloadOffer.value = false
+    }
+
+    fun dismissInstallOffer() {
+        _showInstallOffer.value = false
+    }
+
+    fun clearAutoPrompts() {
+        _showDownloadOffer.value = false
+        _showInstallOffer.value = false
     }
 }

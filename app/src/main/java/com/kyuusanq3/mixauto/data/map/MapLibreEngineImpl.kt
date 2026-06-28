@@ -13,9 +13,16 @@ import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
 import androidx.core.content.ContextCompat
+import com.kyuusanq3.mixauto.BuildConfig
+import com.kyuusanq3.mixauto.data.navigation.NavStepPhrase
+import com.kyuusanq3.mixauto.data.navigation.NavTickContext
+import com.kyuusanq3.mixauto.data.navigation.NavTtsPhrases
+import com.kyuusanq3.mixauto.data.navigation.NavigationVoiceController
 import com.kyuusanq3.mixauto.data.places.LocalPlacesRepository
 import com.kyuusanq3.mixauto.domain.map.CarMapEngine
 import com.kyuusanq3.mixauto.domain.map.MapUiState
+import com.kyuusanq3.mixauto.domain.map.RouteProvider
+import com.kyuusanq3.mixauto.domain.map.RouteOption
 import com.kyuusanq3.mixauto.domain.map.SearchResultPlace
 import java.net.HttpURLConnection
 import java.net.URL
@@ -29,6 +36,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -61,18 +69,30 @@ import org.maplibre.android.style.layers.FillExtrusionLayer
 import org.maplibre.android.style.layers.LineLayer
 import org.maplibre.android.style.layers.Property
 import org.maplibre.android.style.layers.PropertyFactory
+import org.maplibre.android.style.layers.PropertyValue
 import org.maplibre.android.style.layers.RasterLayer
 import org.maplibre.android.style.layers.SymbolLayer
 import org.maplibre.android.style.sources.GeoJsonSource
 import org.maplibre.android.style.sources.RasterSource
 import org.maplibre.android.style.sources.TileSet
+import kotlin.math.abs
+import kotlin.math.ceil
 import kotlin.math.cos
 import kotlin.math.hypot
 import kotlin.math.max
+import kotlin.math.min
 import kotlin.math.roundToInt
 import kotlin.math.sin
 
 private data class ClosestSegmentResult(val distM: Float, val lat: Double, val lng: Double)
+
+private data class RouteProjection(
+    val segmentIndex: Int,
+    val splitLat: Double,
+    val splitLng: Double,
+    val distanceFromStartM: Float,
+    val distToRouteM: Float,
+)
 
 private data class LegStep(
     val maneuverLat: Double,
@@ -80,6 +100,17 @@ private data class LegStep(
     val instruction: String,
     val distanceLabel: String,
     val streetName: String,
+    val distanceMeters: Double,
+    val maneuverType: String,
+    val maneuverModifier: String,
+)
+
+private fun LegStep.toNavStepPhrase(): NavStepPhrase = NavStepPhrase(
+    instruction = instruction,
+    shortInstruction = NavTtsPhrases.shortManeuver(maneuverType, maneuverModifier),
+    streetName = streetName,
+    distanceMeters = distanceMeters,
+    maneuverType = maneuverType,
 )
 
 private data class RouteResult(
@@ -89,7 +120,28 @@ private data class RouteResult(
     val instruction: String,
     val distance: String,
     val steps: List<LegStep> = emptyList(),
+    val durationSeconds: Double = 0.0,
+    val distanceMeters: Double = 0.0,
+    val trafficDelaySeconds: Int = 0,
 )
+
+private data class StoredRoute(
+    val id: String,
+    val provider: RouteProvider,
+    val label: String,
+    val subtitle: String,
+    val result: RouteResult,
+) {
+    fun toRouteOption(): RouteOption = RouteOption(
+        id = id,
+        provider = provider,
+        label = label,
+        etaMinutes = ceil(result.durationSeconds / 60.0).toInt().coerceAtLeast(1),
+        distanceMeters = result.distanceMeters,
+        subtitle = subtitle,
+        geometryPoints = result.geometryPoints.map { Pair(it.latitude, it.longitude) },
+    )
+}
 
 private data class ResolvedLocation(
     val latLng: LatLng,
@@ -99,6 +151,7 @@ private data class ResolvedLocation(
 
 class MapLibreEngineImpl(
     private val localPlaces: LocalPlacesRepository? = null,
+    private val navigationVoice: NavigationVoiceController? = null,
     initialUseVectorTiles: Boolean = true,
     initialShow3dBuildings: Boolean = false,
     initialDrivingZoom: Double = 17.5,
@@ -121,6 +174,7 @@ class MapLibreEngineImpl(
     private var puckHorizontalOffset = initialPuckHOffset
     private var puckVerticalOffset = initialPuckVOffset
     private var puckScale = initialPuckScale
+    private var mapTapDismissHandler: (() -> Unit)? = null
 
     private var mapView: MapView? = null
     private var mapLibreMap: org.maplibre.android.maps.MapLibreMap? = null
@@ -135,7 +189,6 @@ class MapLibreEngineImpl(
     private var locationEngine: LocationEngine? = null
     private var locationEngineCallback: LocationEngineCallback<LocationEngineResult>? = null
     private var freshLocationListener: LocationListener? = null
-    private var listenersRegistered = false
     private var pendingLocationActivation = false
     private var pendingLocationFix: Location? = null
     private var locationPollJob: Job? = null
@@ -147,6 +200,10 @@ class MapLibreEngineImpl(
     private var savedPlacesKeys = emptySet<String>()
     private var savedPlacesCache = emptyList<SearchResultPlace>()
     private var routeGeometryPoints: List<LatLng> = emptyList()
+    private var routeProgressSegmentIndex = 0
+    private var routeProgressSplitLat = 0.0
+    private var routeProgressSplitLng = 0.0
+    private var routeProgressDistanceM = 0f
     private var offRouteCount: Int = 0
     private var rerouteCooldownUntilMs: Long = 0L
     private var isRerouteInProgress: Boolean = false
@@ -154,6 +211,36 @@ class MapLibreEngineImpl(
     private var lastStableBearing: Float? = null
     private var deadReckoningJob: Job? = null
     private var lastDeadReckoningLocation: Location? = null
+    private var drAnchor: Location? = null
+    private var lastLocationFixForDedup: Location? = null
+    private var lastAppliedTrackingPadding: IntArray? = null
+    private var lastUiStateCoordUpdateMs: Long = 0L
+    private var lastUiStateCoordLat: Double? = null
+    private var lastUiStateCoordLng: Double? = null
+    private var lastPuckPushLocation: Location? = null
+    private var lastRouteProgressMapUpdateM: Float = 0f
+    private var pendingPoiPreviewTarget: LatLng? = null
+    private var pendingPoiPreviewZoom: Double = POI_PREVIEW_ZOOM
+    private var poiPreviewRetryCount = 0
+    private var poiPreviewRetryRunnable: Runnable? = null
+    private var topDownViewportSyncRunnable: Runnable? = null
+    /** User panned/zoomed in CropFree explore — skip padding sync on layout changes. */
+    private var topDownExploreUserAdjusted = false
+    private var routeOverviewOrigin: LatLng? = null
+    private var routeOverviewDestination: LatLng? = null
+    /** Blocks layout/padding updates while route overview or nav dive animation runs. */
+    private var navigationCameraTransitionActive = false
+    private val routeResultsById = mutableMapOf<String, StoredRoute>()
+    private var selectionOrigin: LatLng? = null
+    private var selectionDestination: LatLng? = null
+    private var selectionBoundsPoints: List<LatLng> = emptyList()
+    private var routeOverviewTimerStartMs = 0L
+    /** TomTom delay from parallel fetch when OSRM route is selected (nav-start TTS tier 2). */
+    private var stashedParallelTomTomDelaySeconds = 0
+    private var pendingNavTrafficPhrase: String? = null
+    private var navTrafficPrefetchJob: Job? = null
+    /** True until first [activateNavigationTracking] consumes the nav-start traffic line. */
+    private var navStartTrafficEligible = false
 
     override fun createMapView(context: Context): View {
         mapView?.let { existing ->
@@ -173,15 +260,28 @@ class MapLibreEngineImpl(
             view.onCreate(null)
             view.onStart()
             view.onResume()
-            view.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
-                mapLibreMap?.let { map -> handleMapLayoutChange(map) }
+            view.addOnLayoutChangeListener { v, _, _, _, _, _, _, _, _ ->
+                if (v.width <= 0 || v.height <= 0) return@addOnLayoutChangeListener
+                mapLibreMap?.let { map ->
+                    view.post { handleMapLayoutChange(map) }
+                }
             }
             view.getMapAsync { map ->
                 mapLibreMap = map
-                configureCompassPosition(map, context)
+                configureMapUiChrome(map, context)
                 map.addOnCameraMoveStartedListener { reason ->
                     if (reason == MapLibreMap.OnCameraMoveStartedListener.REASON_API_GESTURE) {
                         _uiState.update { it.copy(isCameraDetached = true) }
+                        ensureTopDownCameraDetached(map)
+                        stopDeadReckoning()
+                        if (_uiState.value.isInTopDownView) {
+                            cancelTopDownViewportSync()
+                            cancelPoiPreviewRetries()
+                            pendingPoiPreviewTarget = null
+                            if (_uiState.value.selectedPoi == null) {
+                                topDownExploreUserAdjusted = true
+                            }
+                        }
                     }
                 }
                 registerPoiInteractions(map)
@@ -191,11 +291,18 @@ class MapLibreEngineImpl(
         }
     }
 
-    private fun configureCompassPosition(map: MapLibreMap, context: Context) {
-        val marginPx = (COMPASS_MARGIN_DP * context.resources.displayMetrics.density).toInt()
+    private fun configureMapUiChrome(map: MapLibreMap, context: Context) {
+        val marginPx = (MAP_UI_MARGIN_DP * context.resources.displayMetrics.density).toInt()
+        // Attribution ℹ sits to the right of the logo; left inset = logo width + gap.
+        val attributionLeftPx =
+            (ATTRIBUTION_LEFT_MARGIN_DP * context.resources.displayMetrics.density).toInt()
         map.uiSettings.apply {
             setCompassGravity(Gravity.BOTTOM or Gravity.END)
             setCompassMargins(marginPx, marginPx, marginPx, marginPx)
+            setLogoGravity(Gravity.BOTTOM or Gravity.START)
+            setLogoMargins(marginPx, marginPx, marginPx, marginPx)
+            setAttributionGravity(Gravity.BOTTOM or Gravity.START)
+            setAttributionMargins(attributionLeftPx, marginPx, marginPx, marginPx)
         }
     }
 
@@ -207,13 +314,13 @@ class MapLibreEngineImpl(
 
         poiRefreshJob?.cancel()
         poiRefreshJob = null
-        routeOverviewJob?.cancel()
-        routeOverviewJob = null
+        clearRouteOverviewState()
         fullRouteSteps = emptyList()
         currentStepIndex = 0
         destinationLatLng = null
         navigationArrivalTriggered = false
         routeGeometryPoints = emptyList()
+        resetRouteProgress()
         offRouteCount = 0
         isRerouteInProgress = false
 
@@ -251,6 +358,13 @@ class MapLibreEngineImpl(
         applyTrafficOverlay()
     }
 
+    override fun setNavigationVoiceEnabled(enabled: Boolean) {
+        navigationVoice?.enabled = enabled
+        if (!enabled) {
+            navigationVoice?.onNavigationEnded()
+        }
+    }
+
     override fun setDrivingZoom(zoom: Double) {
         freeDriveZoom = zoom
         navZoom = zoom + 1.0
@@ -264,6 +378,7 @@ class MapLibreEngineImpl(
     override fun setViewportPadding(horizontalFraction: Float, verticalFraction: Float) {
         puckHorizontalOffset = horizontalFraction
         puckVerticalOffset = verticalFraction
+        lastAppliedTrackingPadding = null
         val map = mapLibreMap ?: return
         applyDrivingViewportPadding(map)
         applyDrivingTrackingPadding(map)
@@ -272,19 +387,68 @@ class MapLibreEngineImpl(
 
     override fun setPuckScale(scale: Float) {
         puckScale = scale
-        val component = mapLibreMap?.locationComponent ?: return
+        val map = mapLibreMap ?: return
+        val ctx = appContext ?: return
+        val component = map.locationComponent
         if (!component.isLocationComponentActivated) return
-        val updated = component.locationComponentOptions
-            .toBuilder()
-            .maxZoomIconScale(scale)
-            .minZoomIconScale(scale)
-            .build()
-        component.applyStyle(updated)
+        map.getStyle { style ->
+            component.applyStyle(buildLocationComponentOptions(ctx, style))
+        }
+    }
+
+    private fun resolvePuckLayerAnchorId(style: Style): String? {
+        if (style.getLayer(ROUTE_REMAINING_LAYER_ID) != null) {
+            return ROUTE_REMAINING_LAYER_ID
+        }
+        if (style.getLayer(TRAFFIC_LAYER_ID) != null) {
+            return TRAFFIC_LAYER_ID
+        }
+        return null
+    }
+
+    private fun buildLocationComponentOptions(context: Context, style: Style): LocationComponentOptions {
+        val builder = LocationComponentOptions.builder(context)
+            .maxZoomIconScale(puckScale)
+            .minZoomIconScale(puckScale)
+        resolvePuckLayerAnchorId(style)?.let { anchorLayerId ->
+            builder.layerAbove(anchorLayerId)
+        }
+        return builder.build()
+    }
+
+    private fun ensurePuckAboveOverlays() {
+        val map = mapLibreMap ?: return
+        val ctx = appContext ?: return
+        val component = map.locationComponent
+        if (!component.isLocationComponentActivated) return
+        map.getStyle { style ->
+            component.applyStyle(buildLocationComponentOptions(ctx, style))
+        }
+    }
+
+    override fun setMapTapDismissHandler(handler: (() -> Unit)?) {
+        mapTapDismissHandler = handler
     }
 
     /**
-     * After changing tracking padding or puck style, force a forceLocationUpdate so the map
-     * camera repositions immediately without waiting for the next GPS fix or dead-reckoning tick.
+     * Push puck position when it materially moved. LocationComponent already receives engine
+     * updates in free drive — extra forceLocationUpdate calls race MapLibre's RenderThread and
+     * can SIGSEGV on the emulator (fault addr 0x30 in MapRenderer::render).
+     */
+    private fun pushPuckLocationIfNeeded(location: Location, force: Boolean = false) {
+        if (!force) {
+            val prev = lastPuckPushLocation
+            if (prev != null && prev.distanceTo(location) < PUCK_PUSH_MIN_DIST_M) return
+        }
+        val map = mapLibreMap ?: return
+        val component = map.locationComponent
+        if (!component.isLocationComponentActivated || !component.isLocationComponentEnabled) return
+        lastPuckPushLocation = Location(location)
+        component.forceLocationUpdate(location)
+    }
+
+    /**
+     * After changing tracking padding or puck style, force a puck refresh so the camera repositions.
      */
     private fun forceLocationUpdateForImmediateRender(map: MapLibreMap) {
         val component = map.locationComponent
@@ -297,7 +461,7 @@ class MapLibreEngineImpl(
                 }
             }
             ?: return
-        component.forceLocationUpdate(location)
+        pushPuckLocationIfNeeded(location, force = true)
     }
 
     private fun applyMapStyle(map: MapLibreMap, context: Context) {
@@ -308,8 +472,7 @@ class MapLibreEngineImpl(
         }
 
         map.setStyle(builder) { style ->
-            val density = context.resources.displayMetrics.density
-            PoiIconFactory.createAllIcons(density).forEach { (id, bitmap) ->
+            PoiIconFactory.createAllIcons(context).forEach { (id, bitmap) ->
                 style.addImage(id, bitmap)
             }
             activateLocationTracking(map, style)
@@ -336,7 +499,10 @@ class MapLibreEngineImpl(
             style.removeSource(TRAFFIC_SOURCE_ID)
         }
 
-        if (!trafficEnabled || tomTomApiKey.isBlank()) return
+        if (!trafficEnabled || tomTomApiKey.isBlank()) {
+            ensurePuckAboveOverlays()
+            return
+        }
 
         val tileUrl =
             "https://api.tomtom.com/maps/orbis/traffic/flow/raster/tile/{z}/{x}/{y}" +
@@ -352,14 +518,11 @@ class MapLibreEngineImpl(
         } else {
             style.addLayer(trafficLayer)
         }
-        val existingCasing = style.getLayer(ROUTE_CASING_LAYER_ID)
-        val existingRoute = style.getLayer(ROUTE_LAYER_ID)
-        if (existingCasing != null && existingRoute != null) {
-            style.removeLayer(existingCasing)
-            style.removeLayer(existingRoute)
-            style.addLayerAbove(existingCasing, TRAFFIC_LAYER_ID)
-            style.addLayerAbove(existingRoute, ROUTE_CASING_LAYER_ID)
+        val existingCasing = style.getLayer(ROUTE_TRAVELED_CASING_LAYER_ID)
+        if (existingCasing != null) {
+            restackRouteLayersAbove(style, TRAFFIC_LAYER_ID)
         }
+        ensurePuckAboveOverlays()
     }
 
     override fun onStart() {
@@ -384,20 +547,20 @@ class MapLibreEngineImpl(
     }
 
     override fun onDestroy() {
-        deadReckoningJob?.cancel()
-        deadReckoningJob = null
+        stopDeadReckoning()
         locationPollJob?.cancel()
         locationPollJob = null
         locationRetryJob?.cancel()
         locationRetryJob = null
         poiRefreshJob?.cancel()
         poiRefreshJob = null
+        cancelPoiPreviewRetries()
+        cancelTopDownViewportSync()
         lastPhotonQueryCenter = null
         clearPoiCache()
         pendingLocationFix = null
         engineScope.cancel()
         removeFreshLocationListener()
-        listenersRegistered = false
         locationEngineCallback?.let { callback ->
             locationEngine?.removeLocationUpdates(callback)
         }
@@ -419,7 +582,11 @@ class MapLibreEngineImpl(
     ): List<SearchResultPlace> = withContext(Dispatchers.IO) {
         if (query.isBlank()) return@withContext emptyList()
 
-        val (searchLat, searchLng) = resolveSearchOrigin(currentLat, currentLng)
+        val (searchLat, searchLng) = if (isValidSearchOrigin(currentLat, currentLng)) {
+            currentLat to currentLng
+        } else {
+            resolveSearchOrigin(currentLat, currentLng)
+        }
 
         fun applyDistanceLimit(places: List<SearchResultPlace>): List<SearchResultPlace> =
             if (limitDistance) {
@@ -447,6 +614,12 @@ class MapLibreEngineImpl(
 
         val photon = fetchPhoton(query, searchLat, searchLng)
         val finalResults = applyDistanceLimit(mergeAndDeduplicate(localAndCache, photon))
+        Log.i(
+            TAG,
+            "searchDestination query=\"$query\" origin=$searchLat,$searchLng " +
+                "reliable=${hasReliableSearchOrigin()} local=${local.size} cache=${cacheResults.size} " +
+                "photon=${photon.size} final=${finalResults.size}",
+        )
         if (finalResults.isNotEmpty()) {
             withContext(Dispatchers.Main) {
                 mergeIntoPoiCache(finalResults)
@@ -459,7 +632,12 @@ class MapLibreEngineImpl(
     override fun getNearbyPois(lat: Double, lng: Double, limit: Int): List<SearchResultPlace> {
         if (limit <= 0) return emptyList()
 
-        val (searchLat, searchLng) = resolveSearchOrigin(lat, lng)
+        val (searchLat, searchLng) = if (isValidSearchOrigin(lat, lng)) {
+            lat to lng
+        } else {
+            resolveSearchOrigin(lat, lng)
+        }
+
         val cacheResults = poiCache.values
             .map { place ->
                 val distanceResults = FloatArray(1)
@@ -472,51 +650,129 @@ class MapLibreEngineImpl(
                 )
                 place.copy(distanceInMeters = distanceResults[0])
             }
+
+        val repo = localPlaces
+        val offlineResults = if (repo != null && repo.hasInstalledDatabase) {
+            repo.getPlacesInBounds(
+                minLat = searchLat - NEARBY_SEARCH_BBOX_DELTA,
+                maxLat = searchLat + NEARBY_SEARCH_BBOX_DELTA,
+                minLng = searchLng - NEARBY_SEARCH_BBOX_DELTA,
+                maxLng = searchLng + NEARBY_SEARCH_BBOX_DELTA,
+                limit = limit * 2,
+            ).map { place ->
+                val distanceResults = FloatArray(1)
+                Location.distanceBetween(
+                    searchLat,
+                    searchLng,
+                    place.latitude,
+                    place.longitude,
+                    distanceResults,
+                )
+                place.copy(
+                    distanceInMeters = distanceResults[0],
+                    category = normalizeOvertureCategory(place.category),
+                )
+            }
+        } else {
+            emptyList()
+        }
+
+        return mergeAndDeduplicate(offlineResults, cacheResults)
             .sortedBy { it.distanceInMeters }
             .take(limit)
-
-        if (cacheResults.isNotEmpty()) return cacheResults
-
-        val repo = localPlaces ?: return emptyList()
-        if (!repo.hasInstalledDatabase) return emptyList()
-
-        return repo.getPlacesInBounds(
-            minLat = searchLat - NEARBY_SEARCH_BBOX_DELTA,
-            maxLat = searchLat + NEARBY_SEARCH_BBOX_DELTA,
-            minLng = searchLng - NEARBY_SEARCH_BBOX_DELTA,
-            maxLng = searchLng + NEARBY_SEARCH_BBOX_DELTA,
-            limit = limit,
-        ).map { place ->
-            val distanceResults = FloatArray(1)
-            Location.distanceBetween(
-                searchLat,
-                searchLng,
-                place.latitude,
-                place.longitude,
-                distanceResults,
-            )
-            place.copy(
-                distanceInMeters = distanceResults[0],
-                category = normalizeOvertureCategory(place.category),
-            )
-        }.sortedBy { it.distanceInMeters }
     }
+
+    override fun hasOfflinePlacesDatabase(): Boolean =
+        localPlaces?.hasInstalledDatabase == true
 
     override fun resolveSearchOrigin(): Pair<Double, Double> {
         return resolveSearchOrigin(0.0, 0.0)
     }
 
+    override fun hasReliableSearchOrigin(): Boolean {
+        val state = _uiState.value
+        if (state.currentLat != null && state.currentLng != null &&
+            isValidSearchOrigin(state.currentLat, state.currentLng)
+        ) {
+            return true
+        }
+        lastKnownLocation?.let { loc ->
+            if (isValidSearchOrigin(loc.latitude, loc.longitude)) return true
+        }
+        resolveMapViewOriginForSearch()?.let { return true }
+        return false
+    }
+
+    override fun refreshSearchOrigin() {
+        val ctx = appContext ?: return
+        if (!hasLocationPermission(ctx)) return
+        refreshLocationOnly(ctx)
+        readLastKnownLocation(ctx)?.let { latLng ->
+            lastKnownLocation = latLng
+            syncSearchOriginToUiState(latLng.latitude, latLng.longitude)
+        }
+    }
+
     private fun resolveSearchOrigin(fallbackLat: Double, fallbackLng: Double): Pair<Double, Double> {
         val state = _uiState.value
-        if (state.currentLat != null && state.currentLng != null) {
+        if (state.currentLat != null && state.currentLng != null &&
+            isValidSearchOrigin(state.currentLat, state.currentLng)
+        ) {
             return state.currentLat to state.currentLng
         }
-        lastKnownLocation?.let { return it.latitude to it.longitude }
-        resolveMapViewOrigin()?.let { return it.latitude to it.longitude }
-        if (fallbackLat != 0.0 || fallbackLng != 0.0) {
+        lastKnownLocation?.let { loc ->
+            if (isValidSearchOrigin(loc.latitude, loc.longitude)) {
+                return loc.latitude to loc.longitude
+            }
+        }
+        resolveMapViewOriginForSearch()?.let { target ->
+            return target.latitude to target.longitude
+        }
+        if (isValidSearchOrigin(fallbackLat, fallbackLng)) {
             return fallbackLat to fallbackLng
         }
-        return 0.0 to 0.0
+        appContext?.let { ctx ->
+            if (hasLocationPermission(ctx)) {
+                readLastKnownLocation(ctx)?.let { latLng ->
+                    if (isValidSearchOrigin(latLng.latitude, latLng.longitude)) {
+                        lastKnownLocation = latLng
+                        syncSearchOriginToUiState(latLng.latitude, latLng.longitude)
+                        return latLng.latitude to latLng.longitude
+                    }
+                }
+            }
+        }
+        Log.w(TAG, "Search origin unresolved; using Philippines fallback")
+        return DEFAULT_LOCATION.latitude to DEFAULT_LOCATION.longitude
+    }
+
+    private fun isValidSearchOrigin(lat: Double, lng: Double): Boolean {
+        if (lat == 0.0 && lng == 0.0) return false
+        if (kotlin.math.abs(lat) < 0.01 && kotlin.math.abs(lng) < 0.01) return false
+        return true
+    }
+
+    private fun syncSearchOriginToUiState(lat: Double, lng: Double) {
+        _uiState.update { state ->
+            if (state.currentLat == lat && state.currentLng == lng) {
+                state
+            } else {
+                state.copy(currentLat = lat, currentLng = lng)
+            }
+        }
+    }
+
+    private fun resolveMapViewOriginForSearch(): LatLng? {
+        val map = mapLibreMap ?: return null
+        val position = map.cameraPosition
+        val target = position.target ?: return null
+        if (!_uiState.value.isNavigating && position.zoom < ROUTING_MIN_ZOOM) {
+            return null
+        }
+        if (!isValidSearchOrigin(target.latitude, target.longitude)) {
+            return null
+        }
+        return target
     }
 
     private suspend fun fetchPhoton(
@@ -696,32 +952,45 @@ class MapLibreEngineImpl(
         if (_uiState.value.isNavigating) {
             enterNavigationCamera()
         } else {
+            cancelTopDownViewportSync()
+            cancelPoiPreviewRetries()
+            pendingPoiPreviewTarget = null
+            topDownExploreUserAdjusted = false
+            _uiState.update { it.copy(isCameraDetached = false, isInTopDownView = false) }
             hasSnappedCameraToGps = false
             val target = lastKnownLocation ?: resolveFreeDriveTarget(map)
             if (target != null) {
                 snapCameraToGpsIfNeeded(target)
             } else {
                 activateFreeDriveTrackingMode(map)
-                _uiState.update { it.copy(isCameraDetached = false, isInTopDownView = false) }
             }
         }
     }
 
     override fun startFreeDrive() {
-        deadReckoningJob?.cancel()
-        deadReckoningJob = null
-        routeOverviewJob?.cancel()
-        routeOverviewJob = null
+        navigationVoice?.onNavigationEnded()
+        stopDeadReckoning()
+        clearRouteOverviewState()
         poiRefreshJob?.cancel()
         poiRefreshJob = null
+        cancelTopDownViewportSync()
+        cancelPoiPreviewRetries()
+        pendingPoiPreviewTarget = null
+        topDownExploreUserAdjusted = false
         fullRouteSteps = emptyList()
         currentStepIndex = 0
         destinationLatLng = null
         navigationArrivalTriggered = false
         routeGeometryPoints = emptyList()
+        resetRouteProgress()
         offRouteCount = 0
         isRerouteInProgress = false
         hasSnappedCameraToGps = false
+        routeResultsById.clear()
+        selectionOrigin = null
+        selectionDestination = null
+        selectionBoundsPoints = emptyList()
+        clearNavTrafficPrefetchState()
 
         _uiState.value = MapUiState(
             isNavigating = false,
@@ -744,8 +1013,19 @@ class MapLibreEngineImpl(
     }
 
     override fun dismissSelectedPoi() {
-        _uiState.update { it.copy(selectedPoi = null, nearbyPois = emptyList()) }
+        cancelPoiPreviewRetries()
+        pendingPoiPreviewTarget = null
+        topDownExploreUserAdjusted = false
+        _uiState.update {
+            it.copy(
+                selectedPoi = null,
+                nearbyPois = emptyList(),
+                isInTopDownView = false,
+            )
+        }
         clearCustomPin()
+        updatePoiLayerFromCache()
+        mapLibreMap?.triggerRepaint()
     }
 
     override fun focusOnLocation(lat: Double, lng: Double) {
@@ -753,6 +1033,9 @@ class MapLibreEngineImpl(
     }
 
     override fun focusOnPoi(place: SearchResultPlace, moveCamera: Boolean) {
+        if (moveCamera) {
+            _uiState.update { it.copy(isCameraDetached = true, isInTopDownView = true) }
+        }
         val distanceInMeters = computeDistanceFromReference(place.latitude, place.longitude)
         val nearbyPois = if (place.isDroppedPin) {
             getNearbyPois(place.latitude, place.longitude, limit = 10)
@@ -787,71 +1070,237 @@ class MapLibreEngineImpl(
             clearCustomPin()
         }
         if (moveCamera) {
+            clearPoiOverlay()
             focusOnLocation(place.latitude, place.longitude)
         }
     }
 
-    override fun enterTopDownView() {
+    override fun onMapHostLayoutChanged() {
         val map = mapLibreMap ?: return
-        val target = map.cameraPosition.target ?: return
-        val zoom = map.cameraPosition.zoom.coerceAtLeast(POI_PREVIEW_ZOOM)
-        animateTopDownCamera(target.latitude, target.longitude, zoom)
+        val view = mapView ?: return
+        if (view.width <= 0 || view.height <= 0) return
+        view.post { handleMapLayoutChange(map) }
     }
 
-    private fun animateTopDownCamera(lat: Double, lng: Double, zoom: Double) {
+    override fun enterTopDownView() {
         val map = mapLibreMap ?: return
-        val currentZoom = map.cameraPosition.zoom
-        val targetZoom = currentZoom.coerceAtLeast(zoom)
-        deadReckoningJob?.cancel()
-        deadReckoningJob = null
+        val target = lastKnownLocation
+            ?: resolveFreeDriveTarget(map)
+            ?: map.cameraPosition.target
+            ?: return
+        animateTopDownCamera(
+            target.latitude,
+            target.longitude,
+            TOP_DOWN_EXPLORE_ZOOM,
+            exploreMode = true,
+        )
+    }
+
+    private fun animateTopDownCamera(
+        lat: Double,
+        lng: Double,
+        zoom: Double,
+        exploreMode: Boolean = false,
+    ) {
+        val map = mapLibreMap ?: return
+        val targetZoom = if (exploreMode) {
+            zoom
+        } else {
+            map.cameraPosition.zoom.coerceAtLeast(zoom)
+        }
+        stopDeadReckoning()
+        topDownExploreUserAdjusted = false
         val component = map.locationComponent
         if (component.isLocationComponentActivated && component.isLocationComponentEnabled) {
             component.cameraMode = CameraMode.NONE
         }
         _uiState.update { it.copy(isCameraDetached = true, isInTopDownView = true) }
         clearViewportPaddingForPreview(map)
-        val cameraUpdate = CameraUpdateFactory.newCameraPosition(
-            CameraPosition.Builder()
-                .target(LatLng(lat, lng))
-                .zoom(targetZoom)
-                .tilt(0.0)
-                .bearing(0.0)
-                .build(),
-        )
-        val runAnimation = {
-            map.cancelTransitions()
-            map.animateCamera(cameraUpdate, POI_PREVIEW_ANIMATION_MS)
+        if (useVectorTiles) {
+            map.getStyle { showNativeVectorPoiLayers(it) }
         }
-        // Defer until after Compose resizes the map pane (e.g. POI detail opens at 30/70 split).
-        mapView?.post { runAnimation() } ?: runAnimation()
+        clearPoiOverlay()
+        pendingPoiPreviewTarget = LatLng(lat, lng)
+        pendingPoiPreviewZoom = targetZoom
+        poiPreviewRetryCount = 0
+        mapView?.requestLayout()
+        schedulePoiPreviewCameraRetry(immediate = true)
     }
 
-    private fun recenterOnSelectedPoi(map: MapLibreMap, place: SearchResultPlace) {
-        val targetZoom = map.cameraPosition.zoom.coerceAtLeast(POI_PREVIEW_ZOOM)
+    private fun cancelPoiPreviewRetries() {
+        poiPreviewRetryRunnable?.let { runnable ->
+            mapView?.removeCallbacks(runnable)
+        }
+        poiPreviewRetryRunnable = null
+        poiPreviewRetryCount = 0
+    }
+
+    private fun schedulePoiPreviewCameraRetry(immediate: Boolean = false) {
+        val map = mapLibreMap ?: return
+        val view = mapView ?: return
+        poiPreviewRetryRunnable?.let { view.removeCallbacks(it) }
+        poiPreviewRetryRunnable = null
+        val runnable = Runnable {
+            poiPreviewRetryRunnable = null
+            if (applyPoiPreviewCamera(map)) return@Runnable
+            if (poiPreviewRetryCount < POI_PREVIEW_MAX_RETRIES) {
+                poiPreviewRetryCount++
+                schedulePoiPreviewCameraRetry(immediate = false)
+            } else {
+                poiPreviewRetryCount = 0
+            }
+        }
+        poiPreviewRetryRunnable = runnable
+        if (immediate) {
+            view.post { view.post(runnable) }
+        } else {
+            view.postDelayed(runnable, POI_PREVIEW_RETRY_DELAY_MS * poiPreviewRetryCount.coerceAtLeast(1))
+        }
+    }
+
+    private fun applyPoiPreviewCamera(map: MapLibreMap): Boolean {
+        val view = mapView ?: return false
+        if (view.width <= 0 || view.height <= 0) return false
+        val target = pendingPoiPreviewTarget ?: return true
+
+        val component = map.locationComponent
+        if (component.isLocationComponentActivated && component.isLocationComponentEnabled) {
+            component.cameraMode = CameraMode.NONE
+        }
+        clearViewportPaddingForPreview(map)
+        if (useVectorTiles) {
+            map.getStyle { style -> showNativeVectorPoiLayers(style) }
+        }
+
+        val zoom = pendingPoiPreviewZoom
+        map.cancelTransitions()
         map.moveCamera(
             CameraUpdateFactory.newCameraPosition(
                 CameraPosition.Builder()
-                    .target(LatLng(place.latitude, place.longitude))
-                    .zoom(targetZoom)
+                    .target(target)
+                    .zoom(zoom)
                     .tilt(0.0)
                     .bearing(0.0)
                     .build(),
             ),
         )
+        pendingPoiPreviewTarget = null
+        map.triggerRepaint()
+        view.invalidate()
+        scheduleTopDownViewportSync(map)
+        return true
+    }
+
+    private fun ensureTopDownCameraDetached(map: MapLibreMap) {
+        val component = map.locationComponent
+        if (component.isLocationComponentActivated && component.isLocationComponentEnabled) {
+            component.cameraMode = CameraMode.NONE
+        }
+    }
+
+    /** Re-apply zero padding on the next frame so tiles fill the full MapView. */
+    private fun syncTopDownViewportPaddingOnly(map: MapLibreMap) {
+        ensureTopDownCameraDetached(map)
+        clearViewportPaddingForPreview(map)
+        map.triggerRepaint()
+        mapView?.invalidate()
+    }
+
+    private fun cancelTopDownViewportSync() {
+        topDownViewportSyncRunnable?.let { runnable ->
+            mapView?.removeCallbacks(runnable)
+        }
+        topDownViewportSyncRunnable = null
+    }
+
+    private fun scheduleTopDownViewportSync(map: MapLibreMap) {
+        val view = mapView ?: return
+        cancelTopDownViewportSync()
+        val runnable = Runnable {
+            topDownViewportSyncRunnable = null
+            if (!_uiState.value.isInTopDownView) return@Runnable
+            if (topDownExploreUserAdjusted && _uiState.value.selectedPoi == null) return@Runnable
+            syncTopDownViewportPaddingOnly(map)
+        }
+        topDownViewportSyncRunnable = runnable
+        view.post(runnable)
+    }
+
+    private fun recenterOnSelectedPoi(map: MapLibreMap, place: SearchResultPlace) {
+        refreshTopDownCamera(
+            map,
+            LatLng(place.latitude, place.longitude),
+            map.cameraPosition.zoom.coerceAtLeast(POI_PREVIEW_ZOOM),
+        )
+    }
+
+    private fun refreshTopDownCamera(map: MapLibreMap, target: LatLng, zoom: Double) {
+        val view = mapView ?: return
+        val component = map.locationComponent
+        if (component.isLocationComponentActivated && component.isLocationComponentEnabled) {
+            component.cameraMode = CameraMode.NONE
+        }
+        clearViewportPaddingForPreview(map)
+        map.cancelTransitions()
+        map.moveCamera(
+            CameraUpdateFactory.newCameraPosition(
+                CameraPosition.Builder()
+                    .target(target)
+                    .zoom(zoom)
+                    .tilt(0.0)
+                    .bearing(0.0)
+                    .build(),
+            ),
+        )
+        map.triggerRepaint()
+        view.invalidate()
+        scheduleTopDownViewportSync(map)
     }
 
     private fun handleMapLayoutChange(map: MapLibreMap) {
+        val view = mapView ?: return
+        if (view.width <= 0 || view.height <= 0) return
+
+        if (isRouteOverviewActive()) {
+            val origin = routeOverviewOrigin
+            val destination = routeOverviewDestination
+            if (origin != null && destination != null) {
+                fitRouteOverviewCamera(origin, destination, animate = false)
+            }
+            return
+        }
+        if (navigationCameraTransitionActive) {
+            return
+        }
+
         val state = _uiState.value
-        if (state.isInTopDownView && state.selectedPoi != null) {
-            clearViewportPaddingForPreview(map)
-            recenterOnSelectedPoi(map, state.selectedPoi)
-        } else if (!state.isInTopDownView) {
+        if (state.isInTopDownView) {
+            when {
+                pendingPoiPreviewTarget != null -> schedulePoiPreviewCameraRetry(immediate = true)
+                state.selectedPoi != null -> recenterOnSelectedPoi(map, state.selectedPoi)
+                topDownExploreUserAdjusted -> Unit
+                else -> syncTopDownViewportPaddingOnly(map)
+            }
+            return
+        }
+        if (!state.isCameraDetached) {
             applyDrivingTrackingPadding(map)
         }
     }
 
+    private fun applyMapPaddingImmediate(map: MapLibreMap, padding: ViewportPadding) {
+        map.moveCamera(
+            CameraUpdateFactory.paddingTo(
+                padding.left.toDouble(),
+                padding.top.toDouble(),
+                padding.right.toDouble(),
+                padding.bottom.toDouble(),
+            ),
+        )
+    }
+
     private fun clearViewportPaddingForPreview(map: MapLibreMap) {
-        map.setPadding(0, 0, 0, 0)
+        applyMapPaddingImmediate(map, ViewportPadding(0, 0, 0, 0))
         val component = map.locationComponent
         if (component.isLocationComponentActivated && component.isLocationComponentEnabled) {
             component.paddingWhileTracking(doubleArrayOf(0.0, 0.0, 0.0, 0.0))
@@ -868,16 +1317,396 @@ class MapLibreEngineImpl(
     private fun applyFreeDriveToMap(map: MapLibreMap) {
         applyDrivingViewportPadding(map)
         map.getStyle { style ->
-            runCatching { style.removeLayer(ROUTE_LAYER_ID) }
-            runCatching { style.removeLayer(ROUTE_CASING_LAYER_ID) }
-            runCatching { style.removeSource(ROUTE_SOURCE_ID) }
+            removeRouteLayers(style)
 
             val target = resolveFreeDriveTarget(map)
             if (target != null) {
                 snapCameraToGpsIfNeeded(target)
-            } else if (isFreeDriveZoomTooWide(map)) {
+            } else {
                 activateFreeDriveTrackingMode(map)
             }
+        }
+    }
+
+    private fun removeRouteLayers(style: Style) {
+        runCatching { style.removeLayer(ROUTE_TRAVELED_LAYER_ID) }
+        runCatching { style.removeLayer(ROUTE_TRAVELED_CASING_LAYER_ID) }
+        runCatching { style.removeLayer(ROUTE_REMAINING_LAYER_ID) }
+        runCatching { style.removeLayer(ROUTE_REMAINING_CASING_LAYER_ID) }
+        runCatching { style.removeLayer(ROUTE_LAYER_ID) }
+        runCatching { style.removeLayer(ROUTE_CASING_LAYER_ID) }
+        runCatching { style.removeLayer(ROUTE_TOMTOM_LAYER_ID) }
+        runCatching { style.removeLayer(ROUTE_OSRM_ALT_LAYER_ID) }
+        runCatching { style.removeLayer(ROUTE_OSRM_PRIMARY_PREVIEW_LAYER_ID) }
+        runCatching { style.removeSource(ROUTE_TRAVELED_SOURCE_ID) }
+        runCatching { style.removeSource(ROUTE_REMAINING_SOURCE_ID) }
+        runCatching { style.removeSource(ROUTE_SOURCE_ID) }
+        runCatching { style.removeSource(ROUTE_TOMTOM_SOURCE_ID) }
+        runCatching { style.removeSource(ROUTE_OSRM_ALT_SOURCE_ID) }
+        runCatching { style.removeSource(ROUTE_OSRM_PRIMARY_PREVIEW_SOURCE_ID) }
+    }
+
+    private fun removeAlternateRouteLayers() {
+        val map = mapLibreMap ?: return
+        map.getStyle { style ->
+            runCatching { style.removeLayer(ROUTE_TOMTOM_LAYER_ID) }
+            runCatching { style.removeLayer(ROUTE_OSRM_ALT_LAYER_ID) }
+            runCatching { style.removeLayer(ROUTE_OSRM_PRIMARY_PREVIEW_LAYER_ID) }
+            runCatching { style.removeSource(ROUTE_TOMTOM_SOURCE_ID) }
+            runCatching { style.removeSource(ROUTE_OSRM_ALT_SOURCE_ID) }
+            runCatching { style.removeSource(ROUTE_OSRM_PRIMARY_PREVIEW_SOURCE_ID) }
+        }
+    }
+
+    private fun updateSelectedRouteHighlight(selectedId: String) {
+        val map = mapLibreMap ?: return
+        map.getStyle { style ->
+            ensureRouteLayers(style)
+            routeResultsById.forEach { (id, stored) ->
+                val points = stored.result.geometryPoints
+                when {
+                    id == selectedId -> {
+                        val remainingJson = buildLineStringFeatureJson(points)
+                        val emptyJson = buildLineStringFeatureJson(emptyList())
+                        (style.getSource(ROUTE_TRAVELED_SOURCE_ID) as? GeoJsonSource)?.setGeoJson(emptyJson)
+                        (style.getSource(ROUTE_REMAINING_SOURCE_ID) as? GeoJsonSource)?.setGeoJson(remainingJson)
+                        clearAltLayerForProvider(style, stored.provider)
+                    }
+                    stored.provider == RouteProvider.TOMTOM_TRAFFIC -> {
+                        setAltRouteGeoJson(style, ROUTE_TOMTOM_SOURCE_ID, ROUTE_TOMTOM_LAYER_ID, points, AltRouteStyle.TOMTOM)
+                    }
+                    stored.provider == RouteProvider.OSRM_ALTERNATE -> {
+                        setAltRouteGeoJson(style, ROUTE_OSRM_ALT_SOURCE_ID, ROUTE_OSRM_ALT_LAYER_ID, points, AltRouteStyle.OSRM_ALT)
+                    }
+                    stored.provider == RouteProvider.OSRM_FASTEST -> {
+                        setAltRouteGeoJson(
+                            style,
+                            ROUTE_OSRM_PRIMARY_PREVIEW_SOURCE_ID,
+                            ROUTE_OSRM_PRIMARY_PREVIEW_LAYER_ID,
+                            points,
+                            AltRouteStyle.OSRM_PRIMARY_PREVIEW,
+                        )
+                    }
+                }
+            }
+            ensurePuckAboveOverlays()
+        }
+    }
+
+    private enum class AltRouteStyle {
+        TOMTOM,
+        OSRM_ALT,
+        OSRM_PRIMARY_PREVIEW,
+    }
+
+    private fun clearAltLayerForProvider(style: Style, provider: RouteProvider) {
+        when (provider) {
+            RouteProvider.TOMTOM_TRAFFIC -> clearAltLayer(style, ROUTE_TOMTOM_SOURCE_ID)
+            RouteProvider.OSRM_ALTERNATE -> clearAltLayer(style, ROUTE_OSRM_ALT_SOURCE_ID)
+            RouteProvider.OSRM_FASTEST -> clearAltLayer(
+                style,
+                ROUTE_OSRM_PRIMARY_PREVIEW_SOURCE_ID,
+            )
+        }
+    }
+
+    private fun clearAltLayer(style: Style, sourceId: String) {
+        (style.getSource(sourceId) as? GeoJsonSource)
+            ?.setGeoJson(buildLineStringFeatureJson(emptyList()))
+    }
+
+    private fun setAltRouteGeoJson(
+        style: Style,
+        sourceId: String,
+        layerId: String,
+        points: List<LatLng>,
+        altStyle: AltRouteStyle,
+    ) {
+        if (style.getSource(sourceId) == null) {
+            style.addSource(GeoJsonSource(sourceId, buildLineStringFeatureJson(emptyList())))
+        }
+        if (style.getLayer(layerId) == null) {
+            val layer = when (altStyle) {
+                AltRouteStyle.TOMTOM -> LineLayer(layerId, sourceId).withProperties(
+                    PropertyFactory.lineColor(ROUTE_TOMTOM_COLOR),
+                    PropertyFactory.lineWidth(ROUTE_TOMTOM_WIDTH),
+                    PropertyFactory.lineOpacity(ROUTE_TOMTOM_OPACITY),
+                    PropertyFactory.lineCap(Property.LINE_CAP_ROUND),
+                    PropertyFactory.lineJoin(Property.LINE_JOIN_ROUND),
+                )
+                AltRouteStyle.OSRM_ALT -> LineLayer(layerId, sourceId).withProperties(
+                    PropertyFactory.lineColor(ROUTE_OSRM_ALT_COLOR),
+                    PropertyFactory.lineWidth(ROUTE_OSRM_ALT_WIDTH),
+                    PropertyFactory.lineOpacity(ROUTE_OSRM_ALT_OPACITY),
+                    PropertyFactory.lineDasharray(arrayOf(4f, 3f)),
+                    PropertyFactory.lineCap(Property.LINE_CAP_ROUND),
+                    PropertyFactory.lineJoin(Property.LINE_JOIN_ROUND),
+                )
+                AltRouteStyle.OSRM_PRIMARY_PREVIEW -> LineLayer(layerId, sourceId).withProperties(
+                    PropertyFactory.lineColor(ROUTE_COLOR),
+                    PropertyFactory.lineWidth(ROUTE_OSRM_ALT_WIDTH),
+                    PropertyFactory.lineOpacity(ROUTE_OSRM_ALT_OPACITY),
+                    PropertyFactory.lineCap(Property.LINE_CAP_ROUND),
+                    PropertyFactory.lineJoin(Property.LINE_JOIN_ROUND),
+                )
+            }
+            val anchor = resolveMapOverlayAnchorLayerId(style) ?: TRAFFIC_LAYER_ID
+            if (style.getLayer(anchor) != null) {
+                style.addLayerAbove(layer, anchor)
+            } else {
+                style.addLayer(layer)
+            }
+        }
+        (style.getSource(sourceId) as? GeoJsonSource)
+            ?.setGeoJson(buildLineStringFeatureJson(points))
+    }
+
+    private fun restackRouteLayersAbove(style: Style, anchorLayerId: String) {
+        val layerIds = listOf(
+            ROUTE_TRAVELED_CASING_LAYER_ID,
+            ROUTE_TRAVELED_LAYER_ID,
+            ROUTE_REMAINING_CASING_LAYER_ID,
+            ROUTE_REMAINING_LAYER_ID,
+        )
+        if (layerIds.none { style.getLayer(it) != null }) return
+        val layers = layerIds.mapNotNull { style.getLayer(it) }
+        layers.forEach { style.removeLayer(it) }
+        var aboveId = anchorLayerId
+        for (layer in layers) {
+            style.addLayerAbove(layer, aboveId)
+            aboveId = layer.id
+        }
+    }
+
+    private fun ensureRouteLayers(style: Style) {
+        val emptyJson = buildLineStringFeatureJson(emptyList())
+        if (style.getSource(ROUTE_TRAVELED_SOURCE_ID) == null) {
+            style.addSource(GeoJsonSource(ROUTE_TRAVELED_SOURCE_ID, emptyJson))
+        }
+        if (style.getSource(ROUTE_REMAINING_SOURCE_ID) == null) {
+            style.addSource(GeoJsonSource(ROUTE_REMAINING_SOURCE_ID, emptyJson))
+        }
+        if (style.getLayer(ROUTE_TRAVELED_CASING_LAYER_ID) != null) return
+
+        val traveledCasing = LineLayer(ROUTE_TRAVELED_CASING_LAYER_ID, ROUTE_TRAVELED_SOURCE_ID).withProperties(
+            PropertyFactory.lineColor(ROUTE_CASING_COLOR),
+            PropertyFactory.lineWidth(ROUTE_CASING_WIDTH),
+            PropertyFactory.lineCap(Property.LINE_CAP_ROUND),
+            PropertyFactory.lineJoin(Property.LINE_JOIN_ROUND),
+            PropertyFactory.lineOpacity(1f),
+        )
+        val traveledLine = LineLayer(ROUTE_TRAVELED_LAYER_ID, ROUTE_TRAVELED_SOURCE_ID).withProperties(
+            PropertyFactory.lineColor(ROUTE_TRAVELED_COLOR),
+            PropertyFactory.lineWidth(ROUTE_WIDTH),
+            PropertyFactory.lineCap(Property.LINE_CAP_ROUND),
+            PropertyFactory.lineJoin(Property.LINE_JOIN_ROUND),
+            PropertyFactory.lineOpacity(ROUTE_TRAVELED_OPACITY),
+        )
+        val remainingCasing = LineLayer(ROUTE_REMAINING_CASING_LAYER_ID, ROUTE_REMAINING_SOURCE_ID).withProperties(
+            PropertyFactory.lineColor(ROUTE_CASING_COLOR),
+            PropertyFactory.lineWidth(ROUTE_CASING_WIDTH),
+            PropertyFactory.lineCap(Property.LINE_CAP_ROUND),
+            PropertyFactory.lineJoin(Property.LINE_JOIN_ROUND),
+            PropertyFactory.lineOpacity(1f),
+        )
+        val remainingLine = LineLayer(ROUTE_REMAINING_LAYER_ID, ROUTE_REMAINING_SOURCE_ID).withProperties(
+            PropertyFactory.lineColor(ROUTE_COLOR),
+            PropertyFactory.lineWidth(ROUTE_WIDTH),
+            PropertyFactory.lineCap(Property.LINE_CAP_ROUND),
+            PropertyFactory.lineJoin(Property.LINE_JOIN_ROUND),
+            PropertyFactory.lineOpacity(0.9f),
+        )
+        val anchor = resolveMapOverlayAnchorLayerId(style)
+        if (anchor != null) {
+            style.addLayerAbove(traveledCasing, anchor)
+            style.addLayerAbove(traveledLine, ROUTE_TRAVELED_CASING_LAYER_ID)
+            style.addLayerAbove(remainingCasing, ROUTE_TRAVELED_LAYER_ID)
+            style.addLayerAbove(remainingLine, ROUTE_REMAINING_CASING_LAYER_ID)
+        } else {
+            style.addLayer(traveledCasing)
+            style.addLayer(traveledLine)
+            style.addLayer(remainingCasing)
+            style.addLayer(remainingLine)
+        }
+    }
+
+    private fun buildLineStringFeatureJson(points: List<LatLng>): String {
+        if (points.size < 2) {
+            return """{"type":"FeatureCollection","features":[]}"""
+        }
+        val coords = points.joinToString(",") { point ->
+            "[${point.longitude},${point.latitude}]"
+        }
+        return """{"type":"Feature","geometry":{"type":"LineString","coordinates":[$coords]},"properties":{}}"""
+    }
+
+    private fun resetRouteProgress() {
+        routeProgressSegmentIndex = 0
+        routeProgressDistanceM = 0f
+        lastRouteProgressMapUpdateM = 0f
+        if (routeGeometryPoints.isNotEmpty()) {
+            routeProgressSplitLat = routeGeometryPoints[0].latitude
+            routeProgressSplitLng = routeGeometryPoints[0].longitude
+        } else {
+            routeProgressSplitLat = 0.0
+            routeProgressSplitLng = 0.0
+        }
+    }
+
+    private fun applyRouteProgressToMap() {
+        val points = routeGeometryPoints
+        if (points.size < 2) return
+        val traveled = buildTraveledRoutePoints(
+            points,
+            routeProgressSegmentIndex,
+            routeProgressSplitLat,
+            routeProgressSplitLng,
+        )
+        val remaining = buildRemainingRoutePoints(
+            points,
+            routeProgressSegmentIndex,
+            routeProgressSplitLat,
+            routeProgressSplitLng,
+        )
+        val map = mapLibreMap ?: return
+        map.getStyle { style ->
+            (style.getSource(ROUTE_TRAVELED_SOURCE_ID) as? GeoJsonSource)
+                ?.setGeoJson(buildLineStringFeatureJson(traveled))
+            (style.getSource(ROUTE_REMAINING_SOURCE_ID) as? GeoJsonSource)
+                ?.setGeoJson(buildLineStringFeatureJson(remaining))
+        }
+    }
+
+    private fun buildTraveledRoutePoints(
+        points: List<LatLng>,
+        segmentIndex: Int,
+        splitLat: Double,
+        splitLng: Double,
+    ): List<LatLng> {
+        if (routeProgressDistanceM <= 0f) return emptyList()
+        val split = LatLng(splitLat, splitLng)
+        if (segmentIndex == 0 && coordsNear(points[0], split)) return emptyList()
+        val result = mutableListOf<LatLng>()
+        for (i in 0..segmentIndex.coerceAtMost(points.lastIndex)) {
+            result.add(points[i])
+        }
+        if (!coordsNear(result.last(), split)) {
+            result.add(split)
+        }
+        return if (result.size >= 2) result else emptyList()
+    }
+
+    private fun buildRemainingRoutePoints(
+        points: List<LatLng>,
+        segmentIndex: Int,
+        splitLat: Double,
+        splitLng: Double,
+    ): List<LatLng> {
+        val split = LatLng(splitLat, splitLng)
+        val result = mutableListOf<LatLng>()
+        result.add(split)
+        for (i in (segmentIndex + 1).coerceAtMost(points.lastIndex) until points.size) {
+            result.add(points[i])
+        }
+        if (result.size >= 2 && coordsNear(result[0], result[1])) {
+            result.removeAt(0)
+        }
+        return if (result.size >= 2) result else emptyList()
+    }
+
+    private fun coordsNear(a: LatLng, b: LatLng, thresholdM: Float = 1f): Boolean {
+        val results = FloatArray(1)
+        Location.distanceBetween(a.latitude, a.longitude, b.latitude, b.longitude, results)
+        return results[0] < thresholdM
+    }
+
+    private fun distanceAlongRoute(
+        points: List<LatLng>,
+        segmentIndex: Int,
+        splitLat: Double,
+        splitLng: Double,
+    ): Float {
+        if (points.size < 2) return 0f
+        var total = 0f
+        val cappedIndex = segmentIndex.coerceIn(0, points.lastIndex - 1)
+        for (i in 0 until cappedIndex) {
+            val results = FloatArray(1)
+            Location.distanceBetween(
+                points[i].latitude,
+                points[i].longitude,
+                points[i + 1].latitude,
+                points[i + 1].longitude,
+                results,
+            )
+            total += results[0]
+        }
+        val results = FloatArray(1)
+        Location.distanceBetween(
+            points[cappedIndex].latitude,
+            points[cappedIndex].longitude,
+            splitLat,
+            splitLng,
+            results,
+        )
+        return total + results[0]
+    }
+
+    private fun projectOntoRoute(location: Location): RouteProjection? {
+        val points = routeGeometryPoints
+        if (points.size < 2) return null
+
+        var minDist = Float.MAX_VALUE
+        var bestSegment = 0
+        var bestLat = location.latitude
+        var bestLng = location.longitude
+
+        for (i in 0 until points.size - 1) {
+            val result = closestPointOnSegment(location, points[i], points[i + 1])
+            if (result.distM < minDist) {
+                minDist = result.distM
+                bestSegment = i
+                bestLat = result.lat
+                bestLng = result.lng
+            }
+        }
+
+        return RouteProjection(
+            segmentIndex = bestSegment,
+            splitLat = bestLat,
+            splitLng = bestLng,
+            distanceFromStartM = distanceAlongRoute(points, bestSegment, bestLat, bestLng),
+            distToRouteM = minDist,
+        )
+    }
+
+    private fun updateRouteProgress(location: Location) {
+        val projection = projectOntoRoute(location) ?: return
+        if (projection.distanceFromStartM + ROUTE_PROGRESS_BACKTRACK_TOLERANCE_M < routeProgressDistanceM) {
+            return
+        }
+        if (projection.distanceFromStartM <= routeProgressDistanceM) return
+
+        routeProgressSegmentIndex = projection.segmentIndex
+        routeProgressSplitLat = projection.splitLat
+        routeProgressSplitLng = projection.splitLng
+        routeProgressDistanceM = projection.distanceFromStartM
+        if (routeProgressDistanceM - lastRouteProgressMapUpdateM < ROUTE_PROGRESS_MAP_MIN_ADVANCE_M) {
+            return
+        }
+        lastRouteProgressMapUpdateM = routeProgressDistanceM
+        applyRouteProgressToMap()
+    }
+
+    private fun drawRoute() {
+        val map = mapLibreMap ?: return
+        resetRouteProgress()
+        map.getStyle { style ->
+            ensureRouteLayers(style)
+            val remainingJson = buildLineStringFeatureJson(routeGeometryPoints)
+            val emptyJson = buildLineStringFeatureJson(emptyList())
+            (style.getSource(ROUTE_TRAVELED_SOURCE_ID) as? GeoJsonSource)?.setGeoJson(emptyJson)
+            (style.getSource(ROUTE_REMAINING_SOURCE_ID) as? GeoJsonSource)?.setGeoJson(remainingJson)
+            ensurePuckAboveOverlays()
         }
     }
 
@@ -903,7 +1732,12 @@ class MapLibreEngineImpl(
     }
 
     private fun activateFreeDriveTrackingMode(map: MapLibreMap) {
-        if (_uiState.value.isNavigating) return
+        if (_uiState.value.isNavigating ||
+            _uiState.value.isInTopDownView ||
+            _uiState.value.isCameraDetached
+        ) {
+            return
+        }
 
         val component = map.locationComponent
         if (!component.isLocationComponentActivated || !component.isLocationComponentEnabled) return
@@ -918,6 +1752,7 @@ class MapLibreEngineImpl(
     }
 
     private fun snapCameraToGpsIfNeeded(latLng: LatLng) {
+        if (_uiState.value.isInTopDownView) return
         lastKnownLocation = latLng
         val map = mapLibreMap ?: return
         if (!needsFreeDriveCameraSnap(map)) {
@@ -1029,11 +1864,15 @@ class MapLibreEngineImpl(
         lng: Double,
         isReroute: Boolean = false,
     ) {
+        if (isReroute) {
+            navigationVoice?.onRerouteStarted()
+        }
         if (!isReroute) {
             poiRefreshJob?.cancel()
             poiRefreshJob = null
             clearPoiLayer()
             clearCustomPin()
+            clearRoutePreviewState()
         }
         _uiState.update {
             it.copy(
@@ -1041,45 +1880,436 @@ class MapLibreEngineImpl(
                 streetName = if (isReroute) "Re-routing..." else "Calculating route...",
                 selectedPoi = null,
                 nearbyPois = emptyList(),
+                isInTopDownView = if (isReroute) it.isInTopDownView else false,
             )
         }
 
         engineScope.launch {
             try {
-                val route = withContext(Dispatchers.IO) {
-                    fetchOsrmRoute(origin.longitude, origin.latitude, lng, lat)
-                }
-                if (route != null) {
-                    routeGeometryPoints = route.geometryPoints
-                    drawRoute(route.geometryJson)
-                    fullRouteSteps = route.steps
-                    currentStepIndex = 0
-                    destinationLatLng = LatLng(lat, lng)
-                    navigationArrivalTriggered = false
-                    offRouteCount = 0
-                    _uiState.update {
-                        it.copy(
-                            isNavigating = true,
-                            streetName = route.streetName,
-                            turnInstruction = route.instruction,
-                            distanceToNextTurn = route.distance,
-                        )
+                if (isReroute) {
+                    val route = withContext(Dispatchers.IO) {
+                        fetchOsrmRoute(origin.longitude, origin.latitude, lng, lat)
                     }
-                    if (isReroute) {
+                    if (route != null) {
+                        applyActiveRoute(route)
+                        destinationLatLng = LatLng(lat, lng)
+                        navigationArrivalTriggered = false
+                        offRouteCount = 0
+                        _uiState.update {
+                            it.copy(
+                                isNavigating = true,
+                                isRouteSelecting = false,
+                                routeOptions = emptyList(),
+                                selectedRouteId = null,
+                                streetName = route.streetName,
+                                turnInstruction = route.instruction,
+                                distanceToNextTurn = route.distance,
+                            )
+                        }
                         isRerouteInProgress = false
                         enterNavigationCamera()
                     } else {
-                        showRouteThenDive(origin, LatLng(lat, lng))
+                        isRerouteInProgress = false
+                        _uiState.update { it.copy(isNavigating = false, streetName = "Route not found") }
                     }
-                } else {
-                    isRerouteInProgress = false
+                    return@launch
+                }
+
+                val osrmRoutesDeferred = async(Dispatchers.IO) {
+                    fetchOsrmRoutesWithAlternatives(origin.longitude, origin.latitude, lng, lat)
+                }
+                val tomtomDeferred = async(Dispatchers.IO) {
+                    if (tomTomApiKey.isBlank()) {
+                        null
+                    } else {
+                        TomTomRoutingClient.fetchRoute(
+                            origin.latitude,
+                            origin.longitude,
+                            lat,
+                            lng,
+                            tomTomApiKey,
+                        )
+                    }
+                }
+                val osrmRoutes = osrmRoutesDeferred.await()
+                val tomtomRoute = tomtomDeferred.await()
+
+                if (osrmRoutes.isEmpty() && tomtomRoute == null) {
                     _uiState.update { it.copy(isNavigating = false, streetName = "Route not found") }
+                    return@launch
+                }
+
+                val candidates = buildRouteCandidates(osrmRoutes, tomtomRoute)
+                destinationLatLng = LatLng(lat, lng)
+                navigationArrivalTriggered = false
+                offRouteCount = 0
+                stashedParallelTomTomDelaySeconds = tomtomRoute?.trafficDelaySeconds ?: 0
+                navStartTrafficEligible = true
+
+                if (candidates.size <= 1) {
+                    val stored = candidates.firstOrNull()
+                        ?: osrmRoutes.firstOrNull()?.let { osrmToStoredRoute(it, RouteProvider.OSRM_FASTEST, "osrm_fastest", "Fastest", "Shortest path") }
+                    if (stored == null) {
+                        _uiState.update { it.copy(isNavigating = false, streetName = "Route not found") }
+                        return@launch
+                    }
+                    applyActiveRoute(stored.result)
+                    _uiState.update {
+                        it.copy(
+                            isNavigating = true,
+                            isRouteSelecting = false,
+                            routeOptions = emptyList(),
+                            selectedRouteId = null,
+                            streetName = stored.result.streetName,
+                            turnInstruction = stored.result.instruction,
+                            distanceToNextTurn = stored.result.distance,
+                        )
+                    }
+                    showRouteThenDive(origin, LatLng(lat, lng))
+                } else {
+                    enterRouteSelection(origin, LatLng(lat, lng), candidates)
                 }
             } catch (e: Exception) {
                 isRerouteInProgress = false
                 Log.w(TAG, "Route fetch failed: ${e.message}", e)
                 _uiState.update { it.copy(isNavigating = false, streetName = "Routing failed") }
             }
+        }
+    }
+
+    override fun selectRouteOption(routeId: String) {
+        if (!_uiState.value.isRouteSelecting) return
+        if (routeResultsById[routeId] == null) return
+        if (routeId == _uiState.value.selectedRouteId) {
+            confirmRouteSelection()
+            return
+        }
+        routeOverviewTimerStartMs = System.currentTimeMillis()
+        _uiState.update {
+            it.copy(
+                selectedRouteId = routeId,
+                routeOverviewProgress = 0f,
+            )
+        }
+        updateSelectedRouteHighlight(routeId)
+    }
+
+    override fun confirmRouteSelection() {
+        if (!_uiState.value.isRouteSelecting) return
+        val routeId = _uiState.value.selectedRouteId ?: return
+        val stored = routeResultsById[routeId] ?: return
+
+        routeOverviewJob?.cancel()
+        routeOverviewJob = null
+        routeOverviewOrigin = null
+        routeOverviewDestination = null
+
+        applyActiveRoute(stored.result)
+        removeAlternateRouteLayers()
+        routeResultsById.clear()
+        selectionOrigin = null
+        selectionDestination = null
+        selectionBoundsPoints = emptyList()
+
+        _uiState.update {
+            it.copy(
+                isRouteSelecting = false,
+                routeOptions = emptyList(),
+                selectedRouteId = null,
+                routeOverviewProgress = 0f,
+                streetName = stored.result.streetName,
+                turnInstruction = stored.result.instruction,
+                distanceToNextTurn = stored.result.distance,
+            )
+        }
+        beginNavigationAfterRouteSelection()
+    }
+
+    /** Ends route selection and enters turn-by-turn camera — no second overview hold. */
+    private fun beginNavigationAfterRouteSelection() {
+        if (mapLibreMap == null) return
+        clearRoutePreviewState()
+        _uiState.update { it.copy(isCameraDetached = false, isInTopDownView = false) }
+        if (_uiState.value.isNavigating) {
+            navigationCameraTransitionActive = true
+            val dive = { enterNavigationCamera() }
+            mapView?.post(dive) ?: dive()
+        }
+    }
+
+    private fun applyActiveRoute(route: RouteResult) {
+        routeGeometryPoints = route.geometryPoints
+        fullRouteSteps = route.steps
+        currentStepIndex = 0
+        drawRoute()
+        prefetchNavTrafficHint(route)
+    }
+
+    private fun clearNavTrafficPrefetchState() {
+        navTrafficPrefetchJob?.cancel()
+        navTrafficPrefetchJob = null
+        pendingNavTrafficPhrase = null
+        stashedParallelTomTomDelaySeconds = 0
+        navStartTrafficEligible = false
+    }
+
+    private fun prefetchNavTrafficHint(route: RouteResult) {
+        navTrafficPrefetchJob?.cancel()
+        pendingNavTrafficPhrase = null
+        if (!navStartTrafficEligible || tomTomApiKey.isBlank()) return
+
+        val routeLatLng = route.geometryPoints.map { Pair(it.latitude, it.longitude) }
+        val routeDelay = route.trafficDelaySeconds
+        val parallelDelay = stashedParallelTomTomDelaySeconds
+        val apiKey = tomTomApiKey
+
+        navTrafficPrefetchJob = engineScope.launch {
+            val phrase = withContext(Dispatchers.IO) {
+                resolveNavStartTrafficPhrase(routeLatLng, apiKey, routeDelay, parallelDelay)
+            }
+            if (!phrase.isNullOrBlank()) {
+                pendingNavTrafficPhrase = phrase
+            }
+        }
+    }
+
+    private fun resolveNavStartTrafficPhrase(
+        routeLatLng: List<Pair<Double, Double>>,
+        apiKey: String,
+        routeDelaySeconds: Int,
+        parallelDelaySeconds: Int,
+    ): String? {
+        val jam = TomTomTrafficClient.findJamOnRoute(routeLatLng, apiKey)
+        jam?.let { found ->
+            NavTtsPhrases.buildNavStartTrafficOnRoute(found.level, found.streetName)?.let { return it }
+        }
+        val delaySec = when {
+            routeDelaySeconds >= 120 -> routeDelaySeconds
+            parallelDelaySeconds >= 120 -> parallelDelaySeconds
+            else -> 0
+        }
+        return NavTtsPhrases.buildNavStartTrafficDelay(delaySec)
+    }
+
+    private fun enterRouteSelection(origin: LatLng, destination: LatLng, candidates: List<StoredRoute>) {
+        routeResultsById.clear()
+        candidates.forEach { routeResultsById[it.id] = it }
+
+        val defaultId = candidates.first().id
+        selectionOrigin = origin
+        selectionDestination = destination
+        selectionBoundsPoints = candidates.flatMap { it.result.geometryPoints }.distinctBy {
+            "${it.latitude},${it.longitude}"
+        }
+
+        _uiState.update {
+            it.copy(
+                isNavigating = true,
+                isRouteSelecting = true,
+                routeOptions = candidates.map { stored -> stored.toRouteOption() },
+                selectedRouteId = defaultId,
+                streetName = "Choose a route",
+                turnInstruction = null,
+                distanceToNextTurn = null,
+                selectedPoi = null,
+                nearbyPois = emptyList(),
+                isInTopDownView = false,
+                routeOverviewProgress = 0f,
+            )
+        }
+
+        updateSelectedRouteHighlight(defaultId)
+        startSelectionOverviewTimer(origin, destination)
+    }
+
+    private fun startSelectionOverviewTimer(origin: LatLng, destination: LatLng) {
+        clearRoutePreviewState()
+        routeOverviewOrigin = origin
+        routeOverviewDestination = destination
+        _uiState.update { it.copy(isCameraDetached = false, isInTopDownView = false) }
+
+        val animateToBounds = { fitRouteOverviewCamera(origin, destination, animate = true) }
+        mapView?.post { animateToBounds() } ?: animateToBounds()
+
+        routeOverviewTimerStartMs = System.currentTimeMillis()
+        routeOverviewJob?.cancel()
+        routeOverviewJob = engineScope.launch {
+            while (isActive) {
+                val elapsed = System.currentTimeMillis() - routeOverviewTimerStartMs
+                val progress = (elapsed / ROUTE_OVERVIEW_HOLD_MS.toFloat()).coerceIn(0f, 1f)
+                _uiState.update { it.copy(routeOverviewProgress = progress) }
+                if (elapsed >= ROUTE_OVERVIEW_HOLD_MS) break
+                delay(50)
+            }
+            if (_uiState.value.isRouteSelecting) {
+                confirmRouteSelection()
+            }
+        }
+    }
+
+    private fun buildRouteCandidates(
+        osrmRoutes: List<RouteResult>,
+        tomtomRoute: TomTomRouteResult?,
+    ): List<StoredRoute> {
+        val candidates = mutableListOf<StoredRoute>()
+        val fastest = osrmRoutes.firstOrNull()
+        if (fastest != null) {
+            candidates.add(
+                osrmToStoredRoute(
+                    fastest,
+                    RouteProvider.OSRM_FASTEST,
+                    ROUTE_ID_OSRM_FASTEST,
+                    "Fastest",
+                    fastest.steps.firstOrNull()?.streetName?.takeIf { it.isNotBlank() } ?: "Shortest path",
+                ),
+            )
+        }
+
+        val fastestDuration = fastest?.durationSeconds ?: 0.0
+        val fastestDistance = fastest?.distanceMeters ?: 0.0
+
+        tomtomRoute?.let { tt ->
+            val ttResult = tomTomToRouteResult(tt)
+            if (fastest == null || !routesAreSimilar(fastest.geometryPoints, ttResult.geometryPoints)) {
+                val deltaSec = tt.travelTimeSeconds - fastestDuration.toInt()
+                val subtitle = when {
+                    tt.trafficDelaySeconds > 60 -> "Live traffic · ${TomTomRoutingClient.formatEtaDeltaMinutes(deltaSec)}"
+                    deltaSec < 0 -> TomTomRoutingClient.formatEtaDeltaMinutes(deltaSec)
+                    deltaSec > 0 -> TomTomRoutingClient.formatEtaDeltaMinutes(deltaSec)
+                    else -> "Traffic-aware route"
+                }
+                candidates.add(
+                    StoredRoute(
+                        id = ROUTE_ID_TOMTOM,
+                        provider = RouteProvider.TOMTOM_TRAFFIC,
+                        label = "Traffic smart",
+                        subtitle = subtitle,
+                        result = ttResult,
+                    ),
+                )
+            }
+        }
+
+        if (osrmRoutes.size > 1) {
+            val alt = osrmRoutes[1]
+            if (fastest == null || !routesAreSimilar(fastest.geometryPoints, alt.geometryPoints)) {
+                val distDeltaKm = (alt.distanceMeters - fastestDistance) / 1000.0
+                val subtitle = when {
+                    distDeltaKm > 0.1 -> "+${"%.1f".format(distDeltaKm)} km vs fastest"
+                    distDeltaKm < -0.1 -> "${"%.1f".format(distDeltaKm)} km vs fastest"
+                    else -> "Different roads"
+                }
+                candidates.add(
+                    osrmToStoredRoute(
+                        alt,
+                        RouteProvider.OSRM_ALTERNATE,
+                        ROUTE_ID_OSRM_ALT,
+                        "Alternate",
+                        subtitle,
+                    ),
+                )
+            }
+        }
+
+        return candidates
+    }
+
+    private fun osrmToStoredRoute(
+        result: RouteResult,
+        provider: RouteProvider,
+        id: String,
+        label: String,
+        subtitle: String,
+    ) = StoredRoute(id = id, provider = provider, label = label, subtitle = subtitle, result = result)
+
+    private fun tomTomToRouteResult(tt: TomTomRouteResult): RouteResult {
+        val geometryPoints = tt.geometryPoints.map { LatLng(it.first, it.second) }
+        val steps = tt.steps.map { step ->
+            val maneuverType = NavTtsPhrases.inferManeuverType(step.instruction)
+            val maneuverModifier = NavTtsPhrases.inferManeuverModifier(step.instruction)
+            LegStep(
+                maneuverLat = step.maneuverLat,
+                maneuverLng = step.maneuverLng,
+                instruction = step.instruction,
+                distanceLabel = step.distanceLabel,
+                streetName = step.streetName,
+                distanceMeters = step.distanceMeters,
+                maneuverType = maneuverType,
+                maneuverModifier = maneuverModifier,
+            )
+        }
+        val firstStep = steps.firstOrNull()
+        val geometryJson = buildLineStringFeatureJson(geometryPoints)
+        return RouteResult(
+            geometryJson = geometryJson,
+            geometryPoints = geometryPoints,
+            streetName = firstStep?.streetName?.ifBlank { tt.primaryStreet } ?: tt.primaryStreet,
+            instruction = firstStep?.instruction ?: "Depart",
+            distance = firstStep?.distanceLabel ?: TomTomRoutingClient.formatDistance(tt.distanceMeters),
+            steps = steps,
+            durationSeconds = tt.travelTimeSeconds.toDouble(),
+            distanceMeters = tt.distanceMeters,
+            trafficDelaySeconds = tt.trafficDelaySeconds,
+        )
+    }
+
+    private fun routesAreSimilar(a: List<LatLng>, b: List<LatLng>): Boolean {
+        if (a.isEmpty() || b.isEmpty()) return false
+        val samplesA = sampleRoutePoints(a, 5)
+        val samplesB = sampleRoutePoints(b, 5)
+        val thresholdM = 50f
+        val nearCount = samplesA.count { pointA ->
+            samplesB.any { pointB ->
+                val results = FloatArray(1)
+                Location.distanceBetween(
+                    pointA.latitude,
+                    pointA.longitude,
+                    pointB.latitude,
+                    pointB.longitude,
+                    results,
+                )
+                results[0] < thresholdM
+            }
+        }
+        return nearCount >= minOf(samplesA.size, samplesB.size) - 1
+    }
+
+    private fun sampleRoutePoints(points: List<LatLng>, count: Int): List<LatLng> {
+        if (points.size <= count) return points
+        val step = (points.size - 1) / (count - 1).coerceAtLeast(1)
+        return buildList {
+            var i = 0
+            while (i < points.size) {
+                add(points[i])
+                i += step
+            }
+            if (last() != points.last()) add(points.last())
+        }
+    }
+
+    private fun fetchOsrmRoutesWithAlternatives(
+        lngA: Double,
+        latA: Double,
+        lngB: Double,
+        latB: Double,
+    ): List<RouteResult> {
+        val url = URL(
+            "https://routing.openstreetmap.de/routed-car/route/v1/driving/" +
+                "$lngA,$latA;$lngB,$latB?alternatives=1&geometries=geojson&steps=true&overview=full",
+        )
+        val connection = url.openConnection() as HttpURLConnection
+        connection.setRequestProperty("User-Agent", "MixAutoCarLauncher/1.0")
+        connection.connectTimeout = 10_000
+        connection.readTimeout = 10_000
+        return try {
+            if (connection.responseCode !in 200..299) {
+                Log.w(TAG, "OSRM HTTP error: ${connection.responseCode}")
+                return emptyList()
+            }
+            val body = connection.inputStream.bufferedReader().readText()
+            parseOsrmRoutesResponse(body)
+        } finally {
+            connection.disconnect()
         }
     }
 
@@ -1109,13 +2339,26 @@ class MapLibreEngineImpl(
         }
     }
 
+    private fun parseOsrmRoutesResponse(json: String): List<RouteResult> {
+        val root = JSONObject(json)
+        if (root.optString("code") != "Ok") return emptyList()
+        val routes = root.getJSONArray("routes")
+        return buildList {
+            for (i in 0 until routes.length()) {
+                parseOsrmRouteObject(routes.getJSONObject(i))?.let { add(it) }
+            }
+        }
+    }
+
     private fun parseOsrmResponse(json: String): RouteResult? {
         val root = JSONObject(json)
         if (root.optString("code") != "Ok") return null
         val routes = root.getJSONArray("routes")
         if (routes.length() == 0) return null
-        val route = routes.getJSONObject(0)
+        return parseOsrmRouteObject(routes.getJSONObject(0))
+    }
 
+    private fun parseOsrmRouteObject(route: JSONObject): RouteResult? {
         val geometry = route.getJSONObject("geometry")
         val geometryJson = geometry.toString()
         val geometryPoints = parseRouteGeometryPoints(geometry)
@@ -1132,13 +2375,17 @@ class MapLibreEngineImpl(
                 val type = maneuver.optString("type", "")
                 val modifier = maneuver.optString("modifier", "")
                 val name = step.optString("name", "")
+                val stepDistanceM = step.optDouble("distance", 0.0)
                 add(
                     LegStep(
                         maneuverLat = location.getDouble(1),
                         maneuverLng = location.getDouble(0),
                         instruction = buildInstruction(type, modifier, name),
-                        distanceLabel = formatDistance(step.optDouble("distance", 0.0)),
+                        distanceLabel = formatDistance(stepDistanceM),
                         streetName = name,
+                        distanceMeters = stepDistanceM,
+                        maneuverType = type,
+                        maneuverModifier = modifier,
                     ),
                 )
             }
@@ -1153,6 +2400,8 @@ class MapLibreEngineImpl(
             instruction = firstStep.instruction,
             distance = firstStep.distanceLabel,
             steps = allSteps,
+            durationSeconds = route.optDouble("duration", 0.0),
+            distanceMeters = route.optDouble("distance", 0.0),
         )
     }
 
@@ -1168,20 +2417,7 @@ class MapLibreEngineImpl(
     }
 
     private fun buildInstruction(type: String, modifier: String, name: String): String {
-        val action = when (type) {
-            "depart" -> "Depart"
-            "arrive" -> "Arrive at destination"
-            "turn" -> "Turn ${modifier.replace('-', ' ')}"
-            "new name" -> "Continue"
-            "merge" -> "Merge ${modifier.replace('-', ' ')}"
-            "on ramp" -> "Take the ramp"
-            "off ramp" -> "Take the exit"
-            "fork" -> "Keep ${modifier.replace('-', ' ')}"
-            "end of road" -> "Turn ${modifier.replace('-', ' ')}"
-            "roundabout" -> "Enter roundabout"
-            else -> type.replaceFirstChar { it.uppercase() }
-        }
-        return if (name.isNotBlank() && type != "arrive") "$action onto $name" else action
+        return NavTtsPhrases.buildFullInstruction(type, modifier, name)
     }
 
     private fun formatDistance(meters: Double): String = when {
@@ -1189,41 +2425,34 @@ class MapLibreEngineImpl(
         else -> "${meters.toInt()} m"
     }
 
-    private fun showRouteThenDive(origin: LatLng, destination: LatLng) {
-        val map = mapLibreMap ?: return
+    private fun clearRoutePreviewState() {
+        cancelPoiPreviewRetries()
+        cancelTopDownViewportSync()
+        pendingPoiPreviewTarget = null
+        topDownExploreUserAdjusted = false
+    }
+
+    private fun clearRouteOverviewState() {
         routeOverviewJob?.cancel()
+        routeOverviewJob = null
+        routeOverviewOrigin = null
+        routeOverviewDestination = null
+        navigationCameraTransitionActive = false
+        _uiState.update { it.copy(routeOverviewProgress = 0f) }
+    }
 
-        val component = map.locationComponent
-        if (component.isLocationComponentActivated && component.isLocationComponentEnabled) {
-            component.cameraMode = CameraMode.NONE
-            component.paddingWhileTracking(doubleArrayOf(0.0, 0.0, 0.0, 0.0))
-        }
-        map.cancelTransitions()
-        map.setPadding(0, 0, 0, 0)
+    private fun isRouteOverviewActive(): Boolean = routeOverviewJob?.isActive == true
 
-        val bounds = buildRouteOverviewBounds(origin, destination)
-        val padding = computeRouteOverviewPadding(map)
+    private fun showRouteThenDive(origin: LatLng, destination: LatLng) {
+        if (mapLibreMap == null) return
+        clearRouteOverviewState()
+        clearRoutePreviewState()
+        routeOverviewOrigin = origin
+        routeOverviewDestination = destination
+        _uiState.update { it.copy(isCameraDetached = false, isInTopDownView = false) }
+
         val animateToBounds = {
-            map.moveCamera(
-                CameraUpdateFactory.newCameraPosition(
-                    CameraPosition.Builder()
-                        .target(map.cameraPosition.target)
-                        .zoom(map.cameraPosition.zoom)
-                        .tilt(0.0)
-                        .bearing(0.0)
-                        .build(),
-                ),
-            )
-            map.animateCamera(
-                CameraUpdateFactory.newLatLngBounds(
-                    bounds,
-                    padding.left,
-                    padding.top,
-                    padding.right,
-                    padding.bottom,
-                ),
-                ROUTE_OVERVIEW_ANIMATION_MS,
-            )
+            fitRouteOverviewCamera(origin, destination, animate = true)
         }
         mapView?.post { animateToBounds() } ?: animateToBounds()
 
@@ -1236,16 +2465,61 @@ class MapLibreEngineImpl(
                 if (elapsed >= ROUTE_OVERVIEW_HOLD_MS) break
                 delay(50)
             }
+            routeOverviewOrigin = null
+            routeOverviewDestination = null
             _uiState.update { it.copy(routeOverviewProgress = 0f) }
             if (_uiState.value.isNavigating) {
-                enterNavigationCamera()
+                navigationCameraTransitionActive = true
+                val dive = { enterNavigationCamera() }
+                mapView?.post(dive) ?: dive()
             }
+        }
+    }
+
+    private fun fitRouteOverviewCamera(origin: LatLng, destination: LatLng, animate: Boolean) {
+        val map = mapLibreMap ?: return
+        val view = mapView ?: return
+        if (view.width <= 0 || view.height <= 0) return
+
+        val component = map.locationComponent
+        if (component.isLocationComponentActivated && component.isLocationComponentEnabled) {
+            component.cameraMode = CameraMode.NONE
+            component.paddingWhileTracking(doubleArrayOf(0.0, 0.0, 0.0, 0.0))
+        }
+        map.cancelTransitions()
+        applyMapPaddingImmediate(map, ViewportPadding(0, 0, 0, 0))
+
+        val bounds = buildRouteOverviewBounds(origin, destination)
+        val padding = computeRouteOverviewPadding(map)
+        val boundsUpdate = CameraUpdateFactory.newLatLngBounds(
+            bounds,
+            padding.left,
+            padding.top,
+            padding.right,
+            padding.bottom,
+        )
+        if (animate) {
+            map.moveCamera(
+                CameraUpdateFactory.newCameraPosition(
+                    CameraPosition.Builder()
+                        .target(map.cameraPosition.target)
+                        .zoom(map.cameraPosition.zoom)
+                        .tilt(0.0)
+                        .bearing(0.0)
+                        .build(),
+                ),
+            )
+            map.animateCamera(boundsUpdate, ROUTE_OVERVIEW_ANIMATION_MS)
+        } else {
+            map.moveCamera(boundsUpdate)
         }
     }
 
     private fun buildRouteOverviewBounds(origin: LatLng, destination: LatLng): LatLngBounds {
         val builder = LatLngBounds.Builder()
-        if (routeGeometryPoints.isNotEmpty()) {
+        if (selectionBoundsPoints.isNotEmpty()) {
+            selectionBoundsPoints.forEach { builder.include(it) }
+        } else if (routeGeometryPoints.isNotEmpty()) {
             routeGeometryPoints.forEach { builder.include(it) }
         } else {
             builder.include(origin)
@@ -1289,11 +2563,19 @@ class MapLibreEngineImpl(
     }
 
     private fun enterNavigationCamera() {
-        val map = mapLibreMap ?: return
+        val map = mapLibreMap ?: run {
+            navigationCameraTransitionActive = false
+            return
+        }
         val component = map.locationComponent
         val componentReady = component.isLocationComponentActivated &&
             component.isLocationComponentEnabled
-        val target = lastKnownLocation ?: map.cameraPosition.target ?: return
+        val target = lastKnownLocation ?: map.cameraPosition.target ?: run {
+            navigationCameraTransitionActive = false
+            return
+        }
+
+        navigationCameraTransitionActive = true
 
         val bearing = if (componentReady) {
             component.lastKnownLocation?.bearing?.toDouble() ?: map.cameraPosition.bearing
@@ -1338,13 +2620,43 @@ class MapLibreEngineImpl(
     }
 
     private fun activateNavigationTracking(componentReady: Boolean) {
+        navigationCameraTransitionActive = false
         if (!_uiState.value.isNavigating) return
         val map = mapLibreMap ?: return
         val component = map.locationComponent
         if (componentReady && component.isLocationComponentActivated && component.isLocationComponentEnabled) {
+            val target = lastKnownLocation ?: map.cameraPosition.target
+            if (target != null) {
+                val bearing = component.lastKnownLocation?.bearing?.toDouble()
+                    ?: map.cameraPosition.bearing
+                val current = map.cameraPosition
+                // Layout padding updates can cancel the dive animation — snap tilt/zoom before follow.
+                if (current.tilt < NAV_TILT - 5.0 || abs(current.zoom - navZoom) > 0.5) {
+                    map.moveCamera(
+                        CameraUpdateFactory.newCameraPosition(
+                            CameraPosition.Builder()
+                                .target(target)
+                                .zoom(navZoom)
+                                .tilt(NAV_TILT)
+                                .bearing(bearing)
+                                .build(),
+                        ),
+                    )
+                }
+            }
             component.renderMode = RenderMode.GPS
             component.cameraMode = CameraMode.TRACKING_GPS
             applyDrivingTrackingPadding(map)
+        }
+        val trafficPhrase = if (navStartTrafficEligible) {
+            navStartTrafficEligible = false
+            pendingNavTrafficPhrase
+        } else {
+            null
+        }
+        pendingNavTrafficPhrase = null
+        fullRouteSteps.firstOrNull()?.toNavStepPhrase()?.let { firstStep ->
+            navigationVoice?.onNavigationDrivingStarted(firstStep, trafficPhrase)
         }
     }
 
@@ -1375,17 +2687,28 @@ class MapLibreEngineImpl(
 
     private fun applyDrivingViewportPadding(map: MapLibreMap) {
         if (_uiState.value.isInTopDownView) return
-        val padding = computeDrivingViewportPadding(map)
-        map.setPadding(padding.left, padding.top, padding.right, padding.bottom)
+        applyMapPaddingImmediate(map, computeDrivingViewportPadding(map))
     }
 
     /** Map padding alone does not offset the puck during TRACKING_GPS — use paddingWhileTracking too. */
     private fun applyDrivingTrackingPadding(map: MapLibreMap) {
-        if (_uiState.value.isInTopDownView) return
+        if (isRouteOverviewActive() || navigationCameraTransitionActive) return
+        if (_uiState.value.isInTopDownView || _uiState.value.isCameraDetached) return
         val padding = computeDrivingViewportPadding(map)
-        map.setPadding(padding.left, padding.top, padding.right, padding.bottom)
+        val paddingKey = intArrayOf(padding.left, padding.top, padding.right, padding.bottom)
         val component = map.locationComponent
-        if (!component.isLocationComponentActivated || !component.isLocationComponentEnabled) return
+        val componentReady = component.isLocationComponentActivated && component.isLocationComponentEnabled
+        val alreadyTrackingGps = componentReady && component.cameraMode == CameraMode.TRACKING_GPS
+        if (lastAppliedTrackingPadding?.contentEquals(paddingKey) == true && alreadyTrackingGps) {
+            return
+        }
+        lastAppliedTrackingPadding = paddingKey
+        // moveCamera(paddingTo) while TRACKING_GPS is active drops out of follow mode — update
+        // paddingWhileTracking only and force a puck refresh to reposition the camera.
+        if (!alreadyTrackingGps) {
+            applyMapPaddingImmediate(map, padding)
+        }
+        if (!componentReady) return
         // Always store the tracking padding regardless of current camera mode — it will take
         // effect immediately in TRACKING_GPS mode and when tracking resumes after detach.
         component.paddingWhileTracking(
@@ -1396,57 +2719,23 @@ class MapLibreEngineImpl(
                 padding.bottom.toDouble(),
             ),
         )
-    }
-
-    private fun drawRoute(geometryJson: String) {
-        val map = mapLibreMap ?: return
-        val featureJson = """{"type":"Feature","geometry":$geometryJson,"properties":{}}"""
-        map.getStyle { style ->
-            val existing = style.getSource(ROUTE_SOURCE_ID)
-            if (existing is GeoJsonSource) {
-                existing.setGeoJson(featureJson)
-            } else {
-                style.addSource(GeoJsonSource(ROUTE_SOURCE_ID, featureJson))
-                val casingLayer = LineLayer(ROUTE_CASING_LAYER_ID, ROUTE_SOURCE_ID).withProperties(
-                    PropertyFactory.lineColor(ROUTE_CASING_COLOR),
-                    PropertyFactory.lineWidth(ROUTE_CASING_WIDTH),
-                    PropertyFactory.lineCap(Property.LINE_CAP_ROUND),
-                    PropertyFactory.lineJoin(Property.LINE_JOIN_ROUND),
-                    PropertyFactory.lineOpacity(1f),
-                )
-                val routeLayer = LineLayer(ROUTE_LAYER_ID, ROUTE_SOURCE_ID).withProperties(
-                    PropertyFactory.lineColor(ROUTE_COLOR),
-                    PropertyFactory.lineWidth(ROUTE_WIDTH),
-                    PropertyFactory.lineCap(Property.LINE_CAP_ROUND),
-                    PropertyFactory.lineJoin(Property.LINE_JOIN_ROUND),
-                    PropertyFactory.lineOpacity(0.9f),
-                )
-                val baseLayerId = if (style.getLayer(TRAFFIC_LAYER_ID) != null) {
-                    TRAFFIC_LAYER_ID
-                } else {
-                    RASTER_BASE_LAYER_ID
-                }
-                if (style.getLayer(baseLayerId) != null) {
-                    style.addLayerAbove(casingLayer, baseLayerId)
-                    style.addLayerAbove(routeLayer, ROUTE_CASING_LAYER_ID)
-                } else {
-                    style.addLayer(casingLayer)
-                    style.addLayer(routeLayer)
-                }
-            }
+        if (alreadyTrackingGps) {
+            forceLocationUpdateForImmediateRender(map)
         }
     }
 
     private fun registerPoiInteractions(map: MapLibreMap) {
         map.addOnCameraIdleListener {
-            if (_uiState.value.isNavigating) {
-                clearPoiLayer()
+            if (_uiState.value.isNavigating ||
+                _uiState.value.selectedPoi != null ||
+                _uiState.value.isInTopDownView
+            ) {
                 return@addOnCameraIdleListener
             }
 
             val zoom = map.cameraPosition.zoom
             if (zoom < MIN_POI_ZOOM) {
-                clearPoiLayer()
+                clearPoiOverlay()
                 return@addOnCameraIdleListener
             }
 
@@ -1479,12 +2768,8 @@ class MapLibreEngineImpl(
 
                 val dedupedFirstPass = mergePoiPins(localResults + tileResults, emptyList())
                 mergeIntoPoiCache(dedupedFirstPass)
-                evictPoiCacheOutsideBounds(bounds, padLat * 2, padLng * 2)
-                if (poiCache.isNotEmpty()) {
-                    updatePoiLayerFromCache()
-                } else {
-                    clearPoiLayer()
-                }
+                trimPoiCacheToMax(center)
+                refreshPoiOverlay()
 
                 val photonResults = withContext(Dispatchers.IO) {
                     if (shouldQueryPhoton(center)) {
@@ -1497,17 +2782,19 @@ class MapLibreEngineImpl(
 
                 if (photonResults.isNotEmpty()) {
                     mergeIntoPoiCache(mergePoiPins(localResults, photonResults))
-                    evictPoiCacheOutsideBounds(bounds, padLat * 2, padLng * 2)
-                    updatePoiLayerFromCache()
-                } else if (poiCache.isEmpty()) {
-                    clearPoiLayer()
+                    trimPoiCacheToMax(center)
+                    refreshPoiOverlay()
                 }
             }
         }
 
-        map.addOnMapClickListener { latLng ->
+        map.addOnMapClickListener {
+            mapTapDismissHandler?.let { handler ->
+                handler()
+                return@addOnMapClickListener true
+            }
             val loadedMap = mapLibreMap ?: return@addOnMapClickListener false
-            handleMapPointSelection(loadedMap, latLng)
+            handleMapPointSelection(loadedMap, it)
         }
 
         map.addOnMapLongClickListener { latLng ->
@@ -1561,6 +2848,27 @@ class MapLibreEngineImpl(
             val place = placeFromSymbolFeature(feature) ?: return false
             focusOnPoi(place, moveCamera = true)
             return true
+        }
+
+        if (useVectorTiles && !_uiState.value.isNavigating) {
+            val tapBounds = geoBoundsAround(latLng.latitude, latLng.longitude)
+            val place = map.queryRenderedFeatures(screenPoint, *VECTOR_POI_LAYER_IDS)
+                .firstNotNullOfOrNull { feature ->
+                    tileFeatureToPlace(feature, lastKnownLocation, tapBounds)
+                }
+            if (place != null) {
+                val enriched = poiCache.values.find { cached ->
+                    coordinatesNear(cached.latitude, cached.longitude, place.latitude, place.longitude)
+                }?.let { cached ->
+                    place.copy(
+                        subTitle = cached.subTitle.ifBlank { place.subTitle },
+                        category = cached.category.ifBlank { place.category },
+                    )
+                } ?: place
+                focusOnPoi(enriched, moveCamera = true)
+                mergeIntoPoiCache(listOf(enriched))
+                return true
+            }
         }
 
         return false
@@ -1849,6 +3157,15 @@ class MapLibreEngineImpl(
         val maxLng: Double,
     )
 
+    private fun geoBoundsAround(lat: Double, lng: Double, deltaDegrees: Double = 0.001): GeoBounds {
+        return GeoBounds(
+            minLat = lat - deltaDegrees,
+            maxLat = lat + deltaDegrees,
+            minLng = lng - deltaDegrees,
+            maxLng = lng + deltaDegrees,
+        )
+    }
+
     private fun expandGeoBounds(
         bounds: LatLngBounds,
         padLat: Double,
@@ -1882,21 +3199,67 @@ class MapLibreEngineImpl(
         }
     }
 
-    private fun evictPoiCacheOutsideBounds(
-        visibleBounds: LatLngBounds,
-        padLat: Double,
-        padLng: Double,
-    ) {
-        val evictBounds = expandGeoBounds(visibleBounds, padLat, padLng)
-        poiCache.entries.removeIf { (_, place) -> !placeInBounds(place, evictBounds) }
+    private fun trimPoiCacheToMax(center: LatLng) {
+        if (poiCache.size <= MAX_POI_PINS) return
+        val keepKeys = poiCache.values
+            .sortedBy { place ->
+                val distanceResults = FloatArray(1)
+                Location.distanceBetween(
+                    center.latitude,
+                    center.longitude,
+                    place.latitude,
+                    place.longitude,
+                    distanceResults,
+                )
+                distanceResults[0]
+            }
+            .take(MAX_POI_PINS)
+            .map { poiCacheKey(it) }
+            .toSet()
+        poiCache.entries.removeIf { it.key !in keepKeys }
     }
 
-    private fun updatePoiLayerFromCache() {
+    private fun refreshPoiOverlay() {
+        if (_uiState.value.selectedPoi != null || _uiState.value.isInTopDownView) return
+
         val pins = mergePoiPins(poiCache.values.toList(), emptyList())
         if (pins.isNotEmpty()) {
             updatePoiLayer(pins)
         } else {
-            clearPoiLayer()
+            clearPoiOverlay()
+        }
+    }
+
+    private fun updatePoiLayerFromCache() {
+        if (_uiState.value.selectedPoi != null || _uiState.value.isInTopDownView) return
+
+        val map = mapLibreMap
+        if (useVectorTiles && map != null) {
+            val bounds = map.projection.visibleRegion.latLngBounds
+            val latSpan = bounds.northEast.latitude - bounds.southWest.latitude
+            val lngSpan = bounds.northEast.longitude - bounds.southWest.longitude
+            val padLat = latSpan * BBOX_PADDING_FACTOR / 2
+            val padLng = lngSpan * BBOX_PADDING_FACTOR / 2
+            val queryBounds = expandGeoBounds(bounds, padLat, padLng)
+            mergeIntoPoiCache(queryTilePois(map, queryBounds))
+            map.cameraPosition.target?.let { trimPoiCacheToMax(it) }
+        }
+        refreshPoiOverlay()
+    }
+
+    private fun showNativeVectorPoiLayers(style: Style) {
+        VECTOR_POI_LAYER_IDS.forEach { id ->
+            style.getLayer(id)?.setProperties(PropertyFactory.visibility(Property.VISIBLE))
+        }
+    }
+
+    private fun resolveMapOverlayAnchorLayerId(style: Style): String? {
+        return when {
+            style.getLayer(TRAFFIC_LAYER_ID) != null -> TRAFFIC_LAYER_ID
+            style.getLayer(RASTER_BASE_LAYER_ID) != null -> RASTER_BASE_LAYER_ID
+            style.getLayer("poi_transit") != null -> "poi_transit"
+            style.getLayer("road_motorway") != null -> "road_motorway"
+            else -> null
         }
     }
 
@@ -1927,13 +3290,11 @@ class MapLibreEngineImpl(
             } else {
                 style.addSource(GeoJsonSource(POI_SOURCE_ID, geoJson))
                 val poiLayer = SymbolLayer(POI_LAYER_ID, POI_SOURCE_ID).withProperties(
-                    PropertyFactory.iconImage(poiCategoryIconExpression()),
-                    PropertyFactory.iconAllowOverlap(true),
-                    PropertyFactory.iconAnchor(Property.ICON_ANCHOR_BOTTOM),
-                    PropertyFactory.iconSize(1f),
+                    *poiLabelLayerProperties(mixPoiIconExpression()),
                 )
-                if (style.getLayer(RASTER_BASE_LAYER_ID) != null) {
-                    style.addLayerAbove(poiLayer, RASTER_BASE_LAYER_ID)
+                val anchor = resolveMapOverlayAnchorLayerId(style)
+                if (anchor != null) {
+                    style.addLayerAbove(poiLayer, anchor)
                 } else {
                     style.addLayer(poiLayer)
                 }
@@ -1941,8 +3302,7 @@ class MapLibreEngineImpl(
         }
     }
 
-    private fun clearPoiLayer() {
-        clearPoiCache()
+    private fun clearPoiOverlay() {
         val map = mapLibreMap ?: return
         map.getStyle { style ->
             val existing = style.getSource(POI_SOURCE_ID)
@@ -1950,6 +3310,12 @@ class MapLibreEngineImpl(
                 existing.setGeoJson(EMPTY_POI_GEOJSON)
             }
         }
+    }
+
+    /** Clears overlay GeoJSON and in-memory POI cache (navigation teardown, style reset). */
+    private fun clearPoiLayer() {
+        clearPoiCache()
+        clearPoiOverlay()
     }
 
     private fun placeCustomPin(lat: Double, lng: Double, pending: Boolean) {
@@ -1964,7 +3330,7 @@ class MapLibreEngineImpl(
                 val customPinLayer = SymbolLayer(CUSTOM_PIN_LAYER_ID, CUSTOM_PIN_SOURCE_ID).withProperties(
                     PropertyFactory.iconImage(customPinIconExpression()),
                     PropertyFactory.iconAllowOverlap(true),
-                    PropertyFactory.iconAnchor(Property.ICON_ANCHOR_BOTTOM),
+                    PropertyFactory.iconAnchor(Property.ICON_ANCHOR_CENTER),
                     PropertyFactory.iconSize(1f),
                 )
                 when {
@@ -1974,10 +3340,14 @@ class MapLibreEngineImpl(
                     style.getLayer(POI_LAYER_ID) != null -> {
                         style.addLayerAbove(customPinLayer, POI_LAYER_ID)
                     }
-                    style.getLayer(RASTER_BASE_LAYER_ID) != null -> {
-                        style.addLayerAbove(customPinLayer, RASTER_BASE_LAYER_ID)
+                    else -> {
+                        val anchor = resolveMapOverlayAnchorLayerId(style)
+                        if (anchor != null) {
+                            style.addLayerAbove(customPinLayer, anchor)
+                        } else {
+                            style.addLayer(customPinLayer)
+                        }
                     }
-                    else -> style.addLayer(customPinLayer)
                 }
             }
         }
@@ -2007,19 +3377,20 @@ class MapLibreEngineImpl(
             } else if (places.isNotEmpty()) {
                 style.addSource(GeoJsonSource(SAVED_PLACES_SOURCE_ID, geoJson))
                 val savedLayer = SymbolLayer(SAVED_PLACES_LAYER_ID, SAVED_PLACES_SOURCE_ID).withProperties(
-                    PropertyFactory.iconImage(starredCategoryIconExpression()),
-                    PropertyFactory.iconAllowOverlap(true),
-                    PropertyFactory.iconAnchor(Property.ICON_ANCHOR_BOTTOM),
-                    PropertyFactory.iconSize(1f),
+                    *poiIconOnlyLayerProperties(poiCategoryIconExpression()),
                 )
                 when {
                     style.getLayer(POI_LAYER_ID) != null -> {
                         style.addLayerAbove(savedLayer, POI_LAYER_ID)
                     }
-                    style.getLayer(RASTER_BASE_LAYER_ID) != null -> {
-                        style.addLayerAbove(savedLayer, RASTER_BASE_LAYER_ID)
+                    else -> {
+                        val anchor = resolveMapOverlayAnchorLayerId(style)
+                        if (anchor != null) {
+                            style.addLayerAbove(savedLayer, anchor)
+                        } else {
+                            style.addLayer(savedLayer)
+                        }
                     }
-                    else -> style.addLayer(savedLayer)
                 }
             }
         }
@@ -2116,10 +3487,7 @@ class MapLibreEngineImpl(
             val locationEngine = createLocationEngine(ctx)
             this.locationEngine = locationEngine
             val locationComponent = map.locationComponent
-            val componentOptions = LocationComponentOptions.builder(ctx)
-                .maxZoomIconScale(puckScale)
-                .minZoomIconScale(puckScale)
-                .build()
+            val componentOptions = buildLocationComponentOptions(ctx, style)
             val options = LocationComponentActivationOptions.builder(ctx, style)
                 .locationEngine(locationEngine)
                 .locationComponentOptions(componentOptions)
@@ -2175,9 +3543,11 @@ class MapLibreEngineImpl(
         val location = pendingLocationFix ?: return
         val component = mapLibreMap?.locationComponent ?: return
         if (!component.isLocationComponentActivated || !component.isLocationComponentEnabled) return
-        component.forceLocationUpdate(location)
+        pushPuckLocationIfNeeded(location, force = true)
         pendingLocationFix = null
-        Log.i(TAG, "Applied queued location fix to LocationComponent")
+        if (BuildConfig.DEBUG) {
+            Log.d(TAG, "Applied queued location fix to LocationComponent")
+        }
     }
 
     private fun registerSpeedUpdates(engine: LocationEngine) {
@@ -2267,38 +3637,49 @@ class MapLibreEngineImpl(
         return location
     }
 
-    private fun startDeadReckoning(from: Location) {
-        deadReckoningJob?.cancel()
-        val speed = if (from.hasSpeed()) from.speed else return
-        if (speed < STOPPED_SPEED_MPS) return
-        val bearing = from.bearing
-        lastDeadReckoningLocation = from
-        deadReckoningJob = engineScope.launch {
-            val ref = from
-            while (isActive) {
-                delay(DEAD_RECKONING_INTERVAL_MS)
-                val elapsed = (System.currentTimeMillis() - ref.time).coerceAtLeast(0)
-                val dist = speed * (elapsed / 1000.0)
-                val bearingRad = Math.toRadians(bearing.toDouble())
-                val latRad = Math.toRadians(ref.latitude)
-                val lat = ref.latitude + cos(bearingRad) * dist / METERS_PER_DEGREE_LAT
-                val lng = ref.longitude + sin(bearingRad) * dist / (METERS_PER_DEGREE_LAT * cos(latRad))
-                val extrapolated = Location(ref).apply {
-                    latitude = lat
-                    longitude = lng
-                    time = System.currentTimeMillis()
-                    this.bearing = bearing
-                }
-                lastDeadReckoningLocation = extrapolated
-                val component = mapLibreMap?.locationComponent ?: break
-                if (component.isLocationComponentActivated && component.isLocationComponentEnabled) {
-                    component.forceLocationUpdate(extrapolated)
-                }
+    private fun isDuplicateLocationFix(location: Location): Boolean {
+        val prev = lastLocationFixForDedup ?: return false
+        val timeDelta = location.time - prev.time
+        if (timeDelta in 0..LOCATION_FIX_DEDUP_TIME_MS) return true
+        if (timeDelta < 500L && prev.distanceTo(location) < LOCATION_FIX_DEDUP_DIST_M) return true
+        return false
+    }
+
+    private fun maybeUpdateUiStateCoords(lat: Double, lng: Double) {
+        val now = System.currentTimeMillis()
+        val shouldUpdate = when {
+            lastUiStateCoordLat == null || lastUiStateCoordLng == null -> true
+            now - lastUiStateCoordUpdateMs >= UI_STATE_COORD_THROTTLE_MS -> true
+            else -> {
+                val results = FloatArray(1)
+                Location.distanceBetween(
+                    lastUiStateCoordLat!!,
+                    lastUiStateCoordLng!!,
+                    lat,
+                    lng,
+                    results,
+                )
+                results[0] >= UI_STATE_COORD_MIN_MOVE_M
             }
         }
+        if (!shouldUpdate) return
+        lastUiStateCoordUpdateMs = now
+        lastUiStateCoordLat = lat
+        lastUiStateCoordLng = lng
+        _uiState.update { it.copy(currentLat = lat, currentLng = lng) }
+    }
+
+    private fun stopDeadReckoning() {
+        deadReckoningJob?.cancel()
+        deadReckoningJob = null
+        drAnchor = null
+        lastDeadReckoningLocation = null
     }
 
     private fun applyAndroidLocation(location: Location, snapCamera: Boolean) {
+        if (isDuplicateLocationFix(location)) return
+        lastLocationFixForDedup = Location(location)
+
         val locationWithBearing = enrichLocationWithBearing(location)
 
         // During navigation, snap the display location onto the nearest route segment so the
@@ -2312,33 +3693,59 @@ class MapLibreEngineImpl(
 
         val latLng = LatLng(displayLocation.latitude, displayLocation.longitude)
         lastKnownLocation = latLng
-        _uiState.update {
-            it.copy(
-                currentLat = displayLocation.latitude,
-                currentLng = displayLocation.longitude,
+        maybeUpdateUiStateCoords(displayLocation.latitude, displayLocation.longitude)
+
+        val component = mapLibreMap?.locationComponent
+        val componentReady = component != null &&
+            component.isLocationComponentActivated &&
+            component.isLocationComponentEnabled
+        val isNavigating = _uiState.value.isNavigating
+        when {
+            !componentReady -> pendingLocationFix = displayLocation
+            isNavigating -> {
+                pushPuckLocationIfNeeded(displayLocation, force = true)
+                pendingLocationFix = null
+            }
+            else -> {
+                // Free drive: LocationEngine feeds the puck — avoid forceLocationUpdate here
+                // (races native MapRenderer::render on emulator).
+                pendingLocationFix = null
+            }
+        }
+
+        if (isNavigating) {
+            updateRouteProgress(displayLocation)
+        }
+
+        if (BuildConfig.DEBUG) {
+            Log.d(
+                TAG,
+                "Location fix ${displayLocation.latitude}, ${displayLocation.longitude} " +
+                    "(provider=${displayLocation.provider}, bearing=${displayLocation.bearing}, " +
+                    "roadSnapped=${displayLocation !== locationWithBearing}, " +
+                    "snapCamera=$snapCamera, zoom=${mapLibreMap?.cameraPosition?.zoom})",
             )
         }
-        val component = mapLibreMap?.locationComponent
-        if (component != null && component.isLocationComponentActivated && component.isLocationComponentEnabled) {
-            component.forceLocationUpdate(displayLocation)
-            pendingLocationFix = null
-        } else {
-            pendingLocationFix = displayLocation
-        }
-        startDeadReckoning(displayLocation)
-        Log.i(
-            TAG,
-            "Location fix ${displayLocation.latitude}, ${displayLocation.longitude} " +
-                "(provider=${displayLocation.provider}, bearing=${displayLocation.bearing}, " +
-                "roadSnapped=${displayLocation !== locationWithBearing}, " +
-                "snapCamera=$snapCamera, zoom=${mapLibreMap?.cameraPosition?.zoom})",
-        )
         when {
             // Pass the raw bearing-enriched fix to step/off-route logic so actual GPS deviation
             // is measured — the snapped display location would always appear on the route.
-            _uiState.value.isNavigating -> evaluateStepAdvancement(locationWithBearing)
+            isNavigating -> evaluateStepAdvancement(locationWithBearing)
+            _uiState.value.isInTopDownView -> mapLibreMap?.let { ensureTopDownCameraDetached(it) }
             !hasSnappedCameraToGps -> snapCameraToGpsIfNeeded(latLng)
-            else -> _uiState.update { it.copy(streetName = "Free Drive") }
+            else -> {
+                if (!_uiState.value.isCameraDetached) {
+                    mapLibreMap?.let { map ->
+                        val liveComponent = map.locationComponent
+                        val alreadyTracking = liveComponent.isLocationComponentActivated &&
+                            liveComponent.isLocationComponentEnabled &&
+                            liveComponent.cameraMode == CameraMode.TRACKING_GPS &&
+                            liveComponent.renderMode == RenderMode.GPS
+                        if (!alreadyTracking) {
+                            activateFreeDriveTrackingMode(map)
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -2377,9 +3784,23 @@ class MapLibreEngineImpl(
             it.copy(distanceToNextTurn = formatDistance(distToManeuver.toDouble()))
         }
 
+        val speedMps = if (currentLocation.hasSpeed()) currentLocation.speed else 0f
+        navigationVoice?.onNavTick(
+            NavTickContext(
+                currentStepIndex = currentStepIndex,
+                steps = steps.map { it.toNavStepPhrase() },
+                distToNextManeuverM = distToManeuver,
+                speedMps = speedMps,
+                isRouteOverviewActive = isRouteOverviewActive() ||
+                    navigationCameraTransitionActive ||
+                    _uiState.value.isRouteSelecting,
+            ),
+        )
+
         if (distToManeuver < STEP_ADVANCE_THRESHOLD_M) {
             currentStepIndex = nextIdx
             val advanced = steps[currentStepIndex]
+            navigationVoice?.onStepAdvanced(currentStepIndex, advanced.toNavStepPhrase())
             _uiState.update {
                 it.copy(
                     turnInstruction = advanced.instruction,
@@ -2517,33 +3938,19 @@ class MapLibreEngineImpl(
      * let [checkOffRoute] handle that case with the original coordinates).
      */
     private fun snapLocationToRoute(location: Location): Location? {
-        val points = routeGeometryPoints
-        if (points.size < 2) return null
-
-        var minDist = Float.MAX_VALUE
-        var snappedLat = location.latitude
-        var snappedLng = location.longitude
-
-        for (i in 0 until points.size - 1) {
-            val result = closestPointOnSegment(location, points[i], points[i + 1])
-            if (result.distM < minDist) {
-                minDist = result.distM
-                snappedLat = result.lat
-                snappedLng = result.lng
-            }
-        }
-
-        if (minDist > SNAP_TO_ROUTE_MAX_M) return null
+        val projection = projectOntoRoute(location) ?: return null
+        if (projection.distToRouteM > SNAP_TO_ROUTE_MAX_M) return null
 
         return Location(location).apply {
-            latitude = snappedLat
-            longitude = snappedLng
+            latitude = projection.splitLat
+            longitude = projection.splitLng
         }
     }
 
     private fun triggerArrival() {
         if (navigationArrivalTriggered) return
         navigationArrivalTriggered = true
+        navigationVoice?.onArrival()
         _uiState.update { it.copy(streetName = "Arrived at destination") }
         engineScope.launch {
             delay(ARRIVAL_FREE_DRIVE_DELAY_MS)
@@ -2561,8 +3968,7 @@ class MapLibreEngineImpl(
         Log.i(
             TAG,
             "beginLocationAcquisition: providers=${locationManager?.allProviders}, " +
-                "enabled=${isLocationEnabled(context)}, " +
-                "listenersRegistered=$listenersRegistered",
+                "enabled=${isLocationEnabled(context)}",
         )
         logPermissionState(context)
 
@@ -2578,12 +3984,13 @@ class MapLibreEngineImpl(
     }
 
     private fun ensureLocationListeners(context: Context) {
-        if (listenersRegistered) {
-            Log.i(TAG, "Location listeners already active; skipping re-register")
+        if (freshLocationListener != null) {
+            if (BuildConfig.DEBUG) {
+                Log.d(TAG, "GPS location listener already active; skipping re-register")
+            }
             return
         }
         ensureGpsLocationListener(context)
-        listenersRegistered = true
     }
 
     private fun ensureGpsLocationListener(context: Context) {
@@ -2592,10 +3999,12 @@ class MapLibreEngineImpl(
             ?: return
 
         val listener = LocationListener { location ->
-            Log.i(
-                TAG,
-                "GPS update: ${location.latitude}, ${location.longitude} from ${location.provider}",
-            )
+            if (BuildConfig.DEBUG) {
+                Log.d(
+                    TAG,
+                    "GPS update: ${location.latitude}, ${location.longitude} from ${location.provider}",
+                )
+            }
             applyAndroidLocation(location, snapCamera = !hasSnappedCameraToGps)
         }
         freshLocationListener = listener
@@ -2670,7 +4079,13 @@ class MapLibreEngineImpl(
         val location = readLastKnownLocation(context)
         return if (location != null) {
             lastKnownLocation = location
-            _uiState.update { it.copy(streetName = "Locating...") }
+            _uiState.update {
+                it.copy(
+                    streetName = "Locating...",
+                    currentLat = location.latitude,
+                    currentLng = location.longitude,
+                )
+            }
             ResolvedLocation(
                 latLng = location,
                 zoom = freeDriveZoom,
@@ -2774,6 +4189,36 @@ class MapLibreEngineImpl(
         }
     }
 
+    private fun poiIconOnlyLayerProperties(iconImageExpression: Expression): Array<PropertyValue<*>> {
+        return arrayOf(
+            PropertyFactory.iconImage(iconImageExpression),
+            PropertyFactory.iconAnchor(Property.ICON_ANCHOR_CENTER),
+            PropertyFactory.iconAllowOverlap(true),
+            PropertyFactory.iconSize(1f),
+        )
+    }
+
+    private fun poiLabelLayerProperties(iconImageExpression: Expression): Array<PropertyValue<*>> {
+        return arrayOf(
+            PropertyFactory.iconImage(iconImageExpression),
+            PropertyFactory.iconAnchor(Property.ICON_ANCHOR_CENTER),
+            PropertyFactory.iconAllowOverlap(true),
+            PropertyFactory.iconSize(1f),
+            PropertyFactory.textField(Expression.get("name")),
+            PropertyFactory.textFont(arrayOf("Noto Sans Italic")),
+            PropertyFactory.textSize(12f),
+            PropertyFactory.textAnchor(Property.TEXT_ANCHOR_TOP),
+            PropertyFactory.textOffset(arrayOf(0f, 0.6f)),
+            PropertyFactory.textColor("#666666"),
+            PropertyFactory.textHaloColor("#ffffff"),
+            PropertyFactory.textHaloWidth(1f),
+            PropertyFactory.textHaloBlur(0.5f),
+            PropertyFactory.textAllowOverlap(true),
+            PropertyFactory.textIgnorePlacement(true),
+            PropertyFactory.textMaxWidth(9f),
+        )
+    }
+
     private fun customPinIconExpression(): Expression {
         return Expression.switchCase(
             Expression.eq(Expression.get("pending"), Expression.literal(true)),
@@ -2782,15 +4227,8 @@ class MapLibreEngineImpl(
         )
     }
 
-    private fun poiCategoryIconExpression(): Expression {
-        return Expression.switchCase(
-            Expression.eq(Expression.get("starred"), Expression.literal(true)),
-            starredCategoryIconExpression(),
-            normalCategoryIconExpression(),
-        )
-    }
-
-    private fun normalCategoryIconExpression(): Expression {
+    /** Mix overlay always uses registered bitmap teardrops, not Liberty style sprites. */
+    private fun mixPoiIconExpression(): Expression {
         return Expression.match(
             Expression.get("category"),
             Expression.literal("poi_icon_default"),
@@ -2803,6 +4241,16 @@ class MapLibreEngineImpl(
             Expression.stop("recreation", Expression.literal("poi_icon_recreation")),
         )
     }
+
+    private fun poiCategoryIconExpression(): Expression {
+        return Expression.switchCase(
+            Expression.eq(Expression.get("starred"), Expression.literal(true)),
+            starredCategoryIconExpression(),
+            normalCategoryIconExpression(),
+        )
+    }
+
+    private fun normalCategoryIconExpression(): Expression = mixPoiIconExpression()
 
     private fun starredCategoryIconExpression(): Expression {
         return Expression.match(
@@ -2873,15 +4321,20 @@ class MapLibreEngineImpl(
 
     companion object {
         private const val TAG = "MapLibreEngineImpl"
-        private const val COMPASS_MARGIN_DP = 16f
+        private const val MAP_UI_MARGIN_DP = 8f
+        /** MapLibre logo width (~92 dp) plus a small gap before the ℹ button. */
+        private const val ATTRIBUTION_LEFT_MARGIN_DP = 98f
         private const val DEFAULT_ZOOM = 15.0
         private const val DEFAULT_ZOOM_FALLBACK = 6.0
         private const val ROUTING_MIN_ZOOM = 10.0
-        private const val NAV_TILT = 58.0
+        private const val NAV_TILT = 63.0
         private const val NAV_CAMERA_DURATION_MS = 2500
         private const val FREE_DRIVE_TILT = 50.0
         private const val POI_PREVIEW_ZOOM = 15.5
-        private const val POI_PREVIEW_ANIMATION_MS = 1000
+        /** Top-down explore view centered on puck (CropFree button). */
+        private const val TOP_DOWN_EXPLORE_ZOOM = 15.0
+        private const val POI_PREVIEW_MAX_RETRIES = 8
+        private const val POI_PREVIEW_RETRY_DELAY_MS = 50L
         private const val NEARBY_PIN_DEDUP_THRESHOLD_M = 50f
         private const val RASTER_BASE_LAYER_ID = "osm"
         private const val TRAFFIC_SOURCE_ID = "mix-traffic-source"
@@ -2896,13 +4349,42 @@ class MapLibreEngineImpl(
         private const val ROUTE_OVERVIEW_HOLD_MS = 10_000L
         private const val LOCATION_INTERVAL_MS = 1000L
         private const val FRESH_LOCATION_MIN_TIME_MS = 500L
+        private const val LOCATION_FIX_DEDUP_TIME_MS = 50L
+        private const val LOCATION_FIX_DEDUP_DIST_M = 2f
+        private const val PUCK_PUSH_MIN_DIST_M = 2f
+        private const val UI_STATE_COORD_THROTTLE_MS = 1000L
+        private const val UI_STATE_COORD_MIN_MOVE_M = 20f
+        private const val ROUTE_PROGRESS_MAP_MIN_ADVANCE_M = 10f
         private const val LOCATION_POLL_INTERVAL_MS = 1000L
         private const val LOCATION_POLL_ATTEMPTS = 15
         private const val LOCATION_ACQUIRE_TIMEOUT_MS = 8000L
         private val LOCATION_RETRY_DELAYS_MS = longArrayOf(1_000L, 3_000L, 8_000L)
+        private const val ROUTE_TRAVELED_SOURCE_ID = "mix-route-traveled-source"
+        private const val ROUTE_REMAINING_SOURCE_ID = "mix-route-remaining-source"
+        private const val ROUTE_TRAVELED_CASING_LAYER_ID = "mix-route-traveled-casing-layer"
+        private const val ROUTE_TRAVELED_LAYER_ID = "mix-route-traveled-layer"
+        private const val ROUTE_REMAINING_CASING_LAYER_ID = "mix-route-remaining-casing-layer"
+        private const val ROUTE_REMAINING_LAYER_ID = "mix-route-remaining-layer"
+        /** Legacy single-source IDs — removed on teardown for in-flight upgrades. */
         private const val ROUTE_SOURCE_ID = "mix-route-source"
         private const val ROUTE_CASING_LAYER_ID = "mix-route-casing-layer"
         private const val ROUTE_LAYER_ID = "mix-route-layer"
+        private const val ROUTE_ID_OSRM_FASTEST = "osrm_fastest"
+        private const val ROUTE_ID_TOMTOM = "tomtom_traffic"
+        private const val ROUTE_ID_OSRM_ALT = "osrm_alt"
+        private const val ROUTE_TOMTOM_SOURCE_ID = "mix-route-tomtom-source"
+        private const val ROUTE_TOMTOM_LAYER_ID = "mix-route-tomtom-layer"
+        private const val ROUTE_OSRM_ALT_SOURCE_ID = "mix-route-osrm-alt-source"
+        private const val ROUTE_OSRM_ALT_LAYER_ID = "mix-route-osrm-alt-layer"
+        private const val ROUTE_OSRM_PRIMARY_PREVIEW_SOURCE_ID = "mix-route-osrm-primary-preview-source"
+        private const val ROUTE_OSRM_PRIMARY_PREVIEW_LAYER_ID = "mix-route-osrm-primary-preview-layer"
+        private const val ROUTE_TOMTOM_COLOR = "#FFB300"
+        private const val ROUTE_TOMTOM_WIDTH = 10f
+        private const val ROUTE_TOMTOM_OPACITY = 0.7f
+        private const val ROUTE_OSRM_ALT_COLOR = "#6B7280"
+        private const val ROUTE_OSRM_ALT_WIDTH = 8f
+        private const val ROUTE_OSRM_ALT_OPACITY = 0.45f
+        private const val ROUTE_PROGRESS_BACKTRACK_TOLERANCE_M = 5f
         private val VECTOR_POI_LAYER_IDS = arrayOf("poi_r1", "poi_r7", "poi_r20", "poi_transit")
         private const val POI_SOURCE_ID = "mix-poi-source"
         private const val POI_LAYER_ID = "mix-poi-layer"
@@ -2923,20 +4405,21 @@ class MapLibreEngineImpl(
         private const val MAX_POI_PINS = 100
         private const val POI_CACHE_SEARCH_LIMIT = 15
         private const val POI_DEBOUNCE_MS = 400L
-        private const val NEARBY_SEARCH_BBOX_DELTA = 0.08
+        private const val NEARBY_SEARCH_BBOX_DELTA = 0.5 // aligned with LocalPlacesRepository text-search bbox
         private const val BBOX_PADDING_FACTOR = 1.5
         private const val PHOTON_MOVE_THRESHOLD_M = 300f
         private const val MAP_TAP_NEAREST_POI_MAX_M = 500f
-        /** Screen-space hit radius for teardrop pin icons (≈ half of 64 dp icon height). */
-        private const val MAP_PIN_ICON_HIT_RADIUS_DP = 38f
+        /** Screen-space hit radius for compact 24 dp circular POI icons. */
+        private const val MAP_PIN_ICON_HIT_RADIUS_DP = 20f
         private const val EMPTY_POI_GEOJSON = """{"type":"FeatureCollection","features":[]}"""
         private const val EMPTY_CUSTOM_PIN_GEOJSON = """{"type":"FeatureCollection","features":[]}"""
         private const val ROUTE_CASING_COLOR = "#CC000000"
         private const val ROUTE_CASING_WIDTH = 18f
         private const val ROUTE_COLOR = "#00CBD6"
+        private const val ROUTE_TRAVELED_COLOR = "#6B7280"
+        private const val ROUTE_TRAVELED_OPACITY = 0.85f
         private const val ROUTE_WIDTH = 14f
         private const val STOPPED_SPEED_MPS = 1.4f
-        private const val DEAD_RECKONING_INTERVAL_MS = 16L
         private const val METERS_PER_DEGREE_LAT = 111_320.0
         private const val STEP_ADVANCE_THRESHOLD_M = 25f
         private const val ARRIVAL_THRESHOLD_M = 15f

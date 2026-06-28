@@ -14,7 +14,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.outlined.Star
 import androidx.compose.material3.Button
@@ -99,24 +98,17 @@ fun PoiDetailPane(
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(CarDimensions.PaneGap * 2),
+                .padding(
+                    horizontal = CarDimensions.PaneGap * 2,
+                    vertical = CarDimensions.PaneGap,
+                ),
             verticalArrangement = Arrangement.spacedBy(CarDimensions.PaneGap),
         ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                CarHeadlineText(
-                    text = if (poi.isDroppedPin) "Custom Pin" else "Place Details",
-                    style = MaterialTheme.typography.headlineMedium,
-                    modifier = Modifier.weight(1f),
-                )
-                OverlayCloseButton(
-                    onClick = onDismiss,
-                    contentDescription = "Close place details",
-                )
-            }
+            PanelHeaderRow(
+                title = if (poi.isDroppedPin) "Custom Pin" else "Place Details",
+                onClose = onDismiss,
+                closeContentDescription = "Close place details",
+            )
 
             PoiDetailCardContent(
                 poi = poi,
@@ -125,7 +117,6 @@ fun PoiDetailPane(
                 onStar = onStar,
                 onNavigate = onNavigate,
                 onSelectNearby = onSelectNearby,
-                onDismiss = onDismiss,
                 modifier = Modifier.weight(1f),
             )
         }
@@ -156,7 +147,6 @@ fun PoiDetailDrawer(
             onStar = onStar,
             onNavigate = onNavigate,
             onSelectNearby = {},
-            onDismiss = onDismiss,
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .fillMaxWidth()
@@ -173,7 +163,6 @@ private fun PoiDetailCardContent(
     onStar: (customName: String) -> Unit,
     onNavigate: (customName: String) -> Unit,
     onSelectNearby: (SearchResultPlace) -> Unit,
-    onDismiss: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     var customName by remember(poi.latitude, poi.longitude, poi.name) {
@@ -282,16 +271,6 @@ private fun PoiDetailCardContent(
                         imageVector = if (isStarred) Icons.Filled.Star else Icons.Outlined.Star,
                         contentDescription = if (isStarred) "Remove from saved" else "Save place",
                         tint = if (isStarred) Color(0xFFFFD700) else MaterialTheme.colorScheme.onSurface,
-                    )
-                }
-                IconButton(
-                    onClick = onDismiss,
-                    modifier = Modifier.size(CarDimensions.MinTapTarget),
-                ) {
-                    Icon(
-                        imageVector = Icons.Filled.Close,
-                        contentDescription = "Close place details",
-                        tint = MaterialTheme.colorScheme.onSurface,
                     )
                 }
             }

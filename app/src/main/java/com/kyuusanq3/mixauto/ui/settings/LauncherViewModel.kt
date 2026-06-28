@@ -7,10 +7,16 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.kyuusanq3.mixauto.BuildConfig
+import com.kyuusanq3.mixauto.data.apps.LaunchableAppEntry
+import com.kyuusanq3.mixauto.data.apps.LaunchableAppsRepository
 import com.kyuusanq3.mixauto.data.map.TomTomKeyCheckResult
 import com.kyuusanq3.mixauto.data.map.TomTomTrafficClient
 import com.kyuusanq3.mixauto.domain.map.SearchResultPlace
 import com.kyuusanq3.mixauto.ui.components.canLaunchApp
+import com.kyuusanq3.mixauto.ui.dashboard.ActivePanel
+import com.kyuusanq3.mixauto.ui.dashboard.AlbumArtMode
+import com.kyuusanq3.mixauto.ui.dashboard.DockShortcutIconSize
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
@@ -26,8 +32,12 @@ sealed class TomTomKeyCheckState {
 
 class LauncherViewModel(application: Application) : AndroidViewModel(application) {
     private val preferences = LauncherPreferences(application)
+    private val launchableAppsRepository = LaunchableAppsRepository(application)
 
     var defaultAudioPackage by mutableStateOf(loadValidatedDefaultAudioPackage())
+        private set
+
+    var dockPinnedPackages by mutableStateOf(loadValidatedDockPinnedPackages())
         private set
 
     var isLeftHandDrive by mutableStateOf(preferences.isLeftHandDrive)
@@ -51,7 +61,7 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     var isLauncherMode by mutableStateOf(preferences.isLauncherMode)
         private set
 
-    var isLargeShortcutIcons by mutableStateOf(preferences.isLargeShortcutIcons)
+    var dockShortcutIconSize by mutableStateOf(preferences.dockShortcutIconSize)
         private set
 
     var drivingZoom by mutableStateOf(preferences.drivingZoom)
@@ -69,6 +79,12 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     var showTraffic by mutableStateOf(preferences.showTraffic)
         private set
 
+    var navigationVoiceEnabled by mutableStateOf(preferences.navigationVoiceEnabled)
+        private set
+
+    var navigationVoiceVolume by mutableStateOf(preferences.navigationVoiceVolume)
+        private set
+
     var tomTomApiKey by mutableStateOf(preferences.tomTomApiKey)
         private set
 
@@ -78,11 +94,65 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     var savedPlaces by mutableStateOf(preferences.savedPlaces)
         private set
 
+    var albumArtMode by mutableStateOf(AlbumArtMode.fromPreference(preferences.albumArtMode))
+        private set
+
+    var showStatusStrip by mutableStateOf(preferences.showStatusStrip)
+        private set
+
+    var showSystemStatusBar by mutableStateOf(preferences.showSystemStatusBar)
+        private set
+
+    var musicPaneEnabled by mutableStateOf(preferences.musicPaneEnabled)
+        private set
+
     var tomTomKeyCheckState by mutableStateOf<TomTomKeyCheckState>(TomTomKeyCheckState.Idle)
         private set
 
     var isDestinationSearchOpen by mutableStateOf(false)
         internal set
+
+    var activePanel by mutableStateOf(
+        if (preferences.musicPaneEnabled) ActivePanel.MEDIA else ActivePanel.HIDDEN,
+    )
+        internal set
+
+    var poiReturnToSearch by mutableStateOf(false)
+        internal set
+
+    fun setActivePanel(panel: ActivePanel) {
+        activePanel = panel
+    }
+
+    fun setPoiReturnToSearch(value: Boolean) {
+        poiReturnToSearch = value
+    }
+
+    fun clearPoiReturnToSearch() {
+        poiReturnToSearch = false
+    }
+
+    var destinationSearchState by mutableStateOf(DestinationSearchUiState())
+        private set
+
+    fun updateDestinationSearch(
+        transform: (DestinationSearchUiState) -> DestinationSearchUiState,
+    ) {
+        destinationSearchState = transform(destinationSearchState)
+    }
+
+    fun clearDestinationSearchState() {
+        destinationSearchState = DestinationSearchUiState()
+    }
+
+    var launchableApps by mutableStateOf<List<LaunchableAppEntry>>(emptyList())
+        private set
+
+    var audioPlayerPackages by mutableStateOf<Set<String>>(emptySet())
+        private set
+
+    var isAppDrawerLoading by mutableStateOf(false)
+        private set
 
     private val _voiceSearchTrigger = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
     val voiceSearchTrigger = _voiceSearchTrigger.asSharedFlow()
@@ -103,6 +173,21 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         return true
     }
 
+    fun ensureLaunchableAppsLoaded() {
+        if (launchableApps.isNotEmpty() || isAppDrawerLoading) return
+        viewModelScope.launch {
+            isAppDrawerLoading = true
+            val (apps, audioPackages) = launchableAppsRepository.loadAll()
+            launchableApps = apps
+            audioPlayerPackages = audioPackages
+            isAppDrawerLoading = false
+        }
+    }
+
+    init {
+        ensureLaunchableAppsLoaded()
+    }
+
     fun toggleLeftHandDrive() {
         isLeftHandDrive = !isLeftHandDrive
         preferences.isLeftHandDrive = isLeftHandDrive
@@ -116,6 +201,11 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     fun updateMapMediaRatio(value: Float) {
         mapMediaRatio = value
         preferences.mapMediaRatio = value
+    }
+
+    fun updateMusicPaneEnabled(enabled: Boolean) {
+        musicPaneEnabled = enabled
+        preferences.musicPaneEnabled = enabled
     }
 
     fun toggleLimitSearchDistance() {
@@ -138,9 +228,9 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         preferences.isLauncherMode = isLauncherMode
     }
 
-    fun toggleLargeShortcutIcons() {
-        isLargeShortcutIcons = !isLargeShortcutIcons
-        preferences.isLargeShortcutIcons = isLargeShortcutIcons
+    fun updateDockShortcutIconSize(size: DockShortcutIconSize) {
+        dockShortcutIconSize = size
+        preferences.dockShortcutIconSize = size
     }
 
     fun updateDrivingZoom(value: Float) {
@@ -163,9 +253,37 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         preferences.puckScale = value
     }
 
+    fun updateAlbumArtMode(mode: AlbumArtMode) {
+        albumArtMode = mode
+        preferences.albumArtMode = mode.name
+    }
+
     fun toggleTraffic() {
         showTraffic = !showTraffic
         preferences.showTraffic = showTraffic
+    }
+
+    fun toggleNavigationVoice() {
+        navigationVoiceEnabled = !navigationVoiceEnabled
+        preferences.navigationVoiceEnabled = navigationVoiceEnabled
+    }
+
+    fun updateNavigationVoiceVolume(value: Float) {
+        navigationVoiceVolume = value.coerceIn(
+            LauncherPreferences.MIN_NAVIGATION_VOICE_VOLUME,
+            LauncherPreferences.MAX_NAVIGATION_VOICE_VOLUME,
+        )
+        preferences.navigationVoiceVolume = navigationVoiceVolume
+    }
+
+    fun toggleShowStatusStrip() {
+        showStatusStrip = !showStatusStrip
+        preferences.showStatusStrip = showStatusStrip
+    }
+
+    fun toggleShowSystemStatusBar() {
+        showSystemStatusBar = !showSystemStatusBar
+        preferences.showSystemStatusBar = showSystemStatusBar
     }
 
     fun updateTomTomApiKey(key: String) {
@@ -177,6 +295,22 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     fun updateDefaultAudioPackage(packageName: String) {
         defaultAudioPackage = packageName
         preferences.defaultAudioPackage = packageName
+    }
+
+    fun isDockPinned(packageName: String): Boolean {
+        return dockPinnedPackages.contains(packageName)
+    }
+
+    fun toggleDockPinnedPackage(packageName: String) {
+        if (packageName.isBlank() || packageName == BuildConfig.APPLICATION_ID) return
+        dockPinnedPackages = if (packageName in dockPinnedPackages) {
+            dockPinnedPackages.filterNot { it == packageName }
+        } else if (dockPinnedPackages.size < LauncherPreferences.MAX_DOCK_PINNED_APPS) {
+            dockPinnedPackages + packageName
+        } else {
+            return
+        }
+        preferences.dockPinnedPackages = dockPinnedPackages
     }
 
     fun addRecentDestination(place: SearchResultPlace) {
@@ -234,6 +368,20 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         return stored
     }
 
+    private fun loadValidatedDockPinnedPackages(): List<String> {
+        val app = getApplication<Application>()
+        val validated = preferences.dockPinnedPackages
+            .distinct()
+            .filter { pkg ->
+                pkg != BuildConfig.APPLICATION_ID && canLaunchApp(app, pkg)
+            }
+            .take(LauncherPreferences.MAX_DOCK_PINNED_APPS)
+        if (validated != preferences.dockPinnedPackages) {
+            preferences.dockPinnedPackages = validated
+        }
+        return validated
+    }
+
     private fun isWithinDedupThreshold(a: SearchResultPlace, b: SearchResultPlace): Boolean {
         val distanceResults = FloatArray(1)
         Location.distanceBetween(
@@ -250,3 +398,15 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         private const val DEDUP_THRESHOLD_M = 50f
     }
 }
+
+/** Survives rotation while destination search is open; cleared when search panel dismisses. */
+data class DestinationSearchUiState(
+    val query: String = "",
+    val results: List<SearchResultPlace> = emptyList(),
+    val nearbyPois: List<SearchResultPlace> = emptyList(),
+    val snapshotOriginLat: Double? = null,
+    val snapshotOriginLng: Double? = null,
+    val snapshotOriginReliable: Boolean = false,
+    val hasSearched: Boolean = false,
+    val savedFilterActive: Boolean = false,
+)

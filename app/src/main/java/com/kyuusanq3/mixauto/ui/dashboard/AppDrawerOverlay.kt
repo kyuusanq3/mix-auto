@@ -1,18 +1,11 @@
 package com.kyuusanq3.mixauto.ui.dashboard
 
-import android.content.Intent
-import android.content.pm.PackageManager
-import android.graphics.Bitmap
-import android.graphics.Canvas
-import android.graphics.drawable.BitmapDrawable
-import android.graphics.drawable.Drawable
-import android.net.Uri
-import android.provider.Settings
 import android.util.Log
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -26,10 +19,11 @@ import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Android
+import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -43,43 +37,42 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.ImageBitmap
-import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
-import com.kyuusanq3.mixauto.ui.components.OverlayCloseButton
+import com.kyuusanq3.mixauto.data.apps.LaunchableAppEntry
+import com.kyuusanq3.mixauto.ui.components.AppContextDropdownMenu
+import com.kyuusanq3.mixauto.ui.components.PanelHeaderIconButton
+import com.kyuusanq3.mixauto.ui.components.PanelHeaderRow
+import com.kyuusanq3.mixauto.ui.components.rememberAppIcon
+import com.kyuusanq3.mixauto.ui.theme.CarBodyText
 import com.kyuusanq3.mixauto.ui.theme.CarDimensions
-import com.kyuusanq3.mixauto.ui.theme.CarHeadlineText
 import com.kyuusanq3.mixauto.ui.theme.CarLabelText
 import com.kyuusanq3.mixauto.ui.theme.ElectricCyan
 import com.kyuusanq3.mixauto.ui.theme.OledBlack
 
 private const val TAG = "AppDrawerOverlay"
 
-private data class LaunchableApp(
-    val packageName: String,
-    val label: String,
-    val icon: ImageBitmap?,
-    val launchIntent: Intent,
-)
-
 @Composable
 fun AppDrawerOverlay(
+    launchableApps: List<LaunchableAppEntry>,
+    audioPlayerPackages: Set<String>,
+    isLoading: Boolean,
+    dockPinnedPackages: List<String>,
+    maxDockPinnedApps: Int,
+    onToggleDockPin: (String) -> Unit,
+    onSelectAudioSource: (String) -> Unit,
+    onOpenLauncherSettings: () -> Unit,
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
     var query by remember { mutableStateOf("") }
-    var contextMenuApp by remember { mutableStateOf<LaunchableApp?>(null) }
 
-    val allApps = remember(context) {
-        loadLaunchableApps(context.packageManager)
-    }
-    val filteredApps = remember(allApps, query) {
+    val filteredApps = remember(launchableApps, query) {
         if (query.length < 1) {
-            allApps
+            launchableApps
         } else {
-            allApps.filter { app ->
+            launchableApps.filter { app ->
                 app.label.contains(query, ignoreCase = true)
             }
         }
@@ -92,20 +85,20 @@ fun AppDrawerOverlay(
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(CarDimensions.PaneGap),
+                .padding(
+                    horizontal = CarDimensions.PaneGap * 2,
+                    vertical = CarDimensions.PaneGap / 2,
+                ),
         ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween,
+            PanelHeaderRow(
+                title = "Apps",
+                onClose = onDismiss,
+                closeContentDescription = "Close app drawer",
             ) {
-                CarHeadlineText(
-                    text = "Apps",
-                    modifier = Modifier.weight(1f),
-                )
-                OverlayCloseButton(
-                    onClick = onDismiss,
-                    contentDescription = "Close app drawer",
+                PanelHeaderIconButton(
+                    onClick = onOpenLauncherSettings,
+                    contentDescription = "Launcher settings",
+                    icon = Icons.Filled.Settings,
                 )
             }
 
@@ -133,42 +126,50 @@ fun AppDrawerOverlay(
                 ),
             )
 
-            LazyVerticalGrid(
-                columns = GridCells.Fixed(2),
-                modifier = Modifier.fillMaxSize(),
-                contentPadding = PaddingValues(bottom = CarDimensions.PaneGap),
-                horizontalArrangement = Arrangement.spacedBy(CarDimensions.PaneGap),
-                verticalArrangement = Arrangement.spacedBy(CarDimensions.PaneGap),
-            ) {
-                items(filteredApps, key = { it.packageName }) { app ->
-                    AppDrawerItem(
-                        app = app,
-                        onLaunch = { launchApp(context, app) },
-                        onLongPress = { contextMenuApp = app },
-                    )
+            when {
+                isLoading && filteredApps.isEmpty() -> {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(CarDimensions.PaneGap),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        CircularProgressIndicator(color = ElectricCyan)
+                    }
                 }
-            }
-        }
-
-        contextMenuApp?.let { app ->
-            DropdownMenu(
-                expanded = true,
-                onDismissRequest = { contextMenuApp = null },
-            ) {
-                DropdownMenuItem(
-                    text = { CarLabelText("App Info") },
-                    onClick = {
-                        openAppInfo(context, app.packageName)
-                        contextMenuApp = null
-                    },
-                )
-                DropdownMenuItem(
-                    text = { CarLabelText("Uninstall") },
-                    onClick = {
-                        uninstallApp(context, app.packageName)
-                        contextMenuApp = null
-                    },
-                )
+                filteredApps.isEmpty() -> {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(CarDimensions.PaneGap),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        CarBodyText("No apps found")
+                    }
+                }
+                else -> {
+                    LazyVerticalGrid(
+                        columns = GridCells.Fixed(2),
+                        modifier = Modifier.fillMaxSize(),
+                        contentPadding = PaddingValues(bottom = CarDimensions.PaneGap),
+                        horizontalArrangement = Arrangement.spacedBy(CarDimensions.PaneGap),
+                        verticalArrangement = Arrangement.spacedBy(CarDimensions.PaneGap),
+                    ) {
+                        items(filteredApps, key = { it.packageName }) { app ->
+                            val isAudioPlayer = app.packageName in audioPlayerPackages
+                            AppDrawerItem(
+                                app = app,
+                                isAudioPlayer = isAudioPlayer,
+                                isPinnedToDock = app.packageName in dockPinnedPackages,
+                                canAddToDock = app.packageName in dockPinnedPackages ||
+                                    dockPinnedPackages.size < maxDockPinnedApps,
+                                onToggleDockPin = { onToggleDockPin(app.packageName) },
+                                onLaunch = { launchApp(context, app) },
+                                onSelectAudioSource = { onSelectAudioSource(app.packageName) },
+                            )
+                        }
+                    }
+                }
             }
         }
     }
@@ -177,119 +178,85 @@ fun AppDrawerOverlay(
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun AppDrawerItem(
-    app: LaunchableApp,
+    app: LaunchableAppEntry,
+    isAudioPlayer: Boolean,
+    isPinnedToDock: Boolean,
+    canAddToDock: Boolean,
+    onToggleDockPin: () -> Unit,
     onLaunch: () -> Unit,
-    onLongPress: () -> Unit,
+    onSelectAudioSource: () -> Unit,
 ) {
-    ElevatedCard(
-        modifier = Modifier
-            .fillMaxWidth()
-            .heightIn(min = CarDimensions.MinTapTarget)
-            .combinedClickable(
-                onClick = onLaunch,
-                onLongClick = onLongPress,
-            ),
-        elevation = CardDefaults.elevatedCardElevation(defaultElevation = CarDimensions.CardElevation),
-        colors = CardDefaults.elevatedCardColors(
-            containerColor = MaterialTheme.colorScheme.surface,
-        ),
-    ) {
-        Row(
+    val icon = rememberAppIcon(app.packageName)
+    var showMenu by remember { mutableStateOf(false) }
+
+    Box(modifier = Modifier.fillMaxWidth()) {
+        ElevatedCard(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(CarDimensions.PaneGap),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(CarDimensions.PaneGap),
+                .heightIn(min = CarDimensions.MinTapTarget)
+                .combinedClickable(
+                    onClick = {
+                        if (isAudioPlayer) onSelectAudioSource() else onLaunch()
+                    },
+                    onLongClick = { showMenu = true },
+                ),
+            elevation = CardDefaults.elevatedCardElevation(defaultElevation = CarDimensions.CardElevation),
+            colors = CardDefaults.elevatedCardColors(
+                containerColor = MaterialTheme.colorScheme.surface,
+            ),
         ) {
-            if (app.icon != null) {
-                Image(
-                    bitmap = app.icon,
-                    contentDescription = app.label,
-                    modifier = Modifier.size(CarDimensions.AppIconSize),
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(CarDimensions.PaneGap),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(CarDimensions.PaneGap),
+            ) {
+                if (icon != null) {
+                    Image(
+                        bitmap = icon,
+                        contentDescription = app.label,
+                        modifier = Modifier.size(CarDimensions.AppIconSize),
+                    )
+                } else {
+                    Icon(
+                        imageVector = Icons.Filled.Android,
+                        contentDescription = app.label,
+                        modifier = Modifier.size(CarDimensions.AppIconSize),
+                        tint = MaterialTheme.colorScheme.primary,
+                    )
+                }
+                CarLabelText(
+                    text = app.label,
+                    modifier = Modifier.weight(1f),
                 )
-            } else {
-                Icon(
-                    imageVector = Icons.Filled.Android,
-                    contentDescription = app.label,
-                    modifier = Modifier.size(CarDimensions.AppIconSize),
-                    tint = MaterialTheme.colorScheme.primary,
-                )
+                if (isAudioPlayer) {
+                    Icon(
+                        imageVector = Icons.Filled.MusicNote,
+                        contentDescription = "Audio source",
+                        modifier = Modifier.size(28.dp),
+                        tint = ElectricCyan,
+                    )
+                }
             }
-            CarLabelText(
-                text = app.label,
-                modifier = Modifier.weight(1f),
-            )
         }
+
+        AppContextDropdownMenu(
+            expanded = showMenu,
+            onDismissRequest = { showMenu = false },
+            packageName = app.packageName,
+            isPinnedToDock = isPinnedToDock,
+            canAddToDock = canAddToDock,
+            onToggleDockPin = onToggleDockPin,
+        )
     }
 }
 
-private fun loadLaunchableApps(packageManager: PackageManager): List<LaunchableApp> {
-    val mainIntent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
-    @Suppress("DEPRECATION")
-    val resolveInfos = packageManager.queryIntentActivities(mainIntent, PackageManager.MATCH_ALL)
-
-    return resolveInfos
-        .mapNotNull { resolveInfo ->
-            val packageName = resolveInfo.activityInfo.packageName
-            val launchIntent = packageManager.getLaunchIntentForPackage(packageName) ?: return@mapNotNull null
-            val label = resolveInfo.loadLabel(packageManager).toString()
-            val icon = runCatching {
-                resolveInfo.loadIcon(packageManager).toImageBitmap()
-            }.getOrNull()
-            LaunchableApp(
-                packageName = packageName,
-                label = label,
-                icon = icon,
-                launchIntent = launchIntent,
-            )
-        }
-        .distinctBy { it.packageName }
-        .sortedBy { it.label.lowercase() }
-}
-
-private fun launchApp(context: android.content.Context, app: LaunchableApp) {
+private fun launchApp(context: android.content.Context, app: LaunchableAppEntry) {
     try {
-        app.launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        app.launchIntent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
         context.startActivity(app.launchIntent)
     } catch (exception: Exception) {
         Log.w(TAG, "Failed to launch ${app.label}", exception)
     }
-}
-
-private fun openAppInfo(context: android.content.Context, packageName: String) {
-    try {
-        val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
-            data = Uri.parse("package:$packageName")
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        }
-        context.startActivity(intent)
-    } catch (exception: Exception) {
-        Log.w(TAG, "Failed to open app info for $packageName", exception)
-    }
-}
-
-private fun uninstallApp(context: android.content.Context, packageName: String) {
-    try {
-        val intent = Intent(Intent.ACTION_UNINSTALL_PACKAGE).apply {
-            data = Uri.parse("package:$packageName")
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        }
-        context.startActivity(intent)
-    } catch (exception: Exception) {
-        Log.w(TAG, "Failed to uninstall $packageName", exception)
-    }
-}
-
-private fun Drawable.toImageBitmap(): ImageBitmap {
-    if (this is BitmapDrawable && bitmap != null) {
-        return bitmap.asImageBitmap()
-    }
-
-    val width = intrinsicWidth.coerceAtLeast(1)
-    val height = intrinsicHeight.coerceAtLeast(1)
-    val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
-    val canvas = Canvas(bitmap)
-    setBounds(0, 0, canvas.width, canvas.height)
-    draw(canvas)
-    return bitmap.asImageBitmap()
 }

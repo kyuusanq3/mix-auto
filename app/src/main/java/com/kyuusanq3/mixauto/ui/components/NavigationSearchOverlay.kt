@@ -38,13 +38,10 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Tab
-import androidx.compose.material3.TabRow
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -62,7 +59,6 @@ import com.kyuusanq3.mixauto.ui.settings.LauncherPreferences
 import com.kyuusanq3.mixauto.ui.settings.LauncherViewModel
 import com.kyuusanq3.mixauto.ui.theme.CarBodyText
 import com.kyuusanq3.mixauto.ui.theme.CarDimensions
-import com.kyuusanq3.mixauto.ui.theme.CarHeadlineText
 import com.kyuusanq3.mixauto.ui.theme.CarLabelText
 import com.kyuusanq3.mixauto.ui.theme.ElectricCyan
 import com.kyuusanq3.mixauto.ui.theme.OledBlack
@@ -105,9 +101,16 @@ private fun isWithinDedupThreshold(a: SearchResultPlace, b: SearchResultPlace): 
     return distanceResults[0] < DEDUP_THRESHOLD_M
 }
 
-private enum class SuggestedTab {
-    Suggestions,
-    Saved,
+private fun filterSavedPlaces(
+    places: List<SearchResultPlace>,
+    query: String,
+): List<SearchResultPlace> {
+    val normalizedQuery = query.trim().lowercase()
+    if (normalizedQuery.length < 2) return places
+    return places.filter { place ->
+        place.name.lowercase().contains(normalizedQuery) ||
+            place.subTitle.lowercase().contains(normalizedQuery)
+    }
 }
 
 @Composable
@@ -117,21 +120,27 @@ fun NavigationSearchContent(
     recentDestinations: List<SearchResultPlace>,
     savedPlaces: List<SearchResultPlace>,
     onToggleSavedPlace: (SearchResultPlace) -> Unit,
+    onPreviewPlace: (SearchResultPlace) -> Unit,
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
     val launcherViewModel: LauncherViewModel = viewModel()
-    val uiState by engine.uiState.collectAsState()
-    var query by remember { mutableStateOf("") }
-    var results by remember { mutableStateOf<List<SearchResultPlace>>(emptyList()) }
-    var nearbyPois by remember { mutableStateOf<List<SearchResultPlace>>(emptyList()) }
+    val searchState = launcherViewModel.destinationSearchState
+    val query = searchState.query
+    val snapshotOrigin = searchState.snapshotOriginLat?.let { lat ->
+        searchState.snapshotOriginLng?.let { lng -> lat to lng }
+    }
+    val snapshotOriginReliable = searchState.snapshotOriginReliable
+    val results = searchState.results
+    val nearbyPois = searchState.nearbyPois
+    val hasSearched = searchState.hasSearched
+    val savedFilterActive = searchState.savedFilterActive
     var isLoading by remember { mutableStateOf(false) }
     var isLoadingRemote by remember { mutableStateOf(false) }
-    var hasSearched by remember { mutableStateOf(false) }
     var isListening by remember { mutableStateOf(false) }
     var pendingVoiceStart by remember { mutableStateOf(false) }
-    var selectedTab by remember { mutableStateOf(SuggestedTab.Suggestions) }
+    var pendingVoiceRestart by remember { mutableStateOf(false) }
     val listState = rememberLazyListState()
 
     val speechAvailable = remember(context) {
@@ -145,53 +154,69 @@ fun NavigationSearchContent(
         }
     }
 
-    DisposableEffect(speechRecognizer) {
-        onDispose {
-            speechRecognizer?.destroy()
-        }
-    }
-
-    val startListeningRef = rememberUpdatedState<(SpeechRecognizer) -> Unit> { recognizer ->
-        isListening = true
-        val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+    val recognitionIntent = remember {
+        Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
             putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
             putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
             putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
         }
+    }
+
+    val requestVoiceListeningRef = rememberUpdatedState<(SpeechRecognizer) -> Unit> { recognizer ->
+        pendingVoiceRestart = true
+        isListening = true
         recognizer.cancel()
-        recognizer.setRecognitionListener(object : RecognitionListener {
-            override fun onReadyForSpeech(params: Bundle?) = Unit
+    }
 
-            override fun onBeginningOfSpeech() = Unit
+    DisposableEffect(speechRecognizer) {
+        val recognizer = speechRecognizer
+        if (recognizer != null) {
+            recognizer.setRecognitionListener(object : RecognitionListener {
+                override fun onReadyForSpeech(params: Bundle?) = Unit
 
-            override fun onRmsChanged(rmsdB: Float) = Unit
+                override fun onBeginningOfSpeech() = Unit
 
-            override fun onBufferReceived(buffer: ByteArray?) = Unit
+                override fun onRmsChanged(rmsdB: Float) = Unit
 
-            override fun onEndOfSpeech() {
-                isListening = false
-            }
+                override fun onBufferReceived(buffer: ByteArray?) = Unit
 
-            override fun onError(error: Int) {
-                isListening = false
-            }
+                override fun onEndOfSpeech() {
+                    if (!pendingVoiceRestart) {
+                        isListening = false
+                    }
+                }
 
-            override fun onResults(resultsBundle: Bundle) {
-                resultsBundle.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
-                    ?.firstOrNull()
-                    ?.let { query = it }
-                isListening = false
-            }
+                override fun onError(error: Int) {
+                    if (pendingVoiceRestart) {
+                        pendingVoiceRestart = false
+                        isListening = true
+                        recognizer.startListening(recognitionIntent)
+                    } else {
+                        isListening = false
+                    }
+                }
 
-            override fun onPartialResults(partialResults: Bundle) {
-                partialResults.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
-                    ?.firstOrNull()
-                    ?.let { query = it }
-            }
+                override fun onResults(resultsBundle: Bundle) {
+                    if (pendingVoiceRestart) return
+                    resultsBundle.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
+                        ?.firstOrNull()
+                        ?.let { spoken ->
+                            launcherViewModel.updateDestinationSearch { state ->
+                                state.copy(query = spoken)
+                            }
+                        }
+                    isListening = false
+                }
 
-            override fun onEvent(eventType: Int, params: Bundle?) = Unit
-        })
-        recognizer.startListening(intent)
+                override fun onPartialResults(partialResults: Bundle) = Unit
+
+                override fun onEvent(eventType: Int, params: Bundle?) = Unit
+            })
+        }
+        onDispose {
+            pendingVoiceRestart = false
+            speechRecognizer?.destroy()
+        }
     }
 
     val recordAudioPermissionLauncher = rememberLauncherForActivityResult(
@@ -199,7 +224,7 @@ fun NavigationSearchContent(
     ) { granted ->
         if (granted && pendingVoiceStart) {
             pendingVoiceStart = false
-            speechRecognizer?.let { startListeningRef.value(it) }
+            speechRecognizer?.let { requestVoiceListeningRef.value(it) }
         } else {
             pendingVoiceStart = false
         }
@@ -214,10 +239,21 @@ fun NavigationSearchContent(
             recordAudioPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
             return@rememberUpdatedState
         }
-        startListeningRef.value(recognizer)
+        requestVoiceListeningRef.value(recognizer)
     }
 
     LaunchedEffect(Unit) {
+        engine.refreshSearchOrigin()
+        if (launcherViewModel.destinationSearchState.snapshotOriginLat == null) {
+            val origin = engine.resolveSearchOrigin()
+            launcherViewModel.updateDestinationSearch { state ->
+                state.copy(
+                    snapshotOriginLat = origin.first,
+                    snapshotOriginLng = origin.second,
+                    snapshotOriginReliable = engine.hasReliableSearchOrigin(),
+                )
+            }
+        }
         if (launcherViewModel.consumeStartVoiceOnSearchOpen()) {
             tryStartVoiceSearch.value()
         }
@@ -241,63 +277,103 @@ fun NavigationSearchContent(
     )
     val micPulseAlpha = if (isListening) pulsingAlpha else 1f
 
-    val searchOrigin = engine.resolveSearchOrigin()
-    val currentLat = searchOrigin.first
-    val currentLng = searchOrigin.second
+    val snapshotLat = snapshotOrigin?.first
+    val snapshotLng = snapshotOrigin?.second
 
-    LaunchedEffect(query, uiState.currentLat, uiState.currentLng, currentLat, currentLng, limitSearchDistance) {
-        if (query.length < 2) {
-            results = emptyList()
-            hasSearched = false
+    LaunchedEffect(
+        query,
+        savedFilterActive,
+        limitSearchDistance,
+        snapshotOrigin,
+    ) {
+        if (savedFilterActive || query.length < 2) {
+            launcherViewModel.updateDestinationSearch { state ->
+                state.copy(results = emptyList(), hasSearched = false)
+            }
             isLoading = false
             isLoadingRemote = false
             return@LaunchedEffect
         }
+        val origin = snapshotOrigin ?: return@LaunchedEffect
         delay(300)
-        results = emptyList()
+        launcherViewModel.updateDestinationSearch { state ->
+            state.copy(results = emptyList(), hasSearched = true)
+        }
         isLoading = true
         isLoadingRemote = true
-        hasSearched = true
         try {
-            results = engine.searchDestination(
+            val fetched = engine.searchDestination(
                 query = query,
-                currentLat = currentLat,
-                currentLng = currentLng,
+                currentLat = origin.first,
+                currentLng = origin.second,
                 limitDistance = limitSearchDistance,
                 onLocalResults = { local ->
-                    results = local
+                    launcherViewModel.updateDestinationSearch { state ->
+                        state.copy(results = local)
+                    }
                     isLoading = false
                 },
             )
+            launcherViewModel.updateDestinationSearch { state ->
+                state.copy(results = fetched)
+            }
         } finally {
             isLoading = false
             isLoadingRemote = false
         }
     }
 
-    LaunchedEffect(query, uiState.currentLat, uiState.currentLng, currentLat, currentLng, recentDestinations, savedPlaces) {
-        if (query.length >= 2) {
-            nearbyPois = emptyList()
+    LaunchedEffect(
+        snapshotOrigin,
+        query,
+        savedFilterActive,
+        recentDestinations,
+        savedPlaces,
+    ) {
+        if (savedFilterActive || query.length >= 2) {
+            launcherViewModel.updateDestinationSearch { state ->
+                state.copy(nearbyPois = emptyList())
+            }
             return@LaunchedEffect
         }
-        nearbyPois = withContext(Dispatchers.IO) {
-            engine.getNearbyPois(currentLat, currentLng, LauncherPreferences.MAX_RECENT_DESTINATIONS)
+        val origin = snapshotOrigin ?: return@LaunchedEffect
+        val nearby = withContext(Dispatchers.IO) {
+            engine.getNearbyPois(
+                origin.first,
+                origin.second,
+                LauncherPreferences.MAX_RECENT_DESTINATIONS,
+            )
         }.filterNot { nearby ->
-                recentDestinations.any { recent -> isWithinDedupThreshold(recent, nearby) } ||
-                    savedPlaces.any { saved -> isWithinDedupThreshold(saved, nearby) }
-            }
+            recentDestinations.any { recent -> isWithinDedupThreshold(recent, nearby) } ||
+                savedPlaces.any { saved -> isWithinDedupThreshold(saved, nearby) }
+        }
+        launcherViewModel.updateDestinationSearch { state ->
+            state.copy(nearbyPois = nearby)
+        }
     }
 
-    val displayedRecents = remember(recentDestinations, currentLat, currentLng) {
-        recentDestinations.map { it.withDistanceFrom(currentLat, currentLng) }
+    val displayedRecents = remember(recentDestinations, snapshotLat, snapshotLng) {
+        if (snapshotLat == null || snapshotLng == null) {
+            recentDestinations
+        } else {
+            recentDestinations.map { it.withDistanceFrom(snapshotLat, snapshotLng) }
+        }
     }
 
-    val displayedSaved = remember(savedPlaces, currentLat, currentLng) {
-        savedPlaces.map { it.withDistanceFrom(currentLat, currentLng) }
+    val displayedSaved = remember(savedPlaces, snapshotLat, snapshotLng) {
+        if (snapshotLat == null || snapshotLng == null) {
+            savedPlaces
+        } else {
+            savedPlaces.map { it.withDistanceFrom(snapshotLat, snapshotLng) }
+        }
     }
 
-    val displayedNearby = remember(nearbyPois, currentLat, currentLng) {
-        nearbyPois.map { it.withDistanceFrom(currentLat, currentLng) }
+    val displayedNearby = remember(nearbyPois, snapshotLat, snapshotLng) {
+        if (snapshotLat == null || snapshotLng == null) {
+            nearbyPois
+        } else {
+            nearbyPois.map { it.withDistanceFrom(snapshotLat, snapshotLng) }
+        }
     }
 
     val displayedSuggestionsNearby = remember(displayedNearby, displayedRecents) {
@@ -306,14 +382,15 @@ fun NavigationSearchContent(
         }
     }
 
+    val filteredSaved = remember(displayedSaved, query) {
+        filterSavedPlaces(displayedSaved, query)
+    }
+
     val isPlaceSaved: (SearchResultPlace) -> Boolean = { place ->
         savedPlaces.any { saved -> isWithinDedupThreshold(saved, place) }
     }
 
-    val previewPlace: (SearchResultPlace) -> Unit = { place ->
-        engine.focusOnPoi(place)
-        onDismiss()
-    }
+    val previewPlace: (SearchResultPlace) -> Unit = onPreviewPlace
 
     Surface(
         modifier = modifier.fillMaxSize(),
@@ -322,41 +399,64 @@ fun NavigationSearchContent(
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(CarDimensions.PaneGap * 2),
-            verticalArrangement = Arrangement.spacedBy(CarDimensions.DockItemSpacing),
+                .padding(
+                    horizontal = CarDimensions.PaneGap * 2,
+                    vertical = CarDimensions.PaneGap / 2,
+                ),
+            verticalArrangement = Arrangement.spacedBy(CarDimensions.PaneGap),
         ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    CarHeadlineText(
-                        text = "Navigate To",
-                        style = MaterialTheme.typography.headlineMedium,
-                        modifier = Modifier.weight(1f),
-                    )
-                    OverlayCloseButton(
-                        onClick = onDismiss,
-                        contentDescription = "Close search",
-                    )
-                }
+                PanelHeaderRow(
+                    title = "Navigate To",
+                    onClose = onDismiss,
+                    closeContentDescription = "Close search",
+                    compact = true,
+                    trailingContent = {
+                        IconButton(
+                            onClick = {
+                                launcherViewModel.updateDestinationSearch { state ->
+                                    state.copy(savedFilterActive = !state.savedFilterActive)
+                                }
+                            },
+                            modifier = Modifier.size(CarDimensions.PanelCompactHeaderTapTarget),
+                        ) {
+                            Icon(
+                                imageVector = if (savedFilterActive) {
+                                    Icons.Filled.Star
+                                } else {
+                                    Icons.Outlined.Star
+                                },
+                                contentDescription = if (savedFilterActive) {
+                                    "Show all suggestions"
+                                } else {
+                                    "Show saved places only"
+                                },
+                                modifier = Modifier.size(CarDimensions.PanelCompactHeaderIconSize),
+                                tint = if (savedFilterActive) {
+                                    Color(0xFFFFD700)
+                                } else {
+                                    MaterialTheme.colorScheme.primary
+                                },
+                            )
+                        }
+                    },
+                )
 
                 OutlinedTextField(
                     value = query,
-                    onValueChange = { query = it },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(CarDimensions.PrimaryTapTarget + CarDimensions.PaneGap),
-                    label = {
-                        CarLabelText(
-                            text = "Destination",
-                            style = MaterialTheme.typography.labelMedium,
-                        )
+                    onValueChange = { text ->
+                        launcherViewModel.updateDestinationSearch { state ->
+                            state.copy(query = text)
+                        }
                     },
+                    modifier = Modifier.fillMaxWidth(),
                     placeholder = {
-                        CarBodyText(
-                            text = "Search address or place",
-                            style = MaterialTheme.typography.bodyLarge,
+                        CarLabelText(
+                            text = if (savedFilterActive) {
+                                "Search saved places"
+                            } else {
+                                "Destination"
+                            },
+                            style = MaterialTheme.typography.labelMedium,
                         )
                     },
                     singleLine = true,
@@ -394,38 +494,71 @@ fun NavigationSearchContent(
                     )
                 }
 
-                if (isLoading || isLoadingRemote) {
+                if (!savedFilterActive && (isLoading || isLoadingRemote)) {
                     LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
                 }
 
                 when {
-                    query.length < 2 -> {
-                        TabRow(selectedTabIndex = selectedTab.ordinal) {
-                            SuggestedTab.entries.forEach { tab ->
-                                Tab(
-                                    selected = selectedTab == tab,
-                                    onClick = { selectedTab = tab },
-                                    text = {
-                                        CarLabelText(
-                                            text = tab.name,
-                                            style = MaterialTheme.typography.labelLarge,
-                                        )
-                                    },
+                    savedFilterActive -> {
+                        when {
+                            query.length >= 2 && filteredSaved.isEmpty() -> {
+                                CarBodyText(
+                                    text = "No saved places match your search",
+                                    style = MaterialTheme.typography.bodyLarge,
                                 )
                             }
+                            query.length < 2 && displayedSaved.isEmpty() -> {
+                                CarBodyText(
+                                    text = "No saved places — star a POI on the map",
+                                    style = MaterialTheme.typography.bodyLarge,
+                                )
+                            }
+                            else -> {
+                                val savedPlacesToShow = if (query.length >= 2) {
+                                    filteredSaved
+                                } else {
+                                    displayedSaved
+                                }
+                                Box(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .carLazyScrollbar(listState),
+                                ) {
+                                    LazyColumn(
+                                        state = listState,
+                                        modifier = Modifier.fillMaxSize(),
+                                        verticalArrangement = Arrangement.spacedBy(CarDimensions.PaneGap / 2),
+                                    ) {
+                                        items(
+                                            savedPlacesToShow,
+                                            key = { "saved-${it.latitude},${it.longitude},${it.name}" },
+                                        ) { place ->
+                                            SearchResultRow(
+                                                place = place,
+                                                isStarred = isPlaceSaved(place),
+                                                onClick = { previewPlace(place) },
+                                                onToggleStar = { onToggleSavedPlace(place) },
+                                            )
+                                        }
+                                    }
+                                }
+                            }
                         }
+                    }
+                    query.length < 2 -> {
+                        val suggestionsEmpty = displayedRecents.isEmpty() &&
+                            displayedSuggestionsNearby.isEmpty()
 
-                        val suggestionsEmpty = displayedRecents.isEmpty() && displayedSuggestionsNearby.isEmpty()
-                        val savedEmpty = displayedSaved.isEmpty()
-
-                        if (selectedTab == SuggestedTab.Suggestions && suggestionsEmpty) {
+                        if (suggestionsEmpty) {
                             CarBodyText(
-                                text = "No recent destinations — pan the map to load nearby POIs",
-                                style = MaterialTheme.typography.bodyLarge,
-                            )
-                        } else if (selectedTab == SuggestedTab.Saved && savedEmpty) {
-                            CarBodyText(
-                                text = "No saved places — star a POI on the map",
+                                text = when {
+                                    !snapshotOriginReliable ->
+                                        "Waiting for GPS — nearby suggestions appear once location is available"
+                                    engine.hasOfflinePlacesDatabase() ->
+                                        "No recent destinations — no nearby places found"
+                                    else ->
+                                        "No recent destinations — install Map Data for nearby suggestions"
+                                },
                                 style = MaterialTheme.typography.bodyLarge,
                             )
                         } else {
@@ -439,7 +572,6 @@ fun NavigationSearchContent(
                                     modifier = Modifier.fillMaxSize(),
                                     verticalArrangement = Arrangement.spacedBy(CarDimensions.PaneGap / 2),
                                 ) {
-                                if (selectedTab == SuggestedTab.Suggestions) {
                                     if (displayedRecents.isNotEmpty()) {
                                         item(key = "header-recent") {
                                             CarLabelText(
@@ -490,26 +622,17 @@ fun NavigationSearchContent(
                                             )
                                         }
                                     }
-                                } else {
-                                    items(
-                                        displayedSaved,
-                                        key = { "saved-${it.latitude},${it.longitude},${it.name}" },
-                                    ) { place ->
-                                        SearchResultRow(
-                                            place = place,
-                                            isStarred = isPlaceSaved(place),
-                                            onClick = { previewPlace(place) },
-                                            onToggleStar = { onToggleSavedPlace(place) },
-                                        )
-                                    }
                                 }
-                            }
                             }
                         }
                     }
                     hasSearched && !isLoading && !isLoadingRemote && results.isEmpty() -> {
                         CarBodyText(
-                            text = "No results found",
+                            text = if (snapshotOriginReliable) {
+                                "No results found"
+                            } else {
+                                "Waiting for GPS — try again in a moment"
+                            },
                             style = MaterialTheme.typography.bodyLarge,
                         )
                     }

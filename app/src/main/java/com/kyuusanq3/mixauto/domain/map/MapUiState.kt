@@ -13,4 +13,7 @@ data class MapUiState(
     val routeOverviewProgress: Float = 0f,
     val selectedPoi: SearchResultPlace? = null,
     val nearbyPois: List<SearchResultPlace> = emptyList(),
+    val routeOptions: List<RouteOption> = emptyList(),
+    val selectedRouteId: String? = null,
+    val isRouteSelecting: Boolean = false,
 )

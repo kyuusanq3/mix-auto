@@ -16,7 +16,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.CloudDownload
 import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material3.Button
+import androidx.compose.material.icons.filled.NetworkCheck
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.Icon
@@ -44,7 +44,6 @@ import com.kyuusanq3.mixauto.ui.settings.RemoteCountryPack
 import com.kyuusanq3.mixauto.ui.settings.TomTomKeyCheckState
 import com.kyuusanq3.mixauto.ui.theme.CarBodyText
 import com.kyuusanq3.mixauto.ui.theme.CarDimensions
-import com.kyuusanq3.mixauto.ui.theme.CarHeadlineText
 import com.kyuusanq3.mixauto.ui.theme.CarLabelText
 import com.kyuusanq3.mixauto.ui.theme.DeepCharcoal
 import com.kyuusanq3.mixauto.ui.theme.ElectricCyan
@@ -87,29 +86,47 @@ fun MapDataPanelContent(
     onTomTomApiKeyChange: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    Column(
+        modifier = modifier
+            .padding(
+                horizontal = CarDimensions.PaneGap * 2,
+                vertical = CarDimensions.PaneGap,
+            ),
+        verticalArrangement = Arrangement.spacedBy(CarDimensions.DockItemSpacing),
+    ) {
+        PanelHeaderRow(
+            title = "Map Data",
+            onClose = onDismiss,
+            closeContentDescription = "Close map data",
+        )
+
+        MapDataSectionContent(
+            viewModel = viewModel,
+            tomTomApiKey = tomTomApiKey,
+            onTomTomApiKeyChange = onTomTomApiKeyChange,
+            catalogModifier = Modifier.weight(1f),
+            useInternalCatalogScroll = true,
+        )
+    }
+}
+
+@Composable
+fun MapDataSectionContent(
+    viewModel: MapDataViewModel,
+    tomTomApiKey: String,
+    onTomTomApiKeyChange: (String) -> Unit,
+    modifier: Modifier = Modifier,
+    catalogModifier: Modifier = Modifier.fillMaxWidth(),
+    useInternalCatalogScroll: Boolean = false,
+    showTraffic: Boolean = false,
+    onToggleTraffic: (() -> Unit)? = null,
+) {
     val uiState by viewModel.uiState.collectAsState()
 
     Column(
-        modifier = modifier
-            .padding(CarDimensions.PaneGap * 2),
+        modifier = modifier,
         verticalArrangement = Arrangement.spacedBy(CarDimensions.DockItemSpacing),
     ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            CarHeadlineText(
-                text = "Map Data",
-                style = MaterialTheme.typography.headlineMedium,
-                modifier = Modifier.weight(1f),
-            )
-            OverlayCloseButton(
-                onClick = onDismiss,
-                contentDescription = "Close map data",
-            )
-        }
-
         CarBodyText(
             text = "Download offline Overture POI packs from GitHub (~50 MB compressed per country).",
             style = MaterialTheme.typography.bodyMedium,
@@ -118,9 +135,7 @@ fun MapDataPanelContent(
         when (val state = uiState) {
             MapDataUiState.LoadingCatalog -> {
                 Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .weight(1f),
+                    modifier = catalogModifier,
                     contentAlignment = Alignment.Center,
                 ) {
                     CircularProgressIndicator(color = ElectricCyan)
@@ -150,20 +165,22 @@ fun MapDataPanelContent(
             }
             is MapDataUiState.Catalog -> {
                 CountryCatalogList(
-                    modifier = Modifier.weight(1f),
+                    modifier = catalogModifier,
                     packs = state.packs,
                     uiState = uiState,
                     onDownload = viewModel::downloadCountryData,
                     onDelete = viewModel::deleteDatabase,
+                    useInternalScroll = useInternalCatalogScroll,
                 )
             }
             is MapDataUiState.Downloading -> {
                 CountryCatalogList(
-                    modifier = Modifier.weight(1f),
+                    modifier = catalogModifier,
                     packs = state.packs,
                     uiState = uiState,
                     onDownload = viewModel::downloadCountryData,
                     onDelete = viewModel::deleteDatabase,
+                    useInternalScroll = useInternalCatalogScroll,
                 )
             }
             MapDataUiState.Idle -> Unit
@@ -172,6 +189,8 @@ fun MapDataPanelContent(
         TomTomApiKeySection(
             tomTomApiKey = tomTomApiKey,
             onTomTomApiKeyChange = onTomTomApiKeyChange,
+            showTraffic = showTraffic,
+            onToggleTraffic = onToggleTraffic,
         )
     }
 }
@@ -180,9 +199,12 @@ fun MapDataPanelContent(
 private fun TomTomApiKeySection(
     tomTomApiKey: String,
     onTomTomApiKeyChange: (String) -> Unit,
+    showTraffic: Boolean,
+    onToggleTraffic: (() -> Unit)?,
 ) {
     val launcherViewModel: LauncherViewModel = viewModel()
     val tomTomKeyCheckState = launcherViewModel.tomTomKeyCheckState
+    val isChecking = tomTomKeyCheckState is TomTomKeyCheckState.Checking
 
     Column(
         modifier = Modifier.fillMaxWidth(),
@@ -205,6 +227,27 @@ private fun TomTomApiKeySection(
                 )
             },
             singleLine = true,
+            trailingIcon = {
+                if (isChecking) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(CarDimensions.PanelHeaderIconSize),
+                        color = ElectricCyan,
+                        strokeWidth = 2.dp,
+                    )
+                } else {
+                    IconButton(
+                        onClick = launcherViewModel::checkTomTomApiKey,
+                        modifier = Modifier.size(CarDimensions.PanelHeaderTapTarget),
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.NetworkCheck,
+                            contentDescription = "Test TomTom API Key",
+                            modifier = Modifier.size(CarDimensions.PanelHeaderIconSize),
+                            tint = MaterialTheme.colorScheme.primary,
+                        )
+                    }
+                }
+            },
             colors = TextFieldDefaults.colors(
                 focusedContainerColor = OledBlack,
                 unfocusedContainerColor = OledBlack,
@@ -216,23 +259,19 @@ private fun TomTomApiKeySection(
             text = "Free tier covers Philippines. Required for traffic overlay.",
             style = MaterialTheme.typography.labelMedium,
         )
+        if (onToggleTraffic != null) {
+            SettingsSwitchRow(
+                label = "Traffic Overlay",
+                checked = showTraffic,
+                onCheckedChange = { checked ->
+                    if (checked != showTraffic) {
+                        onToggleTraffic()
+                    }
+                },
+            )
+        }
         when (tomTomKeyCheckState) {
-            TomTomKeyCheckState.Idle -> Unit
-            TomTomKeyCheckState.Checking -> {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(CarDimensions.MinTapTarget),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(CarDimensions.PaneGap),
-                ) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(CarDimensions.MinTapTarget / 2),
-                        color = ElectricCyan,
-                    )
-                    CarBodyText(text = "Testing API key...")
-                }
-            }
+            TomTomKeyCheckState.Idle, TomTomKeyCheckState.Checking -> Unit
             is TomTomKeyCheckState.Success -> {
                 CarLabelText(
                     text = tomTomKeyCheckState.message,
@@ -248,15 +287,6 @@ private fun TomTomApiKeySection(
                 )
             }
         }
-        Button(
-            onClick = launcherViewModel::checkTomTomApiKey,
-            enabled = tomTomKeyCheckState !is TomTomKeyCheckState.Checking,
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(CarDimensions.MinTapTarget),
-        ) {
-            CarBodyText(text = "Test TomTom API Key")
-        }
     }
 }
 
@@ -267,13 +297,12 @@ private fun CountryCatalogList(
     uiState: MapDataUiState,
     onDownload: (RemoteCountryPack) -> Unit,
     onDelete: (String) -> Unit,
+    useInternalScroll: Boolean = true,
 ) {
     val scrollState = rememberScrollState()
-    Box(modifier = modifier.carScrollbar(scrollState)) {
+    val columnContent: @Composable () -> Unit = {
         Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .verticalScroll(scrollState),
+            modifier = Modifier.fillMaxWidth(),
             verticalArrangement = Arrangement.spacedBy(CarDimensions.DockItemSpacing / 2),
         ) {
             if (packs.isEmpty()) {
@@ -291,6 +320,22 @@ private fun CountryCatalogList(
                     )
                 }
             }
+        }
+    }
+
+    if (useInternalScroll) {
+        Box(modifier = modifier.carScrollbar(scrollState)) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(scrollState),
+            ) {
+                columnContent()
+            }
+        }
+    } else {
+        Box(modifier = modifier) {
+            columnContent()
         }
     }
 }

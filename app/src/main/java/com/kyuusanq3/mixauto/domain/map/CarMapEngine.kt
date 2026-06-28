@@ -26,6 +26,7 @@ interface CarMapEngine {
     fun setMapStyle(useVectorTiles: Boolean)
     fun setShow3dBuildings(show: Boolean)
     fun setTrafficEnabled(enabled: Boolean, apiKey: String)
+    fun setNavigationVoiceEnabled(enabled: Boolean)
     fun setDrivingZoom(zoom: Double)
     fun setViewportPadding(horizontalFraction: Float, verticalFraction: Float)
     fun setPuckScale(scale: Float)
@@ -42,5 +43,26 @@ interface CarMapEngine {
     /** GPS when available, else last fix, else map camera center (zoom ≥ 10). */
     fun resolveSearchOrigin(): Pair<Double, Double>
 
+    /** True when origin comes from GPS, last fix, or map camera — not the static country fallback. */
+    fun hasReliableSearchOrigin(): Boolean
+
+    /** Re-read system location and sync into search origin before querying. */
+    fun refreshSearchOrigin()
+
+    /** True when an offline Overture places database is installed on device. */
+    fun hasOfflinePlacesDatabase(): Boolean
+
     fun setSavedPlaces(places: List<SearchResultPlace>)
+
+    /** Compose/host resized the map pane — engine should re-apply preview camera if needed. */
+    fun onMapHostLayoutChanged() {}
+
+    /** When set, a map tap invokes the handler and skips POI/pin selection. */
+    fun setMapTapDismissHandler(handler: (() -> Unit)?) {}
+
+    /** Highlight a route during the selection phase; resets the overview timer. */
+    fun selectRouteOption(routeId: String) {}
+
+    /** Confirm the selected route and begin turn-by-turn navigation. */
+    fun confirmRouteSelection() {}
 }

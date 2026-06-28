@@ -8,13 +8,13 @@ import android.media.Rating
 import android.media.session.MediaController
 import android.media.session.MediaSessionManager
 import android.media.session.PlaybackState
+import android.os.SystemClock
 import android.support.v4.media.session.MediaControllerCompat
 import android.support.v4.media.session.MediaSessionCompat
 import android.support.v4.media.session.PlaybackStateCompat
 import android.util.Log
 import com.kyuusanq3.mixauto.domain.media.MediaPlaybackState
 import com.kyuusanq3.mixauto.service.MixAutoNotificationListenerService
-import com.kyuusanq3.mixauto.ui.components.launchAppByPackage
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -41,6 +41,7 @@ class MediaSessionRepository(context: Context) {
     private var shuffleCustomActionId: String? = null
     private var cachedShuffleOn = false
     private var lastToggleLikeMs = 0L
+    private var preferredPackage: String? = null
     private val likedTrackCache = mutableMapOf<String, Boolean>()
     private val controllerCallback = object : MediaController.Callback() {
         override fun onMetadataChanged(metadata: MediaMetadata?) {
@@ -94,8 +95,8 @@ class MediaSessionRepository(context: Context) {
         if (hasAttemptedBootLaunch) return
         if (_state.value.hasActiveSession) return
         hasAttemptedBootLaunch = true
-        Log.i(TAG, "Launching default audio app on boot: $defaultPackage")
-        launchAppByPackage(appContext, defaultPackage)
+        Log.i(TAG, "Waking default audio app on boot: $defaultPackage")
+        BackgroundAudioLauncher.wakeWithForegroundFallback(appContext, defaultPackage)
         for (delayMs in BOOT_REFRESH_DELAYS_MS) {
             scope.launch {
                 delay(delayMs)
@@ -104,6 +105,11 @@ class MediaSessionRepository(context: Context) {
                 }
             }
         }
+    }
+
+    fun setPreferredAudioSource(packageName: String) {
+        preferredPackage = packageName
+        refreshSessions()
     }
 
     fun playPause() {
@@ -283,6 +289,7 @@ class MediaSessionRepository(context: Context) {
                 artist = readArtist(metadata),
                 albumArt = readAlbumArt(metadata),
                 isPlaying = isPlaying,
+                playbackPositionMs = readPlaybackPositionMs(playbackState),
                 hasActiveSession = metadata != null || playbackState != null,
                 needsNotificationAccess = false,
                 sourcePackage = controller.packageName,
@@ -352,6 +359,10 @@ class MediaSessionRepository(context: Context) {
     private fun selectController(controllers: List<MediaController>): MediaController? {
         if (controllers.isEmpty()) return null
 
+        preferredPackage?.let { preferred ->
+            return controllers.firstOrNull { it.packageName == preferred }
+        }
+
         controllers.firstOrNull { it.playbackState?.state == PlaybackState.STATE_PLAYING }
             ?.let { return it }
 
@@ -378,6 +389,14 @@ class MediaSessionRepository(context: Context) {
         return metadata?.getBitmap(MediaMetadata.METADATA_KEY_ALBUM_ART)
             ?: metadata?.getBitmap(MediaMetadata.METADATA_KEY_ART)
             ?: metadata?.getBitmap(MediaMetadata.METADATA_KEY_DISPLAY_ICON)
+    }
+
+    private fun readPlaybackPositionMs(playbackState: PlaybackState?): Long {
+        if (playbackState == null) return 0L
+        val position = playbackState.position.coerceAtLeast(0L)
+        if (playbackState.state != PlaybackState.STATE_PLAYING) return position
+        val elapsed = SystemClock.elapsedRealtime() - playbackState.lastPositionUpdateTime
+        return (position + elapsed * playbackState.playbackSpeed).toLong().coerceAtLeast(0L)
     }
 
     private fun readTrackKey(metadata: MediaMetadata?): String? {
