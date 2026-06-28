@@ -62,10 +62,6 @@ fun AppUpdatePrompts(
             }
             is AppUpdateState.Downloading -> {
                 snackbarHostState.currentSnackbarData?.dismiss()
-                snackbarHostState.showSnackbar(
-                    message = "Downloading update… ${(uiState.progress * 100).roundToInt()}%",
-                    duration = SnackbarDuration.Indefinite,
-                )
             }
             AppUpdateState.UpToDate,
             is AppUpdateState.Available,
@@ -109,6 +105,15 @@ fun AppUpdatePrompts(
             )
         }
 
+        if (uiState is AppUpdateState.Downloading) {
+            AppUpdateDownloadBanner(
+                progress = uiState.progress,
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(bottom = 88.dp),
+            )
+        }
+
         SnackbarHost(
             hostState = snackbarHostState,
             modifier = Modifier
@@ -121,6 +126,26 @@ fun AppUpdatePrompts(
                 contentColor = ElectricCyan,
             )
         }
+    }
+}
+
+@Composable
+private fun AppUpdateDownloadBanner(
+    progress: Float,
+    modifier: Modifier = Modifier,
+) {
+    Surface(
+        modifier = modifier,
+        color = DarkSurface,
+        contentColor = ElectricCyan,
+    ) {
+        CarBodyText(
+            text = "Downloading update… ${(progress * 100).roundToInt()}%",
+            modifier = Modifier.padding(
+                horizontal = CarDimensions.PaneGap * 2,
+                vertical = CarDimensions.PaneGap,
+            ),
+        )
     }
 }
 

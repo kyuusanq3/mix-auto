@@ -3,6 +3,7 @@ package com.kyuusanq3.mixauto.data.map
 import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
+import android.app.PendingIntent
 import android.location.Location
 import android.location.LocationListener
 import android.location.LocationManager
@@ -27,6 +28,7 @@ import com.kyuusanq3.mixauto.domain.map.SearchResultPlace
 import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
+import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -187,6 +189,7 @@ class MapLibreEngineImpl(
     private var navigationArrivalTriggered = false
     private var hasSnappedCameraToGps = false
     private var locationEngine: LocationEngine? = null
+    private var rawLocationEngine: LocationEngine? = null
     private var locationEngineCallback: LocationEngineCallback<LocationEngineResult>? = null
     private var freshLocationListener: LocationListener? = null
     private var pendingLocationActivation = false
@@ -562,10 +565,11 @@ class MapLibreEngineImpl(
         engineScope.cancel()
         removeFreshLocationListener()
         locationEngineCallback?.let { callback ->
-            locationEngine?.removeLocationUpdates(callback)
+            rawLocationEngine?.removeLocationUpdates(callback)
         }
         locationEngineCallback = null
         locationEngine = null
+        rawLocationEngine = null
         mapView?.onDestroy()
         mapView = null
         mapLibreMap = null
@@ -3505,7 +3509,7 @@ class MapLibreEngineImpl(
             beginLocationAcquisition(ctx)
             scheduleLocationRetries(ctx)
 
-            locationEngine.getLastLocation(object : LocationEngineCallback<LocationEngineResult> {
+            rawLocationEngine?.getLastLocation(object : LocationEngineCallback<LocationEngineResult> {
                 override fun onSuccess(result: LocationEngineResult) {
                     result.lastLocation?.let { location ->
                         applyAndroidLocation(location, snapCamera = !hasSnappedCameraToGps)
@@ -3516,7 +3520,7 @@ class MapLibreEngineImpl(
                     Log.w(TAG, "Initial location fetch failed: ${exception.message}")
                 }
             })
-            registerSpeedUpdates(locationEngine)
+            rawLocationEngine?.let { registerSpeedUpdates(it) }
         }.onFailure { error ->
             Log.w(TAG, "Failed to activate LocationComponent: ${error.message}", error)
         }
@@ -3524,7 +3528,9 @@ class MapLibreEngineImpl(
 
     private fun createLocationEngine(context: Context): LocationEngine {
         Log.i(TAG, "Using MapLibre fused location engine (no Google Services)")
-        return LocationEngineProxy(MapLibreFusedLocationEngineImpl(context))
+        val raw = LocationEngineProxy(MapLibreFusedLocationEngineImpl(context))
+        rawLocationEngine = raw
+        return BearingEnrichedLocationEngine(raw) { enrichLocationWithBearing(it) }
     }
 
     private fun scheduleLocationRetries(context: Context) {
@@ -3552,7 +3558,7 @@ class MapLibreEngineImpl(
 
     private fun registerSpeedUpdates(engine: LocationEngine) {
         locationEngineCallback?.let { previous ->
-            locationEngine?.removeLocationUpdates(previous)
+            rawLocationEngine?.removeLocationUpdates(previous)
         }
 
         val request = LocationEngineRequest.Builder(LOCATION_INTERVAL_MS)
@@ -3616,11 +3622,17 @@ class MapLibreEngineImpl(
 
     private fun enrichLocationWithBearing(location: Location): Location {
         val prev = previousLocationFix
+        val movedM = prev?.distanceTo(location) ?: Float.MAX_VALUE
         previousLocationFix = location
-        val isStopped = location.hasSpeed() && location.speed < STOPPED_SPEED_MPS
+
+        val isStopped = when {
+            location.hasSpeed() -> location.speed < STOPPED_SPEED_MPS
+            movedM < STOPPED_MOVE_M -> true
+            else -> false
+        }
         if (isStopped) {
             val frozen = Location(location)
-            frozen.bearing = lastStableBearing ?: location.bearing
+            frozen.bearing = resolveFrozenBearing(location)
             return frozen
         }
         if (location.hasBearing() && location.bearing != 0f) {
@@ -3628,13 +3640,28 @@ class MapLibreEngineImpl(
             return location
         }
         // Distance gate: need >= 10 m of movement for a stable heading (above GPS jitter floor)
-        if (prev != null && prev.distanceTo(location) > 10f) {
+        if (prev != null && movedM > 10f) {
             val enriched = Location(location)
             enriched.bearing = prev.bearingTo(location)
             lastStableBearing = enriched.bearing
             return enriched
         }
+        lastStableBearing?.let { stable ->
+            val held = Location(location)
+            held.bearing = stable
+            return held
+        }
         return location
+    }
+
+    private fun resolveFrozenBearing(location: Location): Float {
+        lastStableBearing?.let { return it }
+        mapLibreMap?.cameraPosition?.bearing?.toFloat()?.let { cameraBearing ->
+            lastStableBearing = cameraBearing
+            return cameraBearing
+        }
+        if (location.hasBearing()) return location.bearing
+        return 0f
     }
 
     private fun isDuplicateLocationFix(location: Location): Boolean {
@@ -4420,6 +4447,8 @@ class MapLibreEngineImpl(
         private const val ROUTE_TRAVELED_OPACITY = 0.85f
         private const val ROUTE_WIDTH = 14f
         private const val STOPPED_SPEED_MPS = 1.4f
+        /** GPS jitter radius — fixes closer than this with no speed are treated as stopped. */
+        private const val STOPPED_MOVE_M = 8f
         private const val METERS_PER_DEGREE_LAT = 111_320.0
         private const val STEP_ADVANCE_THRESHOLD_M = 25f
         private const val ARRIVAL_THRESHOLD_M = 15f
@@ -4452,5 +4481,70 @@ class MapLibreEngineImpl(
                 }]
             }
         """.trimIndent()
+    }
+}
+
+/**
+ * Feeds bearing-smoothed fixes into MapLibre's LocationComponent so the puck and
+ * TRACKING_GPS camera don't spin on noisy compass/GPS headings while parked.
+ * App logic listens on the raw engine via [MapLibreEngineImpl.rawLocationEngine].
+ */
+private class BearingEnrichedLocationEngine(
+    private val delegate: LocationEngine,
+    private val enrich: (Location) -> Location,
+) : LocationEngine {
+
+    private val callbackMap =
+        ConcurrentHashMap<LocationEngineCallback<LocationEngineResult>, LocationEngineCallback<LocationEngineResult>>()
+
+    private fun wrapCallback(
+        callback: LocationEngineCallback<LocationEngineResult>,
+    ): LocationEngineCallback<LocationEngineResult> {
+        val wrapped = object : LocationEngineCallback<LocationEngineResult> {
+            override fun onSuccess(result: LocationEngineResult) {
+                val raw = result.lastLocation
+                if (raw == null) {
+                    callback.onSuccess(result)
+                    return
+                }
+                callback.onSuccess(LocationEngineResult.create(enrich(raw)))
+            }
+
+            override fun onFailure(exception: Exception) {
+                callback.onFailure(exception)
+            }
+        }
+        callbackMap[callback] = wrapped
+        return wrapped
+    }
+
+    override fun getLastLocation(callback: LocationEngineCallback<LocationEngineResult>) {
+        delegate.getLastLocation(wrapCallback(callback))
+    }
+
+    override fun requestLocationUpdates(
+        request: LocationEngineRequest,
+        callback: LocationEngineCallback<LocationEngineResult>,
+        looper: Looper?,
+    ) {
+        delegate.requestLocationUpdates(request, wrapCallback(callback), looper)
+    }
+
+    override fun requestLocationUpdates(
+        request: LocationEngineRequest,
+        pendingIntent: PendingIntent,
+    ) {
+        delegate.requestLocationUpdates(request, pendingIntent)
+    }
+
+    override fun removeLocationUpdates(callback: LocationEngineCallback<LocationEngineResult>) {
+        val wrapped = callbackMap.remove(callback)
+        if (wrapped != null) {
+            delegate.removeLocationUpdates(wrapped)
+        }
+    }
+
+    override fun removeLocationUpdates(pendingIntent: PendingIntent) {
+        delegate.removeLocationUpdates(pendingIntent)
     }
 }

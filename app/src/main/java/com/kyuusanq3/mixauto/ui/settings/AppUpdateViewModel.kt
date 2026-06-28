@@ -10,6 +10,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlin.math.roundToInt
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -89,8 +90,12 @@ class AppUpdateViewModel(application: Application) : AndroidViewModel(applicatio
 
         viewModelScope.launch {
             _uiState.value = AppUpdateState.Downloading(progress = 0f)
+            var lastReportedPercent = -1
             val result = withContext(Dispatchers.IO) {
                 repository.downloadApk { progress ->
+                    val percent = (progress * 100).roundToInt()
+                    if (progress < 1f && percent == lastReportedPercent) return@downloadApk
+                    lastReportedPercent = percent
                     _uiState.value = AppUpdateState.Downloading(progress = progress)
                 }
             }
