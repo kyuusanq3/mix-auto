@@ -221,6 +221,9 @@ class MapLibreEngineImpl(
     private var lastUiStateCoordLat: Double? = null
     private var lastUiStateCoordLng: Double? = null
     private var lastPuckPushLocation: Location? = null
+    private var lastEnrichedFix: Location? = null
+    private var lastEnrichedFixTimeMs: Long = Long.MIN_VALUE
+    private var lastForcePuckRenderMs: Long = 0L
     private var lastRouteProgressMapUpdateM: Float = 0f
     private var pendingPoiPreviewTarget: LatLng? = null
     private var pendingPoiPreviewZoom: Double = POI_PREVIEW_ZOOM
@@ -454,6 +457,8 @@ class MapLibreEngineImpl(
      * After changing tracking padding or puck style, force a puck refresh so the camera repositions.
      */
     private fun forceLocationUpdateForImmediateRender(map: MapLibreMap) {
+        val now = System.currentTimeMillis()
+        if (now - lastForcePuckRenderMs < FORCE_PUCK_RENDER_MIN_MS) return
         val component = map.locationComponent
         if (!component.isLocationComponentActivated || !component.isLocationComponentEnabled) return
         val location = component.lastKnownLocation
@@ -464,6 +469,7 @@ class MapLibreEngineImpl(
                 }
             }
             ?: return
+        lastForcePuckRenderMs = now
         pushPuckLocationIfNeeded(location, force = true)
     }
 
@@ -3530,7 +3536,11 @@ class MapLibreEngineImpl(
         Log.i(TAG, "Using MapLibre fused location engine (no Google Services)")
         val raw = LocationEngineProxy(MapLibreFusedLocationEngineImpl(context))
         rawLocationEngine = raw
-        return BearingEnrichedLocationEngine(raw) { enrichLocationWithBearing(it) }
+        return BearingEnrichedLocationEngine(
+            delegate = raw,
+            enrich = ::getOrEnrichLocation,
+            shouldEmit = ::shouldEmitPuckFix,
+        )
     }
 
     private fun scheduleLocationRetries(context: Context) {
@@ -3620,7 +3630,27 @@ class MapLibreEngineImpl(
         applyAndroidLocation(location, snapCamera)
     }
 
-    private fun enrichLocationWithBearing(location: Location): Location {
+    /**
+     * Single enrichment entry — [BearingEnrichedLocationEngine] and [applyAndroidLocation] must
+     * share this so [previousLocationFix] is not advanced twice per raw GPS tick (causes bearing
+     * flicker when the second call sees zero movement).
+     */
+    private fun getOrEnrichLocation(location: Location): Location {
+        lastEnrichedFix?.let { cached ->
+            if (location.time == lastEnrichedFixTimeMs) return cached
+            if (cached.distanceTo(location) < LOCATION_FIX_DEDUP_DIST_M &&
+                abs(location.time - lastEnrichedFixTimeMs) < 500L
+            ) {
+                return cached
+            }
+        }
+        val enriched = computeEnrichedLocation(location)
+        lastEnrichedFixTimeMs = location.time
+        lastEnrichedFix = enriched
+        return enriched
+    }
+
+    private fun computeEnrichedLocation(location: Location): Location {
         val prev = previousLocationFix
         val movedM = prev?.distanceTo(location) ?: Float.MAX_VALUE
         previousLocationFix = location
@@ -3637,7 +3667,7 @@ class MapLibreEngineImpl(
         }
         if (location.hasBearing() && location.bearing != 0f) {
             lastStableBearing = location.bearing
-            return location
+            return Location(location)
         }
         // Distance gate: need >= 10 m of movement for a stable heading (above GPS jitter floor)
         if (prev != null && movedM > 10f) {
@@ -3651,7 +3681,23 @@ class MapLibreEngineImpl(
             held.bearing = stable
             return held
         }
-        return location
+        return Location(location)
+    }
+
+    /** Suppress jittery puck redraws when GPS noise has not materially moved or turned. */
+    private fun shouldEmitPuckFix(next: Location, prev: Location?): Boolean {
+        if (prev == null) return true
+        val distM = prev.distanceTo(next)
+        if (distM >= PUCK_EMIT_MIN_DIST_M) return true
+        if (!next.hasBearing() || !prev.hasBearing()) return false
+        return normalizeBearingDelta(next.bearing - prev.bearing) >= PUCK_EMIT_MIN_BEARING_DEG
+    }
+
+    private fun normalizeBearingDelta(delta: Float): Float {
+        var d = delta % 360f
+        if (d > 180f) d -= 360f
+        if (d < -180f) d += 360f
+        return abs(d)
     }
 
     private fun resolveFrozenBearing(location: Location): Float {
@@ -3707,7 +3753,7 @@ class MapLibreEngineImpl(
         if (isDuplicateLocationFix(location)) return
         lastLocationFixForDedup = Location(location)
 
-        val locationWithBearing = enrichLocationWithBearing(location)
+        val locationWithBearing = getOrEnrichLocation(location)
 
         // During navigation, snap the display location onto the nearest route segment so the
         // puck stays on the road despite GPS jitter. Off-route evaluation always uses the raw
@@ -3730,7 +3776,7 @@ class MapLibreEngineImpl(
         when {
             !componentReady -> pendingLocationFix = displayLocation
             isNavigating -> {
-                pushPuckLocationIfNeeded(displayLocation, force = true)
+                pushPuckLocationIfNeeded(displayLocation)
                 pendingLocationFix = null
             }
             else -> {
@@ -4022,6 +4068,14 @@ class MapLibreEngineImpl(
 
     private fun ensureGpsLocationListener(context: Context) {
         if (freshLocationListener != null) return
+        // Fused LocationEngine already delivers GPS fixes — a parallel GPS_PROVIDER listener
+        // doubles applyAndroidLocation + enrichment work and causes puck flicker.
+        if (rawLocationEngine != null) {
+            if (BuildConfig.DEBUG) {
+                Log.d(TAG, "Skipping direct GPS listener; using LocationEngine")
+            }
+            return
+        }
         val locationManager = context.getSystemService(Context.LOCATION_SERVICE) as? LocationManager
             ?: return
 
@@ -4379,6 +4433,9 @@ class MapLibreEngineImpl(
         private const val LOCATION_FIX_DEDUP_TIME_MS = 50L
         private const val LOCATION_FIX_DEDUP_DIST_M = 2f
         private const val PUCK_PUSH_MIN_DIST_M = 2f
+        private const val PUCK_EMIT_MIN_DIST_M = 3f
+        private const val PUCK_EMIT_MIN_BEARING_DEG = 4f
+        private const val FORCE_PUCK_RENDER_MIN_MS = 400L
         private const val UI_STATE_COORD_THROTTLE_MS = 1000L
         private const val UI_STATE_COORD_MIN_MOVE_M = 20f
         private const val ROUTE_PROGRESS_MAP_MIN_ADVANCE_M = 10f
@@ -4492,10 +4549,12 @@ class MapLibreEngineImpl(
 private class BearingEnrichedLocationEngine(
     private val delegate: LocationEngine,
     private val enrich: (Location) -> Location,
+    private val shouldEmit: (Location, Location?) -> Boolean = { _, _ -> true },
 ) : LocationEngine {
 
     private val callbackMap =
         ConcurrentHashMap<LocationEngineCallback<LocationEngineResult>, LocationEngineCallback<LocationEngineResult>>()
+    private var lastEmitted: Location? = null
 
     private fun wrapCallback(
         callback: LocationEngineCallback<LocationEngineResult>,
@@ -4507,7 +4566,10 @@ private class BearingEnrichedLocationEngine(
                     callback.onSuccess(result)
                     return
                 }
-                callback.onSuccess(LocationEngineResult.create(enrich(raw)))
+                val enriched = enrich(raw)
+                if (!shouldEmit(enriched, lastEmitted)) return
+                lastEmitted = Location(enriched)
+                callback.onSuccess(LocationEngineResult.create(enriched))
             }
 
             override fun onFailure(exception: Exception) {
