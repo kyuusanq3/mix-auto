@@ -42,6 +42,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
@@ -53,6 +54,7 @@ import org.maplibre.android.camera.CameraPosition
 import org.maplibre.android.camera.CameraUpdateFactory
 import org.maplibre.android.geometry.LatLng
 import org.maplibre.android.geometry.LatLngBounds
+import org.maplibre.android.location.LocationComponent
 import org.maplibre.android.location.LocationComponentActivationOptions
 import org.maplibre.android.location.LocationComponentOptions
 import org.maplibre.android.location.engine.LocationEngine
@@ -217,6 +219,8 @@ class MapLibreEngineImpl(
     private var drAnchor: Location? = null
     private var lastLocationFixForDedup: Location? = null
     private var lastAppliedTrackingPadding: IntArray? = null
+    /** Padding last pushed via [paddingWhileTracking] while tracking was engaged. */
+    private var lastEngagedTrackingPadding: IntArray? = null
     private var lastUiStateCoordUpdateMs: Long = 0L
     private var lastUiStateCoordLat: Double? = null
     private var lastUiStateCoordLng: Double? = null
@@ -234,6 +238,8 @@ class MapLibreEngineImpl(
     private var topDownExploreUserAdjusted = false
     private var routeOverviewOrigin: LatLng? = null
     private var routeOverviewDestination: LatLng? = null
+    private var lastRouteOverviewLayoutWidth = 0
+    private var lastRouteOverviewLayoutHeight = 0
     /** Blocks layout/padding updates while route overview or nav dive animation runs. */
     private var navigationCameraTransitionActive = false
     private val routeResultsById = mutableMapOf<String, StoredRoute>()
@@ -1297,7 +1303,13 @@ class MapLibreEngineImpl(
             val origin = routeOverviewOrigin
             val destination = routeOverviewDestination
             if (origin != null && destination != null) {
-                fitRouteOverviewCamera(origin, destination, animate = false)
+                val w = view.width
+                val h = view.height
+                if (w != lastRouteOverviewLayoutWidth || h != lastRouteOverviewLayoutHeight) {
+                    lastRouteOverviewLayoutWidth = w
+                    lastRouteOverviewLayoutHeight = h
+                    fitRouteOverviewCamera(origin, destination, animate = false)
+                }
             }
             return
         }
@@ -1317,6 +1329,7 @@ class MapLibreEngineImpl(
         }
         if (!state.isCameraDetached) {
             lastAppliedTrackingPadding = null
+            lastEngagedTrackingPadding = null
             val component = map.locationComponent
             val componentReady = component.isLocationComponentActivated &&
                 component.isLocationComponentEnabled
@@ -1343,6 +1356,7 @@ class MapLibreEngineImpl(
      */
     private fun applyPuckPaddingUpdate(map: MapLibreMap, bypassRenderThrottle: Boolean = false) {
         lastAppliedTrackingPadding = null
+        lastEngagedTrackingPadding = null
         val component = map.locationComponent
         val componentReady = component.isLocationComponentActivated &&
             component.isLocationComponentEnabled
@@ -1371,12 +1385,28 @@ class MapLibreEngineImpl(
         )
     }
 
+    /** MapLibre rejects [paddingWhileTracking] when [CameraMode.NONE] — only call while tracking. */
+    private fun applyPaddingWhileTrackingIfEngaged(
+        component: LocationComponent,
+        padding: ViewportPadding,
+    ) {
+        if (!component.isLocationComponentActivated || !component.isLocationComponentEnabled) return
+        if (component.cameraMode == CameraMode.NONE) return
+        component.paddingWhileTracking(
+            doubleArrayOf(
+                padding.left.toDouble(),
+                padding.top.toDouble(),
+                padding.right.toDouble(),
+                padding.bottom.toDouble(),
+            ),
+        )
+    }
+
     private fun clearViewportPaddingForPreview(map: MapLibreMap) {
+        lastAppliedTrackingPadding = null
+        lastEngagedTrackingPadding = null
         applyMapPaddingImmediate(map, ViewportPadding(0, 0, 0, 0))
-        val component = map.locationComponent
-        if (component.isLocationComponentActivated && component.isLocationComponentEnabled) {
-            component.paddingWhileTracking(doubleArrayOf(0.0, 0.0, 0.0, 0.0))
-        }
+        applyPaddingWhileTrackingIfEngaged(map.locationComponent, ViewportPadding(0, 0, 0, 0))
     }
 
     override fun setSavedPlaces(places: List<SearchResultPlace>) {
@@ -2198,6 +2228,7 @@ class MapLibreEngineImpl(
         clearRoutePreviewState()
         routeOverviewOrigin = origin
         routeOverviewDestination = destination
+        resetRouteOverviewLayoutCache()
         _uiState.update { it.copy(isCameraDetached = false, isInTopDownView = false) }
 
         val animateToBounds = { fitRouteOverviewCamera(origin, destination, animate = true) }
@@ -2509,8 +2540,15 @@ class MapLibreEngineImpl(
         routeOverviewJob = null
         routeOverviewOrigin = null
         routeOverviewDestination = null
+        lastRouteOverviewLayoutWidth = 0
+        lastRouteOverviewLayoutHeight = 0
         navigationCameraTransitionActive = false
         _uiState.update { it.copy(routeOverviewProgress = 0f) }
+    }
+
+    private fun resetRouteOverviewLayoutCache() {
+        lastRouteOverviewLayoutWidth = 0
+        lastRouteOverviewLayoutHeight = 0
     }
 
     private fun isRouteOverviewActive(): Boolean = routeOverviewJob?.isActive == true
@@ -2521,6 +2559,7 @@ class MapLibreEngineImpl(
         clearRoutePreviewState()
         routeOverviewOrigin = origin
         routeOverviewDestination = destination
+        resetRouteOverviewLayoutCache()
         _uiState.update { it.copy(isCameraDetached = false, isInTopDownView = false) }
 
         val animateToBounds = {
@@ -2556,8 +2595,9 @@ class MapLibreEngineImpl(
         val component = map.locationComponent
         if (component.isLocationComponentActivated && component.isLocationComponentEnabled) {
             component.cameraMode = CameraMode.NONE
-            component.paddingWhileTracking(doubleArrayOf(0.0, 0.0, 0.0, 0.0))
         }
+        lastAppliedTrackingPadding = null
+        lastEngagedTrackingPadding = null
         map.cancelTransitions()
         applyMapPaddingImmediate(map, ViewportPadding(0, 0, 0, 0))
 
@@ -2771,29 +2811,17 @@ class MapLibreEngineImpl(
         val component = map.locationComponent
         val componentReady = component.isLocationComponentActivated && component.isLocationComponentEnabled
         val alreadyTrackingGps = componentReady && component.cameraMode == CameraMode.TRACKING_GPS
-        if (lastAppliedTrackingPadding?.contentEquals(paddingKey) == true && alreadyTrackingGps) {
+        if (!alreadyTrackingGps) {
+            if (lastAppliedTrackingPadding?.contentEquals(paddingKey) == true) return
+            lastAppliedTrackingPadding = paddingKey
+            applyMapPaddingImmediate(map, padding)
             return
         }
+        if (lastEngagedTrackingPadding?.contentEquals(paddingKey) == true) return
         lastAppliedTrackingPadding = paddingKey
-        // moveCamera(paddingTo) while TRACKING_GPS is active drops out of follow mode — update
-        // paddingWhileTracking only and force a puck refresh to reposition the camera.
-        if (!alreadyTrackingGps) {
-            applyMapPaddingImmediate(map, padding)
-        }
-        if (!componentReady) return
-        // Always store the tracking padding regardless of current camera mode — it will take
-        // effect immediately in TRACKING_GPS mode and when tracking resumes after detach.
-        component.paddingWhileTracking(
-            doubleArrayOf(
-                padding.left.toDouble(),
-                padding.top.toDouble(),
-                padding.right.toDouble(),
-                padding.bottom.toDouble(),
-            ),
-        )
-        if (alreadyTrackingGps) {
-            forceLocationUpdateForImmediateRender(map)
-        }
+        lastEngagedTrackingPadding = paddingKey
+        applyPaddingWhileTrackingIfEngaged(component, padding)
+        forceLocationUpdateForImmediateRender(map)
     }
 
     private fun registerPoiInteractions(map: MapLibreMap) {
@@ -3131,15 +3159,20 @@ class MapLibreEngineImpl(
         return tokens.all { token -> haystack.contains(token) }
     }
 
-    private fun currentViewportBounds(): GeoBounds? {
-        val map = mapLibreMap ?: return null
-        if (map.cameraPosition.zoom < MIN_POI_ZOOM) return null
+    private fun currentViewportBounds(): GeoBounds? = readOnMainThread {
+        val map = mapLibreMap ?: return@readOnMainThread null
+        if (map.cameraPosition.zoom < MIN_POI_ZOOM) return@readOnMainThread null
         val bounds = map.projection.visibleRegion.latLngBounds
         val latSpan = bounds.northEast.latitude - bounds.southWest.latitude
         val lngSpan = bounds.northEast.longitude - bounds.southWest.longitude
         val padLat = latSpan * BBOX_PADDING_FACTOR / 2
         val padLng = lngSpan * BBOX_PADDING_FACTOR / 2
-        return expandGeoBounds(bounds, padLat, padLng)
+        expandGeoBounds(bounds, padLat, padLng)
+    }
+
+    private fun <T> readOnMainThread(block: () -> T): T {
+        if (Looper.getMainLooper().isCurrentThread) return block()
+        return runBlocking(Dispatchers.Main.immediate) { block() }
     }
 
     private fun poiCacheInViewport(): List<SearchResultPlace> {

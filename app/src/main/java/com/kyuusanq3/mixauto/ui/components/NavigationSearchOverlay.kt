@@ -427,9 +427,9 @@ fun NavigationSearchContent(
                 origin.second,
                 NEARBY_POI_SUGGESTION_LIMIT,
             )
-        }.filterNot { nearby ->
-            recentDestinations.any { recent -> isWithinDedupThreshold(recent, nearby) } ||
-                savedPlaces.any { saved -> isWithinDedupThreshold(saved, nearby) }
+        }.filterNot { place ->
+            recentDestinations.any { recent -> isWithinDedupThreshold(recent, place) } ||
+                savedPlaces.any { saved -> isWithinDedupThreshold(saved, place) }
         }
         launcherViewModel.updateDestinationSearch { state ->
             state.copy(nearbyPois = nearby)
