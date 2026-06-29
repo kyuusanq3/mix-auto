@@ -153,7 +153,41 @@ fun CarMapViewContainer(
                 .align(Alignment.BottomCenter)
                 .padding(bottom = SpeedCircleBottomInset),
         )
+
+        OfflineMapLabelOverlay(
+            engine = engine,
+            modifier = Modifier
+                .align(Alignment.TopStart)
+                .padding(CarDimensions.PaneGap),
+        )
     }
+}
+
+@Composable
+private fun OfflineMapLabelOverlay(
+    engine: CarMapEngine,
+    modifier: Modifier = Modifier,
+) {
+    val isNavigating by engine.uiState
+        .map { it.isNavigating }
+        .distinctUntilChanged()
+        .collectAsState(initial = false)
+    if (isNavigating) return
+
+    val label by engine.uiState
+        .map { it.mapConnectivityLabel }
+        .distinctUntilChanged()
+        .collectAsState(initial = null)
+    val connectivityLabel = label
+    if (connectivityLabel.isNullOrBlank()) return
+
+    CarLabelText(
+        text = connectivityLabel,
+        modifier = modifier
+            .background(OledBlack.copy(alpha = 0.72f))
+            .padding(horizontal = CarDimensions.PaneGap / 2, vertical = 4.dp),
+        style = MaterialTheme.typography.labelMedium.copy(color = ElectricCyan),
+    )
 }
 
 @Composable

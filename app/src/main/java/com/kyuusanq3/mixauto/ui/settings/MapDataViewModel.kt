@@ -2,17 +2,26 @@ package com.kyuusanq3.mixauto.ui.settings
 
 import android.app.Application
 import android.net.Uri
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.kyuusanq3.mixauto.data.map.OfflineCountryCatalog
+import com.kyuusanq3.mixauto.data.map.OfflineMapRepository
+import com.kyuusanq3.mixauto.data.map.OfflineRegionDefinition
+import com.kyuusanq3.mixauto.data.map.OfflineRegionInstallState
 import com.kyuusanq3.mixauto.data.places.LocalDbMeta
 import com.kyuusanq3.mixauto.data.places.LocalPlacesRepository
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
+import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
 
@@ -34,6 +43,12 @@ sealed class MapDataUiState {
         val progress: Float,
         val packs: List<RemoteCountryPack>,
     ) : MapDataUiState()
+    data class DownloadingOfflineMap(
+        val regionId: String,
+        val regionName: String,
+        val progress: Float,
+        val packs: List<RemoteCountryPack>,
+    ) : MapDataUiState()
     data class Importing(val progress: Float, val label: String) : MapDataUiState()
     data class Error(val message: String) : MapDataUiState()
 }
@@ -41,15 +56,46 @@ sealed class MapDataUiState {
 class MapDataViewModel(
     application: Application,
     private val localPlacesRepository: LocalPlacesRepository,
+    private val offlineMapRepository: OfflineMapRepository,
 ) : AndroidViewModel(application) {
 
     private val _uiState = MutableStateFlow<MapDataUiState>(MapDataUiState.LoadingCatalog)
     val uiState: StateFlow<MapDataUiState> = _uiState.asStateFlow()
 
+    val offlineCatalog: List<OfflineCountryCatalog> = offlineMapRepository.catalogCountries()
+    val offlineInstallStates: StateFlow<Map<String, OfflineRegionInstallState>> =
+        offlineMapRepository.installStates
+
+    var expandedCountryIso by mutableStateOf<String?>(offlineCatalog.firstOrNull()?.iso)
+        private set
+
+    var suggestedRegionId by mutableStateOf<String?>(null)
+        private set
+
     private var catalogPacks: List<RemoteCountryPack> = emptyList()
 
     init {
         loadCatalog()
+        refreshOfflineRegions()
+        viewModelScope.launch {
+            offlineMapRepository.installStates.collect { states ->
+                val downloading = states.values.firstOrNull { it.isDownloading }
+                val current = _uiState.value
+                if (downloading != null && current !is MapDataUiState.DownloadingOfflineMap) {
+                    val definition = offlineMapRepository.regionDefinition(downloading.regionId)
+                    _uiState.value = MapDataUiState.DownloadingOfflineMap(
+                        regionId = downloading.regionId,
+                        regionName = definition?.name ?: downloading.regionId,
+                        progress = downloading.downloadProgress,
+                        packs = catalogPacks,
+                    )
+                } else if (downloading != null && current is MapDataUiState.DownloadingOfflineMap) {
+                    _uiState.value = current.copy(progress = downloading.downloadProgress)
+                } else if (downloading == null && current is MapDataUiState.DownloadingOfflineMap) {
+                    refreshCatalogAfterChange()
+                }
+            }
+        }
     }
 
     fun loadCatalog() {
@@ -70,12 +116,79 @@ class MapDataViewModel(
         }
     }
 
-    fun downloadCountryData(pack: RemoteCountryPack) {
-        if (_uiState.value is MapDataUiState.Downloading ||
-            _uiState.value is MapDataUiState.Importing
-        ) {
-            return
+    fun refreshOfflineRegions() {
+        offlineMapRepository.refreshInstallStates()
+    }
+
+    fun updateSuggestedRegion(lat: Double?, lng: Double?) {
+        suggestedRegionId = offlineMapRepository.suggestRegionId(lat, lng)
+    }
+
+    fun toggleCountryExpanded(iso: String) {
+        expandedCountryIso = if (expandedCountryIso == iso) null else iso
+    }
+
+    fun placesStorageBytes(): Long {
+        val placesDir = File(getApplication<Application>().filesDir, "places")
+        return placesDir.listFiles()
+            ?.filter { it.isFile && it.name.endsWith(".db", ignoreCase = true) }
+            ?.sumOf { it.length() }
+            ?: 0L
+    }
+
+    fun offlineMapsStorageBytes(): Long = offlineMapRepository.totalInstalledBytes()
+
+    fun downloadOfflineRegion(regionId: String, pixelRatio: Float) {
+        if (isTransferInProgress()) return
+
+        val definition = offlineMapRepository.regionDefinition(regionId) ?: return
+        _uiState.value = MapDataUiState.DownloadingOfflineMap(
+            regionId = regionId,
+            regionName = definition.name,
+            progress = 0f,
+            packs = catalogPacks,
+        )
+
+        viewModelScope.launch {
+            val result = withContext(Dispatchers.IO) {
+                runCatching { offlineMapRepository.downloadRegion(regionId, pixelRatio) }
+            }
+            result.fold(
+                onSuccess = { refreshCatalogAfterChange() },
+                onFailure = { error ->
+                    _uiState.value = MapDataUiState.Error(
+                        when (error) {
+                            is TimeoutCancellationException ->
+                                "Map download timed out. Tap ✕ to cancel, then retry on Wi‑Fi."
+                            else -> error.message ?: "Offline map download failed"
+                        },
+                    )
+                },
+            )
         }
+    }
+
+    fun deleteOfflineRegion(regionId: String) {
+        viewModelScope.launch {
+            val result = withContext(Dispatchers.IO) {
+                runCatching { offlineMapRepository.deleteRegion(regionId) }
+            }
+            result.fold(
+                onSuccess = {
+                    offlineMapRepository.refreshInstallStates()
+                    refreshCatalogAfterChange()
+                },
+                onFailure = { error ->
+                    _uiState.value = MapDataUiState.Error(
+                        error.message ?: "Could not delete offline map",
+                    )
+                },
+            )
+        }
+    }
+
+    fun downloadCountryData(pack: RemoteCountryPack) {
+        if (isTransferInProgress()) return
 
         viewModelScope.launch {
             _uiState.value = MapDataUiState.Downloading(
@@ -112,22 +225,14 @@ class MapDataViewModel(
     }
 
     fun deleteDatabase(iso: String) {
-        if (_uiState.value is MapDataUiState.Downloading ||
-            _uiState.value is MapDataUiState.Importing
-        ) {
-            return
-        }
+        if (isTransferInProgress()) return
 
         localPlacesRepository.deleteDatabase(iso)
         refreshCatalogAfterChange()
     }
 
     fun importPhilippinesDatabase(uri: Uri) {
-        if (_uiState.value is MapDataUiState.Downloading ||
-            _uiState.value is MapDataUiState.Importing
-        ) {
-            return
-        }
+        if (isTransferInProgress()) return
 
         viewModelScope.launch {
             _uiState.value = MapDataUiState.Importing(
@@ -160,11 +265,7 @@ class MapDataViewModel(
     }
 
     fun installSamplePhilippinesData() {
-        if (_uiState.value is MapDataUiState.Downloading ||
-            _uiState.value is MapDataUiState.Importing
-        ) {
-            return
-        }
+        if (isTransferInProgress()) return
 
         viewModelScope.launch {
             _uiState.value = MapDataUiState.Importing(
@@ -197,8 +298,20 @@ class MapDataViewModel(
         }
     }
 
+    fun regionForCountry(iso: String): List<OfflineRegionDefinition> =
+        offlineCatalog.firstOrNull { it.iso.equals(iso, ignoreCase = true) }?.regions.orEmpty()
+
+    private fun isTransferInProgress(): Boolean = when (_uiState.value) {
+        is MapDataUiState.Downloading,
+        is MapDataUiState.DownloadingOfflineMap,
+        is MapDataUiState.Importing,
+        -> true
+        else -> false
+    }
+
     private fun refreshCatalogAfterChange() {
         viewModelScope.launch {
+            offlineMapRepository.refreshInstallStates()
             val result = withContext(Dispatchers.IO) { fetchCatalog() }
             result.fold(
                 onSuccess = { packs ->

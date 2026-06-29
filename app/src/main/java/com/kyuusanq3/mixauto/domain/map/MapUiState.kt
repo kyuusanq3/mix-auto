@@ -16,4 +16,6 @@ data class MapUiState(
     val routeOptions: List<RouteOption> = emptyList(),
     val selectedRouteId: String? = null,
     val isRouteSelecting: Boolean = false,
+    /** Non-null when device is offline and cached map tiles cover current GPS. */
+    val mapConnectivityLabel: String? = null,
 )

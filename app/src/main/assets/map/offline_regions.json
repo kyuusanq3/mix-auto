@@ -1,0 +1,43 @@
+{
+  "countries": [
+    {
+      "iso": "PH",
+      "name": "Philippines",
+      "regions": [
+        {
+          "id": "ph_overview",
+          "name": "National overview",
+          "south": 4.5,
+          "west": 116.0,
+          "north": 21.5,
+          "east": 127.0,
+          "minZoom": 0,
+          "maxZoom": 12,
+          "sizeEstimateMb": "40–80"
+        },
+        {
+          "id": "ph_negros_occ",
+          "name": "Negros Occidental",
+          "south": 9.25,
+          "west": 122.35,
+          "north": 11.05,
+          "east": 123.25,
+          "minZoom": 10,
+          "maxZoom": 14,
+          "sizeEstimateMb": "50–120"
+        },
+        {
+          "id": "ph_western_visayas",
+          "name": "Western Visayas",
+          "south": 9.5,
+          "west": 121.8,
+          "north": 12.0,
+          "east": 123.5,
+          "minZoom": 10,
+          "maxZoom": 14,
+          "sizeEstimateMb": "120–250"
+        }
+      ]
+    }
+  ]
+}

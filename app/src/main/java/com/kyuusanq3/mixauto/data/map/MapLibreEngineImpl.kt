@@ -2,6 +2,8 @@ package com.kyuusanq3.mixauto.data.map
 
 import android.Manifest
 import android.content.Context
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import android.content.pm.PackageManager
 import android.app.PendingIntent
 import android.location.Location
@@ -160,6 +162,7 @@ class MapLibreEngineImpl(
     private val localPlaces: LocalPlacesRepository? = null,
     private val encounteredPlaces: EncounteredPlacesRepository? = null,
     private val navigationVoice: NavigationVoiceController? = null,
+    private val offlineMapRepository: OfflineMapRepository? = null,
     initialUseVectorTiles: Boolean = true,
     initialShow3dBuildings: Boolean = false,
     initialDrivingZoom: Double = 17.5,
@@ -274,7 +277,7 @@ class MapLibreEngineImpl(
         }
 
         if (!mapLibreInitialized) {
-            MapLibre.getInstance(context.applicationContext)
+            MapLibreAppBootstrap.ensureInitialized(context)
             mapLibreInitialized = true
         }
 
@@ -496,7 +499,7 @@ class MapLibreEngineImpl(
 
     private fun applyMapStyle(map: MapLibreMap, context: Context) {
         val builder = if (useVectorTiles) {
-            Style.Builder().fromUri(VECTOR_STYLE_URL)
+            Style.Builder().fromUri(MapStyleConstants.VECTOR_STYLE_URI)
         } else {
             Style.Builder().fromJson(OSM_STYLE_JSON)
         }
@@ -512,9 +515,66 @@ class MapLibreEngineImpl(
             }
             hasSnappedCameraToGps = false
             startFreeDrive()
+            applyAutomotiveRoadBoost(style)
             applyTrafficOverlay()
             apply3dBuildingVisibility(style)
             updateSavedPlacesLayer(savedPlacesCache)
+        }
+    }
+
+    /** Extra width on bundled Liberty fork (~3× in JSON); ~1.65× here ≈ 5× vs stock at nav zoom. */
+    private fun applyAutomotiveRoadBoost(style: Style) {
+        if (!useVectorTiles) return
+        style.layers.forEach { layer ->
+            if (layer !is LineLayer) return@forEach
+            val layerId = layer.id
+            if (!isAutomotiveRoadLineLayer(layerId)) return@forEach
+            val factor = automotiveRoadWidthFactor(layerId)
+            val widthProp = layer.lineWidth
+            when {
+                widthProp.isExpression -> {
+                    val expr = widthProp.expression ?: return@forEach
+                    layer.setProperties(
+                        PropertyFactory.lineWidth(
+                            Expression.product(Expression.literal(factor), expr),
+                        ),
+                    )
+                }
+                widthProp.isValue -> {
+                    val value = widthProp.value ?: return@forEach
+                    layer.setProperties(PropertyFactory.lineWidth(value * factor))
+                }
+            }
+        }
+    }
+
+    private fun isAutomotiveRoadLineLayer(layerId: String): Boolean {
+        if (
+            !layerId.startsWith("road_") &&
+            !layerId.startsWith("tunnel_") &&
+            !layerId.startsWith("bridge_")
+        ) {
+            return false
+        }
+        if ("one_way" in layerId || layerId.startsWith("road_area")) return false
+        if ("path" in layerId || "pedestrian" in layerId || "rail" in layerId) return false
+        return true
+    }
+
+    private fun automotiveRoadWidthFactor(layerId: String): Float {
+        val minorTokens = listOf(
+            "minor",
+            "service",
+            "track",
+            "tertiary",
+            "living",
+            "street",
+            "link",
+        )
+        return if (minorTokens.any { layerId.contains(it) }) {
+            AUTOMOTIVE_MINOR_ROAD_EXTRA
+        } else {
+            AUTOMOTIVE_MAIN_ROAD_EXTRA
         }
     }
 
@@ -4159,7 +4219,34 @@ class MapLibreEngineImpl(
         lastUiStateCoordUpdateMs = now
         lastUiStateCoordLat = lat
         lastUiStateCoordLng = lng
-        _uiState.update { it.copy(currentLat = lat, currentLng = lng) }
+        val connectivityLabel = resolveMapConnectivityLabel(lat, lng)
+        _uiState.update {
+            it.copy(
+                currentLat = lat,
+                currentLng = lng,
+                mapConnectivityLabel = connectivityLabel,
+            )
+        }
+    }
+
+    private fun resolveMapConnectivityLabel(lat: Double, lng: Double): String? {
+        val context = appContext ?: return null
+        if (isNetworkAvailable(context)) return null
+        val repo = offlineMapRepository ?: return null
+        return if (repo.hasCompleteRegionCovering(lat, lng)) {
+            "Offline map cached"
+        } else {
+            null
+        }
+    }
+
+    private fun isNetworkAvailable(context: Context): Boolean {
+        val connectivityManager =
+            context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+                ?: return true
+        val network = connectivityManager.activeNetwork ?: return false
+        val capabilities = connectivityManager.getNetworkCapabilities(network) ?: return false
+        return capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
     }
 
     private fun stopDeadReckoning() {
@@ -4999,6 +5086,8 @@ class MapLibreEngineImpl(
         private const val RASTER_BASE_LAYER_ID = "osm"
         private const val TRAFFIC_SOURCE_ID = "mix-traffic-source"
         private const val TRAFFIC_LAYER_ID = "mix-traffic-layer"
+        private const val AUTOMOTIVE_MAIN_ROAD_EXTRA = 1.65f
+        private const val AUTOMOTIVE_MINOR_ROAD_EXTRA = 1.8f
         private const val REROUTE_THRESHOLD_M = 75f
         private const val SNAP_TO_ROUTE_MAX_M = 40f
         private const val REROUTE_CONFIRM_COUNT = 3
@@ -5113,7 +5202,6 @@ class MapLibreEngineImpl(
         private const val DEDUP_THRESHOLD_M = 50f
         private const val MAX_SEARCH_RADIUS_M = 500_000f
         private const val ARRIVAL_FREE_DRIVE_DELAY_MS = 5_000L
-        private const val VECTOR_STYLE_URL = "https://tiles.openfreemap.org/styles/liberty"
         private val DEFAULT_LOCATION = LatLng(12.8797, 121.7740)
 
         /**

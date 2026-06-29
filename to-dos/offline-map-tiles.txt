@@ -1,12 +1,32 @@
-Practical recommendation for Mix Auto
-Short term: expose/cache settings — increase MapLibre resource cache budget if the SDK allows it in your version; optional corridor prefetch during nav. Modest improvement, low risk.
+Offline regional maps — implemented (MapLibre OfflineManager)
 
-Medium term: MapLibre offline regions in Map Data UI, scoped to city or province (not whole country at z17). Bundle automotive style JSON as assets first (to-dos/automotive-vector-style.txt).
+Architecture
+- POI/search: unchanged — ph_places.db.gz from mix-auto-overture-maps via Map Data → Search & places row.
+- Basemap: vector-only regional downloads via MapLibre OfflineManager (OpenFreeMap tiles/glyphs/sprites cached on device).
+- Style: display = asset `mix-auto-driving.json`; offline pack = minimal `mix-auto-offline-pack.json` (vector only, no glyphs) copied to file:// for OfflineManager.
+- Catalog: app/src/main/assets/map/offline_regions.json (PH pilot: overview, Negros Occidental, Western Visayas).
+- Code: OfflineMapRepository, MapDataViewModel offline actions, expandable Map Data UI in MapDataOverlay.kt.
 
-Long term (best head-unit experience): MBTiles/PMTiles releases alongside ph_places.db.gz — one “Philippines map pack” + one “Philippines POI pack”, same GitHub release pattern you already use.
+UI (Map Settings → Map Data)
+- Expandable country card (Philippines): POI pack row + per-region offline map rows.
+- Near-you suggestion from GPS pins matching region bbox.
+- Storage summary: Places MB + Maps MB.
+- Vector-only gate when raster mode selected.
+- One download at a time (POI or map region).
 
-Don’t: bulk-save OSM raster tiles from tile.openstreetmap.org while driving — policy violation and huge storage.
+HUD
+- mapConnectivityLabel in MapUiState — "Offline map cached" when no network + complete region covers GPS (CarMapViewContainer top-start when not navigating).
 
-Bottom line: Map rendering can be saved for offline use, but it requires deliberate offline tile packs (MapLibre OfflineManager or MBTiles), not just driving around. The app already saves search data offline via Overture; it does not yet save map tiles beyond MapLibre’s small automatic cache.
+Future (not implemented)
+- MBTiles/PMTiles in mix-auto-overture-maps (pre-built packs, known sizes).
+- Custom bbox picker on map.
+- Nav corridor prefetch snackbar.
 
-If you want this implemented, switch to Agent mode and say whether you prefer offline region download UI (Option B) or MBTiles side-load (Option C) — the architecture differs quite a bit.
+Don't
+- Bulk-save OSM raster tiles (tile.openstreetmap.org) — policy violation.
+- OfflineManager on raster mode.
+
+Test
+- Vector ON, Wi‑Fi, download Negros Occidental → progress → Installed.
+- Airplane mode in downloaded bbox → streets render; POI search still works if PH DB installed.
+- Delete region → frees cache; offline blank in that area.

@@ -3,6 +3,7 @@ package com.kyuusanq3.mixauto.ui.map
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import com.kyuusanq3.mixauto.data.map.MapLibreEngineImpl
+import com.kyuusanq3.mixauto.data.map.OfflineMapRepository
 import com.kyuusanq3.mixauto.data.navigation.NavigationVoiceController
 import com.kyuusanq3.mixauto.data.places.EncounteredPlacesRepository
 import com.kyuusanq3.mixauto.data.places.LocalPlacesRepository
@@ -19,6 +20,8 @@ class MapHostViewModel(application: Application) : AndroidViewModel(application)
 
     val encounteredPlacesRepository = EncounteredPlacesRepository(application)
 
+    val offlineMapRepository = OfflineMapRepository(application)
+
     val navigationVoiceController: NavigationVoiceController
 
     val mapEngine: CarMapEngine
@@ -34,6 +37,7 @@ class MapHostViewModel(application: Application) : AndroidViewModel(application)
             localPlaces = localPlacesRepository,
             encounteredPlaces = encounteredPlacesRepository,
             navigationVoice = navigationVoiceController,
+            offlineMapRepository = offlineMapRepository,
             initialUseVectorTiles = prefs.useVectorTiles,
             initialShow3dBuildings = prefs.show3dBuildings,
             initialDrivingZoom = prefs.drivingZoom.toDouble(),

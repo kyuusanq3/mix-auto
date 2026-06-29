@@ -93,6 +93,7 @@ class MainActivity : ComponentActivity() {
                         factory = MapDataViewModelFactory(
                             application = application,
                             localPlacesRepository = mapHostViewModel.localPlacesRepository,
+                            offlineMapRepository = mapHostViewModel.offlineMapRepository,
                         ),
                     )
                     val mediaState by mediaViewModel.mediaState.collectAsStateWithLifecycle()

@@ -244,6 +244,8 @@ After enabling Launcher Mode, press Home and select **Mix Auto** as the default 
 | Philippines download returns HTTP 404 | Attach `ph_places.db.gz` + `countries.json` as **release assets** on `mix-auto-overture-maps` (committing to repo is not enough); verify `/releases/latest/download/countries.json` returns 200 |
 | Catalog loads but download 404 | Release exists but assets array empty — edit release and upload both files from `places-dist/` |
 | Manual import of `.gz` fails | Import path expects uncompressed `.db`; use in-app Download or decompress first |
+| Offline map download stuck at 0% / endless Preparing | `asset://` invalid for `OfflineTilePyramidRegionDefinition` — use `file://` via `MapStyleAssetResolver.offlineRegionStyleUri()`; full driving style hangs on glyph enumeration — offline pack uses `mix-auto-offline-pack.json` (no labels); cancel ✕ and retry on Wi‑Fi |
+| Offline map prepare >90s | Check Wi‑Fi reachability to `tiles.openfreemap.org`; Logcat tag `OfflineMapRepository` |
 | Search shows overseas / 5000 km destinations | Default 500 km cap is ON — disable **Nearby results only (within 500 km)** in Launcher Settings to include farther Photon results; routing still may fail for long/cross-water trips |
 | Empty search shows no Nearby rows | Nearby loads from offline DB at panel open (±0.5° bbox) merged with `poiCache` + `encountered.db` — install Map Data (PH pack); drive to sample corridor POIs; snapshot origin on open; no pan/zoom required |
 | Passed places not in search after driving | Map Settings → **Remember passed places** ON; needs GPS sampling (200 m / 30 s throttle) — Logcat `EncounteredPlaces`; nav corridor uses Overture only; free drive also samples vector POIs at zoom ≥ 15 |

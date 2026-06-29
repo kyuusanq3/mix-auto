@@ -14,9 +14,14 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.CloudDownload
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.NetworkCheck
+import androidx.compose.material.icons.filled.Star
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.Icon
@@ -25,18 +30,26 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.kyuusanq3.mixauto.data.map.OfflineRegionDefinition
+import com.kyuusanq3.mixauto.data.map.OfflineRegionInstallState
 import com.kyuusanq3.mixauto.ui.settings.LauncherViewModel
 import com.kyuusanq3.mixauto.ui.settings.MapDataUiState
 import com.kyuusanq3.mixauto.ui.settings.MapDataViewModel
@@ -56,6 +69,9 @@ private val InstalledGreen = Color(0xFF4CAF50)
 fun MapDataOverlay(
     viewModel: MapDataViewModel,
     onDismiss: () -> Unit,
+    useVectorTiles: Boolean,
+    currentLat: Double?,
+    currentLng: Double?,
     tomTomApiKey: String = "",
     onTomTomApiKeyChange: (String) -> Unit = {},
 ) {
@@ -70,6 +86,9 @@ fun MapDataOverlay(
             MapDataPanelContent(
                 viewModel = viewModel,
                 onDismiss = onDismiss,
+                useVectorTiles = useVectorTiles,
+                currentLat = currentLat,
+                currentLng = currentLng,
                 tomTomApiKey = tomTomApiKey,
                 onTomTomApiKeyChange = onTomTomApiKeyChange,
                 modifier = Modifier.fillMaxSize(),
@@ -82,6 +101,9 @@ fun MapDataOverlay(
 fun MapDataPanelContent(
     viewModel: MapDataViewModel,
     onDismiss: () -> Unit,
+    useVectorTiles: Boolean,
+    currentLat: Double?,
+    currentLng: Double?,
     tomTomApiKey: String,
     onTomTomApiKeyChange: (String) -> Unit,
     modifier: Modifier = Modifier,
@@ -102,6 +124,9 @@ fun MapDataPanelContent(
 
         MapDataSectionContent(
             viewModel = viewModel,
+            useVectorTiles = useVectorTiles,
+            currentLat = currentLat,
+            currentLng = currentLng,
             tomTomApiKey = tomTomApiKey,
             onTomTomApiKeyChange = onTomTomApiKeyChange,
             catalogModifier = Modifier.weight(1f),
@@ -113,6 +138,9 @@ fun MapDataPanelContent(
 @Composable
 fun MapDataSectionContent(
     viewModel: MapDataViewModel,
+    useVectorTiles: Boolean,
+    currentLat: Double?,
+    currentLng: Double?,
     tomTomApiKey: String,
     onTomTomApiKeyChange: (String) -> Unit,
     modifier: Modifier = Modifier,
@@ -122,18 +150,29 @@ fun MapDataSectionContent(
     onToggleTraffic: (() -> Unit)? = null,
 ) {
     val uiState by viewModel.uiState.collectAsState()
+    val offlineStates by viewModel.offlineInstallStates.collectAsState()
+    val expandedCountryIso = viewModel.expandedCountryIso
+    val suggestedRegionId = viewModel.suggestedRegionId
+    val density = LocalDensity.current.density
+
+    LaunchedEffect(currentLat, currentLng) {
+        viewModel.updateSuggestedRegion(currentLat, currentLng)
+    }
+
+    val placesMb = formatStorageMb(viewModel.placesStorageBytes())
+    val mapsMb = formatStorageMb(viewModel.offlineMapsStorageBytes())
 
     Column(
         modifier = modifier,
         verticalArrangement = Arrangement.spacedBy(CarDimensions.DockItemSpacing),
     ) {
         CarBodyText(
-            text = "Download a country pack for offline search, nearby suggestions, and remembering places you drive past. Sizes are shown per country below.",
+            text = "Download offline search and regional maps. Map packs are per region; POI search is nationwide. Use Wi‑Fi for large downloads.",
             style = MaterialTheme.typography.bodyMedium,
         )
 
         CarLabelText(
-            text = "Places you drive past are remembered on device for search and Nearby suggestions.",
+            text = "Storage on device: Places $placesMb · Maps $mapsMb",
             style = MaterialTheme.typography.labelMedium,
         )
 
@@ -173,8 +212,18 @@ fun MapDataSectionContent(
                     modifier = catalogModifier,
                     packs = state.packs,
                     uiState = uiState,
-                    onDownload = viewModel::downloadCountryData,
-                    onDelete = viewModel::deleteDatabase,
+                    offlineCatalog = viewModel.offlineCatalog,
+                    offlineStates = offlineStates,
+                    expandedCountryIso = expandedCountryIso,
+                    suggestedRegionId = suggestedRegionId,
+                    useVectorTiles = useVectorTiles,
+                    pixelRatio = density,
+                    onToggleCountry = viewModel::toggleCountryExpanded,
+                    onDownloadPoi = viewModel::downloadCountryData,
+                    onDeletePoi = viewModel::deleteDatabase,
+                    onDownloadRegion = viewModel::downloadOfflineRegion,
+                    onDeleteRegion = viewModel::deleteOfflineRegion,
+                    regionDefinitions = viewModel::regionForCountry,
                     useInternalScroll = useInternalCatalogScroll,
                 )
             }
@@ -183,8 +232,46 @@ fun MapDataSectionContent(
                     modifier = catalogModifier,
                     packs = state.packs,
                     uiState = uiState,
-                    onDownload = viewModel::downloadCountryData,
-                    onDelete = viewModel::deleteDatabase,
+                    offlineCatalog = viewModel.offlineCatalog,
+                    offlineStates = offlineStates,
+                    expandedCountryIso = expandedCountryIso,
+                    suggestedRegionId = suggestedRegionId,
+                    useVectorTiles = useVectorTiles,
+                    pixelRatio = density,
+                    onToggleCountry = viewModel::toggleCountryExpanded,
+                    onDownloadPoi = viewModel::downloadCountryData,
+                    onDeletePoi = viewModel::deleteDatabase,
+                    onDownloadRegion = viewModel::downloadOfflineRegion,
+                    onDeleteRegion = viewModel::deleteOfflineRegion,
+                    regionDefinitions = viewModel::regionForCountry,
+                    useInternalScroll = useInternalCatalogScroll,
+                )
+            }
+            is MapDataUiState.DownloadingOfflineMap -> {
+                LinearProgressIndicator(
+                    progress = { state.progress },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                CarLabelText(
+                    text = "Downloading ${state.regionName}… ${(state.progress * 100).roundToInt()}%",
+                    style = MaterialTheme.typography.labelMedium,
+                )
+                CountryCatalogList(
+                    modifier = catalogModifier,
+                    packs = state.packs,
+                    uiState = uiState,
+                    offlineCatalog = viewModel.offlineCatalog,
+                    offlineStates = offlineStates,
+                    expandedCountryIso = expandedCountryIso,
+                    suggestedRegionId = suggestedRegionId,
+                    useVectorTiles = useVectorTiles,
+                    pixelRatio = density,
+                    onToggleCountry = viewModel::toggleCountryExpanded,
+                    onDownloadPoi = viewModel::downloadCountryData,
+                    onDeletePoi = viewModel::deleteDatabase,
+                    onDownloadRegion = viewModel::downloadOfflineRegion,
+                    onDeleteRegion = viewModel::deleteOfflineRegion,
+                    regionDefinitions = viewModel::regionForCountry,
                     useInternalScroll = useInternalCatalogScroll,
                 )
             }
@@ -300,8 +387,18 @@ private fun CountryCatalogList(
     modifier: Modifier = Modifier,
     packs: List<RemoteCountryPack>,
     uiState: MapDataUiState,
-    onDownload: (RemoteCountryPack) -> Unit,
-    onDelete: (String) -> Unit,
+    offlineCatalog: List<com.kyuusanq3.mixauto.data.map.OfflineCountryCatalog>,
+    offlineStates: Map<String, OfflineRegionInstallState>,
+    expandedCountryIso: String?,
+    suggestedRegionId: String?,
+    useVectorTiles: Boolean,
+    pixelRatio: Float,
+    onToggleCountry: (String) -> Unit,
+    onDownloadPoi: (RemoteCountryPack) -> Unit,
+    onDeletePoi: (String) -> Unit,
+    onDownloadRegion: (String, Float) -> Unit,
+    onDeleteRegion: (String) -> Unit,
+    regionDefinitions: (String) -> List<OfflineRegionDefinition>,
     useInternalScroll: Boolean = true,
 ) {
     val scrollState = rememberScrollState()
@@ -310,18 +407,34 @@ private fun CountryCatalogList(
             modifier = Modifier.fillMaxWidth(),
             verticalArrangement = Arrangement.spacedBy(CarDimensions.DockItemSpacing / 2),
         ) {
-            if (packs.isEmpty()) {
+            if (packs.isEmpty() && offlineCatalog.isEmpty()) {
                 CarBodyText(
                     text = "No countries in catalog.",
                     style = MaterialTheme.typography.bodyMedium,
                 )
             } else {
-                packs.forEach { pack ->
-                    CountryPackRow(
-                        pack = pack,
+                val packByIso = packs.associateBy { it.iso.uppercase() }
+                val countries = offlineCatalog.ifEmpty {
+                    packs.map { com.kyuusanq3.mixauto.data.map.OfflineCountryCatalog(it.iso, it.name, emptyList()) }
+                }
+                countries.forEach { country ->
+                    val poiPack = packByIso[country.iso.uppercase()]
+                    CountryGroupCard(
+                        countryIso = country.iso,
+                        countryName = country.name,
+                        poiPack = poiPack,
+                        regions = regionDefinitions(country.iso).ifEmpty { country.regions },
+                        offlineStates = offlineStates,
+                        isExpanded = expandedCountryIso == country.iso,
+                        suggestedRegionId = suggestedRegionId,
+                        useVectorTiles = useVectorTiles,
+                        pixelRatio = pixelRatio,
                         uiState = uiState,
-                        onDownload = { onDownload(pack) },
-                        onDelete = { onDelete(pack.iso) },
+                        onToggleCountry = { onToggleCountry(country.iso) },
+                        onDownloadPoi = poiPack?.let { { onDownloadPoi(it) } },
+                        onDeletePoi = { onDeletePoi(country.iso) },
+                        onDownloadRegion = onDownloadRegion,
+                        onDeleteRegion = onDeleteRegion,
                     )
                 }
             }
@@ -346,16 +459,25 @@ private fun CountryCatalogList(
 }
 
 @Composable
-private fun CountryPackRow(
-    pack: RemoteCountryPack,
+private fun CountryGroupCard(
+    countryIso: String,
+    countryName: String,
+    poiPack: RemoteCountryPack?,
+    regions: List<OfflineRegionDefinition>,
+    offlineStates: Map<String, OfflineRegionInstallState>,
+    isExpanded: Boolean,
+    suggestedRegionId: String?,
+    useVectorTiles: Boolean,
+    pixelRatio: Float,
     uiState: MapDataUiState,
-    onDownload: () -> Unit,
-    onDelete: () -> Unit,
+    onToggleCountry: () -> Unit,
+    onDownloadPoi: (() -> Unit)?,
+    onDeletePoi: () -> Unit,
+    onDownloadRegion: (String, Float) -> Unit,
+    onDeleteRegion: (String) -> Unit,
 ) {
-    val isDownloading = uiState is MapDataUiState.Downloading && uiState.iso == pack.iso
-    val downloadProgress = (uiState as? MapDataUiState.Downloading)?.progress ?: 0f
-    val transferInProgress = uiState is MapDataUiState.Downloading ||
-        uiState is MapDataUiState.Importing
+    val installedMapCount = regions.count { offlineStates[it.id]?.isComplete == true }
+    val poiInstalled = poiPack?.isInstalled == true
 
     ElevatedCard(
         modifier = Modifier.fillMaxWidth(),
@@ -363,75 +485,336 @@ private fun CountryPackRow(
             containerColor = DeepCharcoal,
         ),
     ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(CarDimensions.MinTapTarget)
-                .padding(horizontal = CarDimensions.PaneGap),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(CarDimensions.PaneGap),
-        ) {
-            Column(modifier = Modifier.weight(1f)) {
-                CarBodyText(
-                    text = pack.name,
-                    style = MaterialTheme.typography.bodyLarge,
+        Column(modifier = Modifier.fillMaxWidth()) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(CarDimensions.MinTapTarget)
+                    .clickable(onClick = onToggleCountry)
+                    .padding(horizontal = CarDimensions.PaneGap),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(CarDimensions.PaneGap),
+            ) {
+                Icon(
+                    imageVector = if (isExpanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
+                    contentDescription = if (isExpanded) "Collapse" else "Expand",
+                    tint = ElectricCyan,
+                    modifier = Modifier.size(CarDimensions.DockHorizontalIconSize),
                 )
-                if (pack.compressedMb > 0) {
+                Column(modifier = Modifier.weight(1f)) {
+                    CarBodyText(
+                        text = countryName,
+                        style = MaterialTheme.typography.bodyLarge,
+                    )
                     CarLabelText(
-                        text = "~${pack.compressedMb} MB download",
+                        text = buildString {
+                            append("Search: ")
+                            append(if (poiInstalled) "Installed" else "Not installed")
+                            append(" · Maps: ")
+                            append(installedMapCount)
+                            append(" region")
+                            if (installedMapCount != 1) append('s')
+                        },
                         style = MaterialTheme.typography.labelMedium,
                     )
                 }
             }
 
-            when {
-                isDownloading -> {
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(CarDimensions.DockHorizontalIconSize),
-                        color = ElectricCyan,
-                        strokeWidth = 3.dp,
+            if (isExpanded) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(
+                            start = CarDimensions.PaneGap,
+                            end = CarDimensions.PaneGap,
+                            bottom = CarDimensions.PaneGap,
+                        ),
+                    verticalArrangement = Arrangement.spacedBy(CarDimensions.DockItemSpacing / 2),
+                ) {
+                    if (poiPack != null) {
+                        CarLabelText(
+                            text = "Search & places",
+                            style = MaterialTheme.typography.labelLarge,
+                        )
+                        PoiPackRow(
+                            pack = poiPack,
+                            uiState = uiState,
+                            onDownload = onDownloadPoi,
+                            onDelete = onDeletePoi,
+                        )
+                    }
+
+                    CarLabelText(
+                        text = "Offline maps (per region)",
+                        style = MaterialTheme.typography.labelLarge,
                     )
                     CarLabelText(
-                        text = "${(downloadProgress * 100).roundToInt()}%",
+                        text = if (useVectorTiles) {
+                            "Vector tiles to zoom 14 (overzoom to 18). Use Wi‑Fi."
+                        } else {
+                            "Offline map regions require vector tiles (enable in Map Settings above)."
+                        },
                         style = MaterialTheme.typography.labelMedium,
                     )
+
+                    if (useVectorTiles) {
+                        val sortedRegions = regions.sortedWith(
+                            compareBy<OfflineRegionDefinition> { it.id != suggestedRegionId }
+                                .thenBy { it.name },
+                        )
+                        sortedRegions.forEach { region ->
+                            val isSuggested = region.id == suggestedRegionId
+                            OfflineRegionRow(
+                                region = region,
+                                installState = offlineStates[region.id],
+                                isSuggested = isSuggested,
+                                uiState = uiState,
+                                pixelRatio = pixelRatio,
+                                onDownload = { onDownloadRegion(region.id, pixelRatio) },
+                                onDelete = { onDeleteRegion(region.id) },
+                            )
+                        }
+                    }
                 }
-                pack.isInstalled -> {
+            }
+        }
+    }
+}
+
+@Composable
+private fun PoiPackRow(
+    pack: RemoteCountryPack,
+    uiState: MapDataUiState,
+    onDownload: (() -> Unit)?,
+    onDelete: () -> Unit,
+) {
+    val isDownloading = uiState is MapDataUiState.Downloading && uiState.iso == pack.iso
+    val downloadProgress = (uiState as? MapDataUiState.Downloading)?.progress ?: 0f
+    val transferInProgress = uiState is MapDataUiState.Downloading ||
+        uiState is MapDataUiState.DownloadingOfflineMap ||
+        uiState is MapDataUiState.Importing
+
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        color = OledBlack,
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(CarDimensions.MinTapTarget)
+                .padding(horizontal = CarDimensions.PaneGap / 2),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(CarDimensions.PaneGap),
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                CarBodyText(
+                    text = "${pack.name} POI pack",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                CarLabelText(
+                    text = "Offline search, Nearby, passed places" +
+                        if (pack.compressedMb > 0) " · ~${pack.compressedMb} MB download" else "",
+                    style = MaterialTheme.typography.labelMedium,
+                )
+            }
+            PackRowActions(
+                isDownloading = isDownloading,
+                downloadProgress = downloadProgress,
+                isInstalled = pack.isInstalled,
+                transferInProgress = transferInProgress,
+                itemName = pack.name,
+                onDownload = onDownload,
+                onDelete = onDelete,
+            )
+        }
+    }
+}
+
+@Composable
+private fun OfflineRegionRow(
+    region: OfflineRegionDefinition,
+    installState: OfflineRegionInstallState?,
+    isSuggested: Boolean,
+    uiState: MapDataUiState,
+    pixelRatio: Float,
+    onDownload: () -> Unit,
+    onDelete: () -> Unit,
+) {
+    var showDeleteConfirm by remember { mutableStateOf(false) }
+    val isDownloading = uiState is MapDataUiState.DownloadingOfflineMap &&
+        uiState.regionId == region.id
+    val isPreparing = (isDownloading || installState?.isDownloading == true) &&
+        (installState?.requiredResourceCount ?: 0L) == 0L
+    val downloadProgress = when {
+        isDownloading -> (uiState as MapDataUiState.DownloadingOfflineMap).progress
+        installState?.isDownloading == true -> installState.downloadProgress
+        else -> 0f
+    }
+    val isInstalled = installState?.isComplete == true
+    val transferInProgress = uiState is MapDataUiState.Downloading ||
+        uiState is MapDataUiState.DownloadingOfflineMap ||
+        uiState is MapDataUiState.Importing
+
+    if (showDeleteConfirm) {
+        AlertDialog(
+            onDismissRequest = { showDeleteConfirm = false },
+            title = { CarBodyText(text = "Delete ${region.name}?") },
+            text = {
+                CarBodyText(
+                    text = "Removes cached map tiles for this region. Search data is not affected.",
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showDeleteConfirm = false
+                        onDelete()
+                    },
+                ) {
+                    CarLabelText(text = "Delete", style = MaterialTheme.typography.labelLarge)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDeleteConfirm = false }) {
+                    CarLabelText(text = "Cancel", style = MaterialTheme.typography.labelLarge)
+                }
+            },
+            containerColor = DeepCharcoal,
+        )
+    }
+
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        color = OledBlack,
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(CarDimensions.MinTapTarget)
+                .padding(horizontal = CarDimensions.PaneGap / 2),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(CarDimensions.PaneGap),
+        ) {
+            if (isSuggested) {
+                Icon(
+                    imageVector = Icons.Filled.Star,
+                    contentDescription = "Near you",
+                    tint = ElectricCyan,
+                    modifier = Modifier.size(CarDimensions.PanelHeaderIconSize),
+                )
+            }
+            Column(modifier = Modifier.weight(1f)) {
+                CarBodyText(
+                    text = if (isSuggested) "Near you — ${region.name}" else region.name,
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                CarLabelText(
+                    text = buildString {
+                        if (isSuggested) append("Suggested from GPS · ")
+                        append("z${region.minZoom.toInt()}–${region.maxZoom.toInt()}")
+                        append(" · est. ${region.sizeEstimateMb} MB")
+                    },
+                    style = MaterialTheme.typography.labelMedium,
+                )
+            }
+            PackRowActions(
+                isDownloading = isDownloading || installState?.isDownloading == true,
+                isPreparing = isPreparing,
+                downloadProgress = downloadProgress,
+                isInstalled = isInstalled,
+                transferInProgress = transferInProgress,
+                itemName = region.name,
+                onDownload = onDownload,
+                onDelete = { showDeleteConfirm = true },
+                onCancelDownload = if (isDownloading || installState?.isDownloading == true) {
+                    { showDeleteConfirm = true }
+                } else {
+                    null
+                },
+                showDelete = isInstalled ||
+                    (installState?.completedResourceCount ?: 0L) > 0L,
+            )
+        }
+    }
+}
+
+@Composable
+private fun PackRowActions(
+    isDownloading: Boolean,
+    isPreparing: Boolean = false,
+    downloadProgress: Float,
+    isInstalled: Boolean,
+    transferInProgress: Boolean,
+    itemName: String,
+    onDownload: (() -> Unit)?,
+    onDelete: () -> Unit,
+    onCancelDownload: (() -> Unit)? = null,
+    showDelete: Boolean = isInstalled,
+) {
+    when {
+        isDownloading -> {
+            CircularProgressIndicator(
+                modifier = Modifier.size(CarDimensions.DockHorizontalIconSize),
+                color = ElectricCyan,
+                strokeWidth = 3.dp,
+            )
+            CarLabelText(
+                text = if (isPreparing) {
+                    "Preparing…"
+                } else {
+                    "${(downloadProgress * 100).roundToInt()}%"
+                },
+                style = MaterialTheme.typography.labelMedium,
+            )
+            if (onCancelDownload != null) {
+                IconButton(
+                    onClick = onCancelDownload,
+                    modifier = Modifier.size(CarDimensions.MinTapTarget),
+                ) {
                     Icon(
-                        imageVector = Icons.Filled.CheckCircle,
-                        contentDescription = "Installed",
-                        tint = InstalledGreen,
-                        modifier = Modifier.size(CarDimensions.DockHorizontalIconSize),
+                        imageVector = Icons.Filled.Close,
+                        contentDescription = "Cancel download",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
-                    CarLabelText(
-                        text = "Installed",
-                        style = MaterialTheme.typography.labelMedium.copy(color = InstalledGreen),
+                }
+            }
+        }
+        isInstalled -> {
+            Icon(
+                imageVector = Icons.Filled.CheckCircle,
+                contentDescription = "Installed",
+                tint = InstalledGreen,
+                modifier = Modifier.size(CarDimensions.DockHorizontalIconSize),
+            )
+            CarLabelText(
+                text = "Installed",
+                style = MaterialTheme.typography.labelMedium.copy(color = InstalledGreen),
+            )
+            if (showDelete) {
+                IconButton(
+                    onClick = onDelete,
+                    enabled = !transferInProgress,
+                    modifier = Modifier.size(CarDimensions.MinTapTarget),
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.Delete,
+                        contentDescription = "Delete $itemName",
+                        tint = MaterialTheme.colorScheme.error,
                     )
-                    IconButton(
-                        onClick = onDelete,
-                        enabled = !transferInProgress,
-                        modifier = Modifier.size(CarDimensions.MinTapTarget),
-                    ) {
-                        Icon(
-                            imageVector = Icons.Filled.Delete,
-                            contentDescription = "Delete ${pack.name} data",
-                            tint = MaterialTheme.colorScheme.error,
-                        )
-                    }
                 }
-                else -> {
-                    IconButton(
-                        onClick = onDownload,
-                        enabled = !transferInProgress,
-                        modifier = Modifier.size(CarDimensions.MinTapTarget),
-                    ) {
-                        Icon(
-                            imageVector = Icons.Filled.CloudDownload,
-                            contentDescription = "Download ${pack.name}",
-                            tint = ElectricCyan,
-                        )
-                    }
-                }
+            }
+        }
+        else -> {
+            IconButton(
+                onClick = { onDownload?.invoke() },
+                enabled = !transferInProgress && onDownload != null,
+                modifier = Modifier.size(CarDimensions.MinTapTarget),
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.CloudDownload,
+                    contentDescription = "Download $itemName",
+                    tint = ElectricCyan,
+                )
             }
         }
     }
@@ -465,5 +848,15 @@ private fun ActionRow(
             ),
             modifier = Modifier.weight(1f),
         )
+    }
+}
+
+private fun formatStorageMb(bytes: Long): String {
+    if (bytes <= 0L) return "0 MB"
+    val mb = bytes / (1024.0 * 1024.0)
+    return if (mb < 10.0) {
+        String.format("%.1f MB", mb)
+    } else {
+        "${mb.roundToInt()} MB"
     }
 }

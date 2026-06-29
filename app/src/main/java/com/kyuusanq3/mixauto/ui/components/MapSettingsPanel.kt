@@ -18,9 +18,11 @@ import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.kyuusanq3.mixauto.domain.map.CarMapEngine
 import com.kyuusanq3.mixauto.ui.settings.LauncherPreferences
@@ -65,6 +67,7 @@ fun MapSettingsPanelContent(
 ) {
     val launcherViewModel: LauncherViewModel = viewModel()
     val navigationVoiceBoost = launcherViewModel.navigationVoiceBoost
+    val mapUiState by mapEngine.uiState.collectAsStateWithLifecycle()
     val scrollState = rememberScrollState()
     Surface(
         modifier = modifier.carScrollbar(scrollState),
@@ -183,6 +186,9 @@ fun MapSettingsPanelContent(
 
             MapDataSectionContent(
                 viewModel = mapDataViewModel,
+                useVectorTiles = useVectorTiles,
+                currentLat = mapUiState.currentLat,
+                currentLng = mapUiState.currentLng,
                 tomTomApiKey = tomTomApiKey,
                 onTomTomApiKeyChange = onTomTomApiKeyChange,
                 showTraffic = showTraffic,
