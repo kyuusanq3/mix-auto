@@ -101,6 +101,10 @@ class MainActivity : ComponentActivity() {
                         applySystemBarVisibility(launcherViewModel.showSystemStatusBar)
                     }
 
+                    SideEffect {
+                        navigationVoiceController.boostEnabled = launcherViewModel.navigationVoiceBoost
+                    }
+
                     DashboardScreen(
                     mapEngine = mapEngine,
                     mapDataViewModel = mapDataViewModel,

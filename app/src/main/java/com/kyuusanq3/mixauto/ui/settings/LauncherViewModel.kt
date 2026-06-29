@@ -85,6 +85,9 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     var navigationVoiceVolume by mutableStateOf(preferences.navigationVoiceVolume)
         private set
 
+    var navigationVoiceBoost by mutableStateOf(preferences.navigationVoiceBoost)
+        private set
+
     var tomTomApiKey by mutableStateOf(preferences.tomTomApiKey)
         private set
 
@@ -274,6 +277,11 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
             LauncherPreferences.MAX_NAVIGATION_VOICE_VOLUME,
         )
         preferences.navigationVoiceVolume = navigationVoiceVolume
+    }
+
+    fun updateNavigationVoiceBoost(enabled: Boolean) {
+        navigationVoiceBoost = enabled
+        preferences.navigationVoiceBoost = enabled
     }
 
     fun toggleShowStatusStrip() {

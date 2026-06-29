@@ -25,6 +25,7 @@ class MapHostViewModel(application: Application) : AndroidViewModel(application)
         navigationVoiceController = NavigationVoiceController(application).apply {
             enabled = prefs.navigationVoiceEnabled
             volume = prefs.navigationVoiceVolume
+            boostEnabled = prefs.navigationVoiceBoost
         }
         mapEngine = MapLibreEngineImpl(
             localPlaces = localPlacesRepository,

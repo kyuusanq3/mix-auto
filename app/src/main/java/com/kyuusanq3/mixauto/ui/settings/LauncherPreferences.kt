@@ -113,6 +113,12 @@ class LauncherPreferences(context: Context) {
                 .apply()
         }
 
+    var navigationVoiceBoost: Boolean
+        get() = prefs.getBoolean(KEY_NAVIGATION_VOICE_BOOST, false)
+        set(value) {
+            prefs.edit().putBoolean(KEY_NAVIGATION_VOICE_BOOST, value).apply()
+        }
+
     var tomTomApiKey: String
         get() = prefs.getString(KEY_TOMTOM_API_KEY, "") ?: ""
         set(value) {
@@ -212,6 +218,7 @@ class LauncherPreferences(context: Context) {
         private const val KEY_SHOW_TRAFFIC = "show_traffic"
         private const val KEY_NAVIGATION_VOICE_ENABLED = "navigation_voice_enabled"
         private const val KEY_NAVIGATION_VOICE_VOLUME = "navigation_voice_volume"
+        private const val KEY_NAVIGATION_VOICE_BOOST = "navigation_voice_boost"
         private const val KEY_TOMTOM_API_KEY = "tomtom_api_key"
         private const val KEY_RECENT_DESTINATIONS = "recent_destinations"
         private const val KEY_SAVED_PLACES = "saved_places"
@@ -232,7 +239,7 @@ class LauncherPreferences(context: Context) {
         const val DEFAULT_PUCK_V_OFFSET = 0.4f
         const val DEFAULT_PUCK_SCALE = 1.0f
         const val MIN_NAVIGATION_VOICE_VOLUME = 0.5f
-        const val MAX_NAVIGATION_VOICE_VOLUME = 1.0f
+        const val MAX_NAVIGATION_VOICE_VOLUME = 1.5f
         const val DEFAULT_NAVIGATION_VOICE_VOLUME = 1.0f
 
         private fun placeToJson(place: SearchResultPlace): JSONObject =

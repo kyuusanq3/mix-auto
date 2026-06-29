@@ -1,13 +1,19 @@
 package com.kyuusanq3.mixauto.ui.components
 
 import android.Manifest
+import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.location.Location
+import android.media.AudioAttributes
+import android.media.AudioFocusRequest
+import android.media.AudioManager
+import android.os.Build
 import android.os.Bundle
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
+import android.util.Log
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.RepeatMode
@@ -68,6 +74,57 @@ import kotlinx.coroutines.withContext
 import kotlin.math.roundToInt
 
 private const val DEDUP_THRESHOLD_M = 50f
+private const val VOICE_SEARCH_TAG = "NavigationSearchOverlay"
+private const val NEARBY_POI_SUGGESTION_LIMIT = 20
+
+private fun speechErrorLabel(error: Int): String = when (error) {
+    SpeechRecognizer.ERROR_AUDIO -> "ERROR_AUDIO"
+    SpeechRecognizer.ERROR_CLIENT -> "ERROR_CLIENT"
+    SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "ERROR_INSUFFICIENT_PERMISSIONS"
+    SpeechRecognizer.ERROR_NETWORK -> "ERROR_NETWORK"
+    SpeechRecognizer.ERROR_NETWORK_TIMEOUT -> "ERROR_NETWORK_TIMEOUT"
+    SpeechRecognizer.ERROR_NO_MATCH -> "ERROR_NO_MATCH"
+    SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> "ERROR_RECOGNIZER_BUSY"
+    SpeechRecognizer.ERROR_SERVER -> "ERROR_SERVER"
+    SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "ERROR_SPEECH_TIMEOUT"
+    else -> "ERROR_UNKNOWN($error)"
+}
+
+private class SpeechSearchAudioFocus(context: Context) {
+    private val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+    private var focusRequest: AudioFocusRequest? = null
+
+    fun request() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val attributes = AudioAttributes.Builder()
+                .setUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION)
+                .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                .build()
+            val request = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK)
+                .setAudioAttributes(attributes)
+                .build()
+            focusRequest = request
+            audioManager.requestAudioFocus(request)
+        } else {
+            @Suppress("DEPRECATION")
+            audioManager.requestAudioFocus(
+                null,
+                AudioManager.STREAM_VOICE_CALL,
+                AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK,
+            )
+        }
+    }
+
+    fun abandon() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            focusRequest?.let { audioManager.abandonAudioFocusRequest(it) }
+            focusRequest = null
+        } else {
+            @Suppress("DEPRECATION")
+            audioManager.abandonAudioFocus(null)
+        }
+    }
+}
 
 private fun Float.formatDistance(): String {
     return if (this < 1000f) {
@@ -141,7 +198,12 @@ fun NavigationSearchContent(
     var isListening by remember { mutableStateOf(false) }
     var pendingVoiceStart by remember { mutableStateOf(false) }
     var pendingVoiceRestart by remember { mutableStateOf(false) }
+    var recognizerSessionActive by remember { mutableStateOf(false) }
     val listState = rememberLazyListState()
+
+    val speechAudioFocus = remember(context) {
+        SpeechSearchAudioFocus(context.applicationContext)
+    }
 
     val speechAvailable = remember(context) {
         SpeechRecognizer.isRecognitionAvailable(context.applicationContext)
@@ -163,16 +225,32 @@ fun NavigationSearchContent(
     }
 
     val requestVoiceListeningRef = rememberUpdatedState<(SpeechRecognizer) -> Unit> { recognizer ->
-        pendingVoiceRestart = true
-        isListening = true
-        recognizer.cancel()
+        if (recognizerSessionActive) {
+            pendingVoiceRestart = true
+            isListening = true
+            recognizer.cancel()
+        } else {
+            speechAudioFocus.request()
+            isListening = true
+            recognizerSessionActive = true
+            recognizer.startListening(recognitionIntent)
+        }
+    }
+
+    val stopVoiceListeningRef = rememberUpdatedState {
+        pendingVoiceRestart = false
+        recognizerSessionActive = false
+        isListening = false
+        speechAudioFocus.abandon()
     }
 
     DisposableEffect(speechRecognizer) {
         val recognizer = speechRecognizer
         if (recognizer != null) {
             recognizer.setRecognitionListener(object : RecognitionListener {
-                override fun onReadyForSpeech(params: Bundle?) = Unit
+                override fun onReadyForSpeech(params: Bundle?) {
+                    recognizerSessionActive = true
+                }
 
                 override fun onBeginningOfSpeech() = Unit
 
@@ -182,17 +260,18 @@ fun NavigationSearchContent(
 
                 override fun onEndOfSpeech() {
                     if (!pendingVoiceRestart) {
-                        isListening = false
+                        stopVoiceListeningRef.value()
                     }
                 }
 
                 override fun onError(error: Int) {
+                    Log.w(VOICE_SEARCH_TAG, "SpeechRecognizer error: $error (${speechErrorLabel(error)})")
                     if (pendingVoiceRestart) {
                         pendingVoiceRestart = false
                         isListening = true
                         recognizer.startListening(recognitionIntent)
                     } else {
-                        isListening = false
+                        stopVoiceListeningRef.value()
                     }
                 }
 
@@ -205,7 +284,7 @@ fun NavigationSearchContent(
                                 state.copy(query = spoken)
                             }
                         }
-                    isListening = false
+                    stopVoiceListeningRef.value()
                 }
 
                 override fun onPartialResults(partialResults: Bundle) = Unit
@@ -215,6 +294,8 @@ fun NavigationSearchContent(
         }
         onDispose {
             pendingVoiceRestart = false
+            recognizerSessionActive = false
+            speechAudioFocus.abandon()
             speechRecognizer?.destroy()
         }
     }
@@ -244,6 +325,9 @@ fun NavigationSearchContent(
 
     LaunchedEffect(Unit) {
         engine.refreshSearchOrigin()
+        withContext(Dispatchers.IO) {
+            engine.seedSearchFromMapViewport()
+        }
         if (launcherViewModel.destinationSearchState.snapshotOriginLat == null) {
             val origin = engine.resolveSearchOrigin()
             launcherViewModel.updateDestinationSearch { state ->
@@ -341,7 +425,7 @@ fun NavigationSearchContent(
             engine.getNearbyPois(
                 origin.first,
                 origin.second,
-                LauncherPreferences.MAX_RECENT_DESTINATIONS,
+                NEARBY_POI_SUGGESTION_LIMIT,
             )
         }.filterNot { nearby ->
             recentDestinations.any { recent -> isWithinDedupThreshold(recent, nearby) } ||

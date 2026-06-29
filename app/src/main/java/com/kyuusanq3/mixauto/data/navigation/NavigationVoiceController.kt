@@ -30,11 +30,17 @@ class NavigationVoiceController(context: Context) {
 
     var enabled: Boolean = true
 
-    /** Utterance volume scale (0.5–1.0); applied via [TextToSpeech.Engine.KEY_PARAM_VOLUME]. */
+    /** When true, temporarily raises system guidance stream volume while speaking. */
+    var boostEnabled: Boolean = false
+
+    /** Utterance volume scale (0.5–1.5); applied via [TextToSpeech.Engine.KEY_PARAM_VOLUME]. */
     var volume: Float = DEFAULT_VOLUME
         set(value) {
             field = value.coerceIn(MIN_VOLUME, MAX_VOLUME)
         }
+
+    private var savedGuidanceStreamVolume: Int? = null
+    private var boostedGuidanceStream: Int? = null
 
     private var navStartSpoken = false
     private var trackedStepIndex = -1
@@ -63,6 +69,7 @@ class NavigationVoiceController(context: Context) {
 
         override fun onDone(utteranceId: String?) {
             if (utteranceId != null && utteranceId == activeFocusUtteranceId) {
+                restoreGuidanceStreamVolumeIfNeeded()
                 abandonAudioFocus()
                 activeFocusUtteranceId = null
             }
@@ -282,6 +289,7 @@ class NavigationVoiceController(context: Context) {
     private fun speak(text: String, flush: Boolean, force: Boolean = false) {
         if ((!enabled && !force) || !ttsReady || text.isBlank()) return
         requestAudioFocus()
+        applyGuidanceStreamBoostIfNeeded()
         val utteranceId = "nav-${utteranceCounter.incrementAndGet()}"
         activeFocusUtteranceId = utteranceId
         val queueMode = if (flush) TextToSpeech.QUEUE_FLUSH else TextToSpeech.QUEUE_ADD
@@ -291,8 +299,38 @@ class NavigationVoiceController(context: Context) {
         tts?.speak(text, queueMode, params, utteranceId)
     }
 
+    private fun applyGuidanceStreamBoostIfNeeded() {
+        if (!boostEnabled) return
+        val manager = audioManager ?: return
+        val streamType = guidanceStreamType()
+        val maxVolume = manager.getStreamMaxVolume(streamType)
+        if (maxVolume <= 0) return
+        val currentVolume = manager.getStreamVolume(streamType)
+        val targetVolume = (maxVolume * GUIDANCE_BOOST_TARGET_FRACTION).toInt()
+            .coerceIn(1, maxVolume)
+        if (currentVolume >= targetVolume) return
+        savedGuidanceStreamVolume = currentVolume
+        boostedGuidanceStream = streamType
+        manager.setStreamVolume(streamType, targetVolume, 0)
+    }
+
+    private fun restoreGuidanceStreamVolumeIfNeeded() {
+        val manager = audioManager ?: return
+        val streamType = boostedGuidanceStream ?: return
+        val previous = savedGuidanceStreamVolume ?: return
+        manager.setStreamVolume(streamType, previous, 0)
+        savedGuidanceStreamVolume = null
+        boostedGuidanceStream = null
+    }
+
+    private fun guidanceStreamType(): Int {
+        @Suppress("DEPRECATION")
+        return AudioManager.STREAM_NOTIFICATION
+    }
+
     private fun stopSpeaking() {
         tts?.stop()
+        restoreGuidanceStreamVolumeIfNeeded()
         abandonAudioFocus()
         activeFocusUtteranceId = null
     }
@@ -335,7 +373,8 @@ class NavigationVoiceController(context: Context) {
         private const val TURN_DISTANCE_M = 40f
         private const val MIN_SPEED_MPS = 1.4f
         const val MIN_VOLUME = 0.5f
-        const val MAX_VOLUME = 1.0f
+        const val MAX_VOLUME = 1.5f
         const val DEFAULT_VOLUME = 1.0f
+        private const val GUIDANCE_BOOST_TARGET_FRACTION = 0.88f
     }
 }

@@ -20,7 +20,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.viewmodel.compose.viewModel
 import com.kyuusanq3.mixauto.ui.settings.LauncherPreferences
+import com.kyuusanq3.mixauto.ui.settings.LauncherViewModel
 import com.kyuusanq3.mixauto.ui.settings.MapDataViewModel
 import com.kyuusanq3.mixauto.ui.theme.CarBodyText
 import com.kyuusanq3.mixauto.ui.theme.CarDimensions
@@ -57,6 +59,8 @@ fun MapSettingsPanelContent(
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val launcherViewModel: LauncherViewModel = viewModel()
+    val navigationVoiceBoost = launcherViewModel.navigationVoiceBoost
     val scrollState = rememberScrollState()
     Surface(
         modifier = modifier.carScrollbar(scrollState),
@@ -126,6 +130,21 @@ fun MapSettingsPanelContent(
                 onTestVoice = onTestNavigationVoice,
             )
 
+            SettingsSwitchRow(
+                label = "Boost guidance volume",
+                checked = navigationVoiceBoost,
+                onCheckedChange = { enabled ->
+                    if (enabled != navigationVoiceBoost) {
+                        launcherViewModel.updateNavigationVoiceBoost(enabled)
+                    }
+                },
+            )
+
+            CarLabelText(
+                text = "Voice level is relative. Also check Navigation/Guidance volume on your head unit.",
+                style = MaterialTheme.typography.labelMedium,
+            )
+
             DrivingViewSettingsSection(
                 puckHorizontalOffset = puckHorizontalOffset,
                 puckVerticalOffset = puckVerticalOffset,
@@ -193,7 +212,7 @@ private fun NavigationVoiceVolumeSection(
                 .height(CarDimensions.MinTapTarget),
         )
         CarLabelText(
-            text = "${(volume * 100).roundToInt()}%",
+            text = "${(volume * 100).roundToInt()}% relative",
             style = MaterialTheme.typography.labelMedium,
         )
     }

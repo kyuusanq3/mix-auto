@@ -57,6 +57,9 @@ interface CarMapEngine {
     /** Compose/host resized the map pane — engine should re-apply preview camera if needed. */
     fun onMapHostLayoutChanged() {}
 
+    /** Loads visible map POIs into cache when destination search opens. */
+    suspend fun seedSearchFromMapViewport() {}
+
     /** When set, a map tap invokes the handler and skips POI/pin selection. */
     fun setMapTapDismissHandler(handler: (() -> Unit)?) {}
 

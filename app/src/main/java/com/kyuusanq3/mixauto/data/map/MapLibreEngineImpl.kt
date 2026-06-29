@@ -384,11 +384,8 @@ class MapLibreEngineImpl(
     override fun setViewportPadding(horizontalFraction: Float, verticalFraction: Float) {
         puckHorizontalOffset = horizontalFraction
         puckVerticalOffset = verticalFraction
-        lastAppliedTrackingPadding = null
         val map = mapLibreMap ?: return
-        applyDrivingViewportPadding(map)
-        applyDrivingTrackingPadding(map)
-        forceLocationUpdateForImmediateRender(map)
+        applyPuckPaddingUpdate(map, bypassRenderThrottle = true)
     }
 
     override fun setPuckScale(scale: Float) {
@@ -456,9 +453,12 @@ class MapLibreEngineImpl(
     /**
      * After changing tracking padding or puck style, force a puck refresh so the camera repositions.
      */
-    private fun forceLocationUpdateForImmediateRender(map: MapLibreMap) {
+    private fun forceLocationUpdateForImmediateRender(
+        map: MapLibreMap,
+        bypassThrottle: Boolean = false,
+    ) {
         val now = System.currentTimeMillis()
-        if (now - lastForcePuckRenderMs < FORCE_PUCK_RENDER_MIN_MS) return
+        if (!bypassThrottle && now - lastForcePuckRenderMs < FORCE_PUCK_RENDER_MIN_MS) return
         val component = map.locationComponent
         if (!component.isLocationComponentActivated || !component.isLocationComponentEnabled) return
         val location = component.lastKnownLocation
@@ -612,7 +612,10 @@ class MapLibreEngineImpl(
             emptyList()
         }
         val cacheResults = withContext(Dispatchers.Main) {
-            searchPoiCache(query, searchLat, searchLng)
+            mergeAndDeduplicate(
+                searchPoiCache(query, searchLat, searchLng),
+                searchViewportPoiCache(query, searchLat, searchLng),
+            )
         }
         val localAndCache = mergeAndDeduplicate(local, cacheResults)
         val localAndCacheFiltered = applyDistanceLimit(localAndCache)
@@ -639,6 +642,13 @@ class MapLibreEngineImpl(
         finalResults
     }
 
+    override suspend fun seedSearchFromMapViewport() {
+        val map = mapLibreMap ?: return
+        withContext(Dispatchers.Main) {
+            seedViewportPoisIntoCache(map)
+        }
+    }
+
     override fun getNearbyPois(lat: Double, lng: Double, limit: Int): List<SearchResultPlace> {
         if (limit <= 0) return emptyList()
 
@@ -660,6 +670,18 @@ class MapLibreEngineImpl(
                 )
                 place.copy(distanceInMeters = distanceResults[0])
             }
+
+        val viewportCacheResults = poiCacheInViewport().map { place ->
+            val distanceResults = FloatArray(1)
+            Location.distanceBetween(
+                searchLat,
+                searchLng,
+                place.latitude,
+                place.longitude,
+                distanceResults,
+            )
+            place.copy(distanceInMeters = distanceResults[0])
+        }
 
         val repo = localPlaces
         val offlineResults = if (repo != null && repo.hasInstalledDatabase) {
@@ -687,7 +709,7 @@ class MapLibreEngineImpl(
             emptyList()
         }
 
-        return mergeAndDeduplicate(offlineResults, cacheResults)
+        return mergeAndDeduplicate(offlineResults, cacheResults + viewportCacheResults)
             .sortedBy { it.distanceInMeters }
             .take(limit)
     }
@@ -1294,7 +1316,47 @@ class MapLibreEngineImpl(
             return
         }
         if (!state.isCameraDetached) {
+            lastAppliedTrackingPadding = null
+            val component = map.locationComponent
+            val componentReady = component.isLocationComponentActivated &&
+                component.isLocationComponentEnabled
+            val trackingGps = componentReady && component.cameraMode == CameraMode.TRACKING_GPS
+            if (trackingGps) {
+                applyDrivingTrackingPadding(map)
+                forceLocationUpdateForImmediateRender(map, bypassThrottle = true)
+            } else {
+                applyDrivingViewportPadding(map)
+                applyDrivingTrackingPadding(map)
+                if (state.isNavigating) {
+                    forceLocationUpdateForImmediateRender(map, bypassThrottle = true)
+                }
+            }
+            if (state.isNavigating && componentReady && component.cameraMode != CameraMode.TRACKING_GPS) {
+                activateNavigationTracking(componentReady)
+            }
+        }
+    }
+
+    /**
+     * Updates puck offset padding. During [CameraMode.TRACKING_GPS], only [paddingWhileTracking]
+     * is safe — [moveCamera] viewport padding drops follow mode.
+     */
+    private fun applyPuckPaddingUpdate(map: MapLibreMap, bypassRenderThrottle: Boolean = false) {
+        lastAppliedTrackingPadding = null
+        val component = map.locationComponent
+        val componentReady = component.isLocationComponentActivated &&
+            component.isLocationComponentEnabled
+        val trackingGps = componentReady && component.cameraMode == CameraMode.TRACKING_GPS
+        if (trackingGps) {
             applyDrivingTrackingPadding(map)
+            forceLocationUpdateForImmediateRender(map, bypassThrottle = bypassRenderThrottle)
+        } else {
+            applyDrivingViewportPadding(map)
+            applyDrivingTrackingPadding(map)
+            forceLocationUpdateForImmediateRender(map, bypassThrottle = bypassRenderThrottle)
+        }
+        if (_uiState.value.isNavigating && componentReady && component.cameraMode != CameraMode.TRACKING_GPS) {
+            activateNavigationTracking(componentReady)
         }
     }
 
@@ -3010,15 +3072,38 @@ class MapLibreEngineImpl(
         currentLat: Double,
         currentLng: Double,
     ): List<SearchResultPlace> {
-        val tokens = query.trim()
-            .lowercase()
-            .split(Regex("\\s+"))
-            .filter { it.length >= 2 }
+        val tokens = tokenizeSearchQuery(query)
         if (tokens.isEmpty()) return emptyList()
 
         return poiCache.values
+            .filter { place -> placeMatchesQueryTokens(place, tokens) }
+            .map { place ->
+                val distanceResults = FloatArray(1)
+                Location.distanceBetween(
+                    currentLat,
+                    currentLng,
+                    place.latitude,
+                    place.longitude,
+                    distanceResults,
+                )
+                place.copy(distanceInMeters = distanceResults[0])
+            }
+            .sortedBy { it.distanceInMeters }
+            .take(POI_CACHE_SEARCH_LIMIT)
+    }
+
+    private fun searchViewportPoiCache(
+        query: String,
+        currentLat: Double,
+        currentLng: Double,
+    ): List<SearchResultPlace> {
+        val tokens = tokenizeSearchQuery(query)
+        if (tokens.isEmpty()) return emptyList()
+        val bounds = currentViewportBounds() ?: return emptyList()
+
+        return poiCache.values
             .filter { place ->
-                tokens.all { token -> place.name.lowercase().contains(token) }
+                placeInBounds(place, bounds) && placeMatchesQueryTokens(place, tokens)
             }
             .map { place ->
                 val distanceResults = FloatArray(1)
@@ -3033,6 +3118,61 @@ class MapLibreEngineImpl(
             }
             .sortedBy { it.distanceInMeters }
             .take(POI_CACHE_SEARCH_LIMIT)
+    }
+
+    private fun tokenizeSearchQuery(query: String): List<String> {
+        val trimmed = query.trim().lowercase()
+        if (trimmed.length < 2) return emptyList()
+        return trimmed.split(Regex("\\s+")).filter { it.isNotEmpty() }
+    }
+
+    private fun placeMatchesQueryTokens(place: SearchResultPlace, tokens: List<String>): Boolean {
+        val haystack = "${place.name} ${place.subTitle} ${place.category}".lowercase()
+        return tokens.all { token -> haystack.contains(token) }
+    }
+
+    private fun currentViewportBounds(): GeoBounds? {
+        val map = mapLibreMap ?: return null
+        if (map.cameraPosition.zoom < MIN_POI_ZOOM) return null
+        val bounds = map.projection.visibleRegion.latLngBounds
+        val latSpan = bounds.northEast.latitude - bounds.southWest.latitude
+        val lngSpan = bounds.northEast.longitude - bounds.southWest.longitude
+        val padLat = latSpan * BBOX_PADDING_FACTOR / 2
+        val padLng = lngSpan * BBOX_PADDING_FACTOR / 2
+        return expandGeoBounds(bounds, padLat, padLng)
+    }
+
+    private fun poiCacheInViewport(): List<SearchResultPlace> {
+        val bounds = currentViewportBounds() ?: return emptyList()
+        return poiCache.values.filter { place -> placeInBounds(place, bounds) }
+    }
+
+    private suspend fun seedViewportPoisIntoCache(map: MapLibreMap) {
+        val zoom = map.cameraPosition.zoom
+        if (zoom < MIN_POI_ZOOM) return
+        val bounds = map.projection.visibleRegion.latLngBounds
+        val center = map.cameraPosition.target ?: return
+        val latSpan = bounds.northEast.latitude - bounds.southWest.latitude
+        val lngSpan = bounds.northEast.longitude - bounds.southWest.longitude
+        val padLat = latSpan * BBOX_PADDING_FACTOR / 2
+        val padLng = lngSpan * BBOX_PADDING_FACTOR / 2
+        val queryBounds = expandGeoBounds(bounds, padLat, padLng)
+
+        val tileResults = queryTilePois(map, queryBounds)
+        val localResults = withContext(Dispatchers.IO) {
+            (localPlaces?.getPlacesInBounds(
+                minLat = queryBounds.minLat,
+                maxLat = queryBounds.maxLat,
+                minLng = queryBounds.minLng,
+                maxLng = queryBounds.maxLng,
+                limit = MAX_POI_PINS,
+            ) ?: emptyList()).map { place ->
+                place.copy(category = normalizeOvertureCategory(place.category))
+            }
+        }
+        val deduped = mergePoiPins(localResults + tileResults, emptyList())
+        mergeIntoPoiCache(deduped)
+        trimPoiCacheToMax(center)
     }
 
     private fun queryTilePois(map: MapLibreMap, queryBounds: GeoBounds): List<SearchResultPlace> {
@@ -3538,7 +3678,14 @@ class MapLibreEngineImpl(
         rawLocationEngine = raw
         return BearingEnrichedLocationEngine(
             delegate = raw,
-            enrich = ::getOrEnrichLocation,
+            enrich = { location ->
+                val enriched = getOrEnrichLocation(location)
+                if (_uiState.value.isNavigating) {
+                    snapLocationToRoute(enriched) ?: enriched
+                } else {
+                    enriched
+                }
+            },
             shouldEmit = ::shouldEmitPuckFix,
         )
     }
@@ -3775,13 +3922,9 @@ class MapLibreEngineImpl(
         val isNavigating = _uiState.value.isNavigating
         when {
             !componentReady -> pendingLocationFix = displayLocation
-            isNavigating -> {
-                pushPuckLocationIfNeeded(displayLocation)
-                pendingLocationFix = null
-            }
             else -> {
-                // Free drive: LocationEngine feeds the puck — avoid forceLocationUpdate here
-                // (races native MapRenderer::render on emulator).
+                // Nav + free drive: LocationEngine feeds the puck (road-snap applied in enrich).
+                // Avoid forceLocationUpdate on GPS ticks — races MapRenderer::render on emulator.
                 pendingLocationFix = null
             }
         }
@@ -4432,7 +4575,7 @@ class MapLibreEngineImpl(
         private const val FRESH_LOCATION_MIN_TIME_MS = 500L
         private const val LOCATION_FIX_DEDUP_TIME_MS = 50L
         private const val LOCATION_FIX_DEDUP_DIST_M = 2f
-        private const val PUCK_PUSH_MIN_DIST_M = 2f
+        private const val PUCK_PUSH_MIN_DIST_M = 3f
         private const val PUCK_EMIT_MIN_DIST_M = 3f
         private const val PUCK_EMIT_MIN_BEARING_DEG = 4f
         private const val FORCE_PUCK_RENDER_MIN_MS = 400L
@@ -4488,6 +4631,7 @@ class MapLibreEngineImpl(
         private const val MIN_POI_ZOOM = 13.0
         private const val MAX_POI_PINS = 100
         private const val POI_CACHE_SEARCH_LIMIT = 15
+        private const val NEARBY_POI_SUGGESTION_LIMIT = 20
         private const val POI_DEBOUNCE_MS = 400L
         private const val NEARBY_SEARCH_BBOX_DELTA = 0.5 // aligned with LocalPlacesRepository text-search bbox
         private const val BBOX_PADDING_FACTOR = 1.5

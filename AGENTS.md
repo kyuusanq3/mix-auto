@@ -336,6 +336,12 @@ After enabling Launcher Mode, press Home and select **Mix Auto** as the default 
 | Gap between status strip and map/media | Strip has no bottom padding; map uses `reduceTopInset = showStatusStrip` (`StatusStripAdjacentGap` 0dp top); landscape media uses `reduceTopInset = showStatusStrip && !isPortrait` — do not zero portrait media top gap |
 | Map settings icon cluttered (map + pencil) | `MapSettingsFab` in `CarMapViewContainer.kt` uses single **`Icons.Filled.Layers`** — do not overlay Map + Edit badges |
 | MapLibre watermark touches ℹ button | `MapLibreEngineImpl.configureMapUiChrome()`: `ATTRIBUTION_LEFT_MARGIN_DP` **98f** (logo ~92 dp + gap) on `setAttributionMargins` — bump to 100–104 dp if still tight on device |
+| `/local-apk publish` — `gh` not recognized | Install: `winget install --id GitHub.cli -e`; open **new** terminal or refresh PATH; then `gh auth login`; fallback: `$env:GITHUB_TOKEN` with repo scope |
+| Dock mic shows Listening but no system mic / no duck | First press must call `startListening()` directly — cancel-only on idle recognizer fails on Eonon; check Logcat `NavigationSearchOverlay` for `onError` codes |
+| Puck centered after minimizing music during nav | `handleMapLayoutChange` must call `applyPuckPaddingUpdate` path — `paddingWhileTracking` only while `TRACKING_GPS`; do not `moveCamera(paddingTo)` during follow |
+| Nav camera stops following after puck slider in Map Settings | Same — `setViewportPadding` → `applyPuckPaddingUpdate`; restore via `activateNavigationTracking()` if mode drops |
+| Map POI visible but missing in search | Call `seedSearchFromMapViewport()` on search open; nearby merges viewport `poiCache`; typed search uses broad `searchPoiCache` (name/subtitle/category) |
+| Nav TTS quiet at 100% slider | Enable **Boost guidance volume** in Map Settings; also raise head-unit Navigation/Guidance system volume; slider now goes to 150% relative |
 
 ## Related agent resources
 
