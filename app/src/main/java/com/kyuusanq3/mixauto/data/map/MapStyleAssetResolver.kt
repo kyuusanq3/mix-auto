@@ -1,41 +1,74 @@
 package com.kyuusanq3.mixauto.data.map
 
 import android.content.Context
-import com.kyuusanq3.mixauto.BuildConfig
+import android.util.Log
+import org.json.JSONObject
 import java.io.File
+import java.net.HttpURLConnection
+import java.net.URL
 
 /**
- * Map display uses [displayStyleUri] (asset). OfflineManager needs absolute file:// URLs
- * (asset:// stalls) and a **minimal** pack style without glyphs/sprites — the full
- * Liberty fork enumerates thousands of font resources and can hang on "Preparing…".
+ * Map display uses [displayStyleUri] (asset). Offline region downloads use [prepareOfflineRegionStyleUri]
+ * which copies the bundled minimal pack to app storage and serves it on loopback HTTP — OfflineManager
+ * rejects asset:// and file:// with "Unable to parse resourceUrl".
  */
 object MapStyleAssetResolver {
 
-    private const val DISPLAY_STYLE_ASSET = "map/mix-auto-driving.json"
+    private const val TAG = "MapStyleAssetResolver"
     private const val OFFLINE_PACK_ASSET = "map/mix-auto-offline-pack.json"
     private const val OFFLINE_PACK_FILE = "mix-auto-offline-pack.json"
-    private const val PREFS_NAME = "map_style_assets"
-    private const val KEY_OFFLINE_PACK_VERSION = "offline_pack_version"
+    private const val PLANET_TILEJSON_URL = "https://tiles.openfreemap.org/planet"
+    private const val USER_AGENT = "MixAutoCarLauncher/1.0"
+    private const val TILEJSON_TIMEOUT_MS = 30_000
 
     fun displayStyleUri(): String = MapStyleConstants.VECTOR_STYLE_URI
 
-    /** Style for [OfflineTilePyramidRegionDefinition] only — vector tiles, no label glyphs. */
-    fun offlineRegionStyleUri(context: Context): String {
-        val styleFile = ensureOfflinePackStyleFile(context)
-        return "file://${styleFile.absolutePath}"
+    /** Loopback http URL for [org.maplibre.android.offline.OfflineTilePyramidRegionDefinition]. */
+    fun prepareOfflineRegionStyleUri(context: Context): String {
+        val appContext = context.applicationContext
+        val tileJson = fetchPlanetTileJson()
+        val styleFile = writeOfflinePackStyleFile(appContext, tileJson)
+        return OfflineStyleLocalServer.ensureRunning(styleFile)
     }
 
-    private fun ensureOfflinePackStyleFile(context: Context): File {
+    private fun fetchPlanetTileJson(): JSONObject {
+        val connection = (URL(PLANET_TILEJSON_URL).openConnection() as HttpURLConnection).apply {
+            connectTimeout = TILEJSON_TIMEOUT_MS
+            readTimeout = TILEJSON_TIMEOUT_MS
+            setRequestProperty("User-Agent", USER_AGENT)
+            instanceFollowRedirects = true
+        }
+        try {
+            if (connection.responseCode !in 200..299) {
+                throw IllegalStateException(
+                    "OpenFreeMap TileJSON failed: HTTP ${connection.responseCode}",
+                )
+            }
+            val body = connection.inputStream.bufferedReader().use { it.readText() }
+            val json = JSONObject(body)
+            val tiles = json.optJSONArray("tiles")
+                ?: throw IllegalStateException("OpenFreeMap TileJSON missing tiles array")
+            if (tiles.length() == 0) {
+                throw IllegalStateException("OpenFreeMap TileJSON tiles array is empty")
+            }
+            Log.i(TAG, "Resolved planet tiles: ${tiles.optString(0)}")
+            return json
+        } finally {
+            connection.disconnect()
+        }
+    }
+
+    private fun writeOfflinePackStyleFile(context: Context, tileJson: JSONObject): File {
         val dir = File(context.filesDir, "map").apply { mkdirs() }
         val out = File(dir, OFFLINE_PACK_FILE)
-        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        val installedVersion = prefs.getInt(KEY_OFFLINE_PACK_VERSION, -1)
-        if (!out.exists() || out.length() == 0L || installedVersion != BuildConfig.VERSION_CODE) {
-            context.assets.open(OFFLINE_PACK_ASSET).use { input ->
-                out.outputStream().use { output -> input.copyTo(output) }
-            }
-            prefs.edit().putInt(KEY_OFFLINE_PACK_VERSION, BuildConfig.VERSION_CODE).apply()
-        }
+        val baseStyle = context.assets.open(OFFLINE_PACK_ASSET).bufferedReader().use { it.readText() }
+        val style = JSONObject(baseStyle)
+        val source = style.getJSONObject("sources").getJSONObject("openmaptiles")
+        source.remove("url")
+        source.put("tiles", tileJson.getJSONArray("tiles"))
+        source.put("minzoom", tileJson.optInt("minzoom", 0))
+        source.put("maxzoom", tileJson.optInt("maxzoom", 14))
+        out.writeText(style.toString())
         return out
     }
 }

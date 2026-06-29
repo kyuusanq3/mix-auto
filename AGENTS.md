@@ -259,6 +259,7 @@ After enabling Launcher Mode, press Home and select **Mix Auto** as the default 
 | Tapping near saved custom pin re-opens it instead of new draft | Do not add geographic proximity fallback before draft — use layer hit + `isTapNearPinIcon()` screen radius only |
 | Route line disappears while navigating | Raster style: `ensureRouteLayers()` must `addLayerAbove(..., "osm")` — plain `addLayer()` puts line under tiles |
 | Route line too thin | `ROUTE_WIDTH` 14f with 18f dark casing per half (traveled + remaining) in `ensureRouteLayers()` |
+| Parallel streets blob when zoomed out | Road boost is zoom-relative (stock at z≤10, full at z≥17) in `gen_mix_auto_driving_style.py` + `applyAutomotiveRoadBoost()` — tune `BOOST_ZOOM_START`/`BOOST_ZOOM_FULL` (script) and `AUTOMOTIVE_BOOST_ZOOM_*` (Kotlin), then rerun `python tools/gen_mix_auto_driving_style.py` |
 | Puck renders under route line during nav | Route layers added after LocationComponent activation — call `ensurePuckAboveOverlays()` after `drawRoute()`; uses `resolvePuckLayerAnchorId()` → `layerAbove(ROUTE_REMAINING_LAYER_ID)` |
 | Passed route segment not greyed | `updateRouteProgress()` splits geometry into `ROUTE_TRAVELED_*` (grey) and `ROUTE_REMAINING_*` (cyan) on road-snapped GPS fix; monotonic advance only |
 | Puck pauses/jumps between GPS fixes | Dead-reckoning `forceLocationUpdate` loop disabled (native render crash); free drive relies on LocationEngine; ensure `hasSpeed()` on fixes for bearing; head-unit gap between 1 Hz fixes is expected until custom LocationEngine interpolator added |

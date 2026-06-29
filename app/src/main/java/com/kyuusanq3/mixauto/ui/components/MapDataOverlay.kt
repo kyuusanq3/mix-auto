@@ -161,14 +161,35 @@ fun MapDataSectionContent(
 
     val placesMb = formatStorageMb(viewModel.placesStorageBytes())
     val mapsMb = formatStorageMb(viewModel.offlineMapsStorageBytes())
+    val launcherViewModel: LauncherViewModel = viewModel()
+    val allowMapDownloadOnMobileData = launcherViewModel.allowMapDownloadOnMobileData
 
     Column(
         modifier = modifier,
         verticalArrangement = Arrangement.spacedBy(CarDimensions.DockItemSpacing),
     ) {
         CarBodyText(
-            text = "Download offline search and regional maps. Map packs are per region; POI search is nationwide. Use Wi‑Fi for large downloads.",
+            text = "Download offline search and regional maps. Map packs are per region; POI search is nationwide.",
             style = MaterialTheme.typography.bodyMedium,
+        )
+
+        SettingsSwitchRow(
+            label = "Download on mobile data",
+            checked = allowMapDownloadOnMobileData,
+            onCheckedChange = { checked ->
+                if (checked != allowMapDownloadOnMobileData) {
+                    launcherViewModel.toggleAllowMapDownloadOnMobileData()
+                }
+            },
+        )
+
+        CarLabelText(
+            text = if (allowMapDownloadOnMobileData) {
+                "POI and map packs may use cellular data. Large downloads can use a lot of data."
+            } else {
+                "POI and map packs use Wi‑Fi or Ethernet only unless mobile data is enabled above."
+            },
+            style = MaterialTheme.typography.labelMedium,
         )
 
         CarLabelText(
@@ -249,11 +270,15 @@ fun MapDataSectionContent(
             }
             is MapDataUiState.DownloadingOfflineMap -> {
                 LinearProgressIndicator(
-                    progress = { state.progress },
+                    progress = { if (state.isPreparing) 0f else state.progress },
                     modifier = Modifier.fillMaxWidth(),
                 )
                 CarLabelText(
-                    text = "Downloading ${state.regionName}… ${(state.progress * 100).roundToInt()}%",
+                    text = if (state.isPreparing) {
+                        "Preparing ${state.regionName}…"
+                    } else {
+                        "Downloading ${state.regionName}… ${(state.progress * 100).roundToInt()}%"
+                    },
                     style = MaterialTheme.typography.labelMedium,
                 )
                 CountryCatalogList(
@@ -550,7 +575,7 @@ private fun CountryGroupCard(
                     )
                     CarLabelText(
                         text = if (useVectorTiles) {
-                            "Vector tiles to zoom 14 (overzoom to 18). Use Wi‑Fi."
+                            "Vector tiles to zoom 14 (overzoom to 18)."
                         } else {
                             "Offline map regions require vector tiles (enable in Map Settings above)."
                         },

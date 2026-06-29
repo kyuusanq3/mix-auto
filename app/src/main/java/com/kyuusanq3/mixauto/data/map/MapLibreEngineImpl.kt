@@ -522,7 +522,7 @@ class MapLibreEngineImpl(
         }
     }
 
-    /** Extra width on bundled Liberty fork (~3× in JSON); ~1.65× here ≈ 5× vs stock at nav zoom. */
+    /** Extra width on bundled Liberty fork (~3× in JSON at nav zoom); runtime factor ramps with zoom. */
     private fun applyAutomotiveRoadBoost(style: Style) {
         if (!useVectorTiles) return
         style.layers.forEach { layer ->
@@ -530,22 +530,39 @@ class MapLibreEngineImpl(
             val layerId = layer.id
             if (!isAutomotiveRoadLineLayer(layerId)) return@forEach
             val factor = automotiveRoadWidthFactor(layerId)
+            val zoomFactor = automotiveRoadWidthZoomFactor(factor)
             val widthProp = layer.lineWidth
             when {
                 widthProp.isExpression -> {
                     val expr = widthProp.expression ?: return@forEach
                     layer.setProperties(
                         PropertyFactory.lineWidth(
-                            Expression.product(Expression.literal(factor), expr),
+                            Expression.product(zoomFactor, expr),
                         ),
                     )
                 }
                 widthProp.isValue -> {
                     val value = widthProp.value ?: return@forEach
-                    layer.setProperties(PropertyFactory.lineWidth(value * factor))
+                    layer.setProperties(
+                        PropertyFactory.lineWidth(
+                            Expression.product(zoomFactor, Expression.literal(value)),
+                        ),
+                    )
                 }
             }
         }
+    }
+
+    /** 1.0× below [AUTOMOTIVE_BOOST_ZOOM_START]; full [baseFactor] at nav zoom and above. */
+    private fun automotiveRoadWidthZoomFactor(baseFactor: Float): Expression {
+        return Expression.interpolate(
+            Expression.linear(),
+            Expression.zoom(),
+            Expression.literal(AUTOMOTIVE_BOOST_ZOOM_START),
+            Expression.literal(1.0f),
+            Expression.literal(AUTOMOTIVE_BOOST_ZOOM_FULL),
+            Expression.literal(baseFactor),
+        )
     }
 
     private fun isAutomotiveRoadLineLayer(layerId: String): Boolean {
@@ -5088,6 +5105,8 @@ class MapLibreEngineImpl(
         private const val TRAFFIC_LAYER_ID = "mix-traffic-layer"
         private const val AUTOMOTIVE_MAIN_ROAD_EXTRA = 1.65f
         private const val AUTOMOTIVE_MINOR_ROAD_EXTRA = 1.8f
+        private const val AUTOMOTIVE_BOOST_ZOOM_START = 10.0
+        private const val AUTOMOTIVE_BOOST_ZOOM_FULL = 17.0
         private const val REROUTE_THRESHOLD_M = 75f
         private const val SNAP_TO_ROUTE_MAX_M = 40f
         private const val REROUTE_CONFIRM_COUNT = 3

@@ -33,7 +33,7 @@ class NavigationVoiceController(context: Context) {
     /** When true, temporarily raises system guidance stream volume while speaking. */
     var boostEnabled: Boolean = false
 
-    /** Utterance volume scale (0.5–2.0); applied via [TextToSpeech.Engine.KEY_PARAM_VOLUME]. */
+    /** Utterance volume scale (0.5–5.0); applied via [TextToSpeech.Engine.KEY_PARAM_VOLUME]. */
     var volume: Float = DEFAULT_VOLUME
         set(value) {
             field = value.coerceIn(MIN_VOLUME, MAX_VOLUME)
@@ -452,7 +452,7 @@ class NavigationVoiceController(context: Context) {
         private const val MIN_MANEUVER_PHRASE_GAP_MS = 6_000L
         private const val REROUTE_TTS_MIN_INTERVAL_MS = 30_000L
         const val MIN_VOLUME = 0.5f
-        const val MAX_VOLUME = 2.0f
+        const val MAX_VOLUME = 5.0f
         const val DEFAULT_VOLUME = 1.0f
     }
 }

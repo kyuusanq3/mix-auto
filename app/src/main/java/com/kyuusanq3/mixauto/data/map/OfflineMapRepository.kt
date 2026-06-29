@@ -3,7 +3,6 @@ package com.kyuusanq3.mixauto.data.map
 import android.content.Context
 import android.util.Log
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -78,6 +77,7 @@ class OfflineMapRepository(context: Context) {
         MapLibreAppBootstrap.ensureInitialized(appContext)
         offlineManager = OfflineManager.getInstance(appContext)
         offlineManager.setOfflineMapboxTileCountLimit(OFFLINE_TILE_COUNT_LIMIT)
+        OfflineMapRepositoryHolder.instance = this
         refreshInstallStates()
     }
 
@@ -158,19 +158,61 @@ class OfflineMapRepository(context: Context) {
         })
     }
 
-    suspend fun downloadRegion(regionId: String, pixelRatio: Float) {
+    suspend fun reportRegionDownloadError(regionId: String, message: String) {
         withContext(Dispatchers.Main) {
-            withTimeout(DOWNLOAD_TIMEOUT_MS) {
-                downloadRegionOnMain(regionId, pixelRatio)
+            _installStates.value = _installStates.value.toMutableMap().apply {
+                put(
+                    regionId,
+                    OfflineRegionInstallState(
+                        regionId = regionId,
+                        isComplete = false,
+                        isDownloading = false,
+                        errorMessage = message,
+                    ),
+                )
             }
         }
     }
 
-    private suspend fun downloadRegionOnMain(regionId: String, pixelRatio: Float) {
+    suspend fun resumeIncompleteDownloads(): Boolean {
+        val pending = findFirstResumableIncompleteRegion() ?: return false
+        Log.i(TAG, "Resuming incomplete download for ${pending.regionId}")
+        downloadRegion(pending.regionId, pending.pixelRatio)
+        return true
+    }
+
+    suspend fun pauseDownload(regionId: String) {
+        withContext(Dispatchers.Main) {
+            val sdkRegion = findSdkRegion(regionId) ?: return@withContext
+            sdkRegion.setObserver(null)
+            sdkRegion.setDownloadState(OfflineRegion.STATE_INACTIVE)
+            val status = sdkRegion.awaitStatus()
+            updateStateFromStatus(regionId, status, isDownloading = false)
+        }
+    }
+
+    suspend fun downloadRegion(regionId: String, pixelRatio: Float) {
+        val styleUri = withContext(Dispatchers.IO) {
+            MapStyleAssetResolver.prepareOfflineRegionStyleUri(appContext)
+        }
+        withContext(Dispatchers.Main) {
+            withTimeout(DOWNLOAD_TIMEOUT_MS) {
+                downloadRegionOnMain(regionId, pixelRatio, styleUri)
+            }
+        }
+    }
+
+    private suspend fun downloadRegionOnMain(
+        regionId: String,
+        pixelRatio: Float,
+        styleUri: String,
+    ) {
         val definition = regionById[regionId]
             ?: throw IllegalArgumentException("Unknown offline region: $regionId")
 
         markRegionDownloading(regionId)
+
+        val effectivePixelRatio = pixelRatio.coerceIn(1f, MAX_OFFLINE_PIXEL_RATIO)
 
         val existing = findSdkRegion(regionId)
         if (existing != null) {
@@ -179,21 +221,29 @@ class OfflineMapRepository(context: Context) {
                 updateStateFromStatus(regionId, status, isDownloading = false)
                 return
             }
-            Log.w(TAG, "Replacing incomplete offline region $regionId")
+            if (isResumable(status)) {
+                Log.i(TAG, "Resuming offline region $regionId at ${status.completedResourceCount}/${status.requiredResourceCount}")
+                observeAndActivate(existing, regionId)
+                return
+            }
+            Log.w(TAG, "Replacing broken incomplete offline region $regionId")
             deleteSdkRegion(existing)
         }
 
-        val metadata = metadataBytes(regionId, definition.name)
-        val styleUri = MapStyleAssetResolver.offlineRegionStyleUri(appContext)
+        val metadata = metadataBytes(regionId, definition.name, effectivePixelRatio)
         val regionDefinition = OfflineTilePyramidRegionDefinition(
             styleUri,
             definition.toBounds(),
             definition.minZoom,
             definition.maxZoom,
-            pixelRatio,
+            effectivePixelRatio,
         )
 
-        Log.i(TAG, "Creating offline region $regionId style=$styleUri zoom=${definition.minZoom}-${definition.maxZoom}")
+        Log.i(
+            TAG,
+            "Creating offline region $regionId style=$styleUri zoom=${definition.minZoom}-${definition.maxZoom} " +
+                "pixelRatio=$effectivePixelRatio",
+        )
 
         val created = suspendCancellableCoroutine<OfflineRegion> { cont ->
             offlineManager.createOfflineRegion(
@@ -260,21 +310,43 @@ class OfflineMapRepository(context: Context) {
     }
 
     private suspend fun observeAndActivate(region: OfflineRegion, regionId: String) {
-        region.setDownloadState(OfflineRegion.STATE_ACTIVE)
+        // MapLibre requires the observer before STATE_ACTIVE or progress can stall at 0% on device.
         withTimeout(PREPARE_TIMEOUT_MS) {
-            waitUntilResourceQueueReady(region, regionId)
+            waitForResourceQueue(region, regionId)
         }
         observeUntilComplete(region, regionId)
     }
 
-    private suspend fun waitUntilResourceQueueReady(region: OfflineRegion, regionId: String) {
-        while (true) {
-            val status = region.awaitStatus()
-            updateStateFromStatus(regionId, status, isDownloading = !status.isComplete)
-            if (status.isComplete || status.requiredResourceCount > 0L) {
-                return
+    private suspend fun waitForResourceQueue(region: OfflineRegion, regionId: String) {
+        suspendCancellableCoroutine { cont ->
+            region.setObserver(object : OfflineRegion.OfflineRegionObserver {
+                override fun onStatusChanged(status: OfflineRegionStatus) {
+                    logStatus(regionId, status, "prepare")
+                    updateStateFromStatus(regionId, status, isDownloading = !status.isComplete)
+                    if (status.requiredResourceCount > 0L || status.isComplete) {
+                        region.setObserver(null)
+                        if (cont.isActive) cont.resume(Unit)
+                    }
+                }
+
+                override fun onError(error: OfflineRegionError) {
+                    region.setObserver(null)
+                    if (cont.isActive) {
+                        cont.resumeWithException(Exception(error.message))
+                    }
+                }
+
+                override fun mapboxTileCountLimitExceeded(limit: Long) {
+                    region.setObserver(null)
+                    if (cont.isActive) {
+                        cont.resumeWithException(Exception("Offline tile limit exceeded ($limit)"))
+                    }
+                }
+            })
+            region.setDownloadState(OfflineRegion.STATE_ACTIVE)
+            cont.invokeOnCancellation {
+                region.setObserver(null)
             }
-            delay(PREPARE_POLL_MS)
         }
     }
 
@@ -282,11 +354,7 @@ class OfflineMapRepository(context: Context) {
         suspendCancellableCoroutine { cont ->
             region.setObserver(object : OfflineRegion.OfflineRegionObserver {
                 override fun onStatusChanged(status: OfflineRegionStatus) {
-                    Log.d(
-                        TAG,
-                        "Offline $regionId: ${status.completedResourceCount}/${status.requiredResourceCount} " +
-                            "complete=${status.isComplete}",
-                    )
+                    logStatus(regionId, status, "download")
                     updateStateFromStatus(regionId, status, isDownloading = !status.isComplete)
                     if (status.isComplete && cont.isActive) {
                         cont.resume(Unit)
@@ -330,11 +398,70 @@ class OfflineMapRepository(context: Context) {
                 }
             })
             region.setDownloadState(OfflineRegion.STATE_ACTIVE)
+            region.getStatus(object : OfflineRegion.OfflineRegionStatusCallback {
+                override fun onStatus(status: OfflineRegionStatus?) {
+                    if (status == null) return
+                    logStatus(regionId, status, "download-snapshot")
+                    updateStateFromStatus(regionId, status, isDownloading = !status.isComplete)
+                    if (status.isComplete && cont.isActive) {
+                        cont.resume(Unit)
+                    }
+                }
+
+                override fun onError(error: String?) = Unit
+            })
             cont.invokeOnCancellation {
-                region.setDownloadState(OfflineRegion.STATE_INACTIVE)
                 region.setObserver(null)
             }
         }
+    }
+
+    private fun isResumable(status: OfflineRegionStatus): Boolean {
+        if (status.isComplete) return false
+        // Legacy file:// style regions stall as a single unfetchable style resource.
+        if (status.requiredResourceCount == 1L && status.completedResourceCount == 0L) return false
+        return true
+    }
+
+    suspend fun findPendingResumeRegion(): PendingOfflineResume? = withContext(Dispatchers.Main) {
+        findFirstResumableIncompleteRegion()
+    }
+
+    private suspend fun findFirstResumableIncompleteRegion(): PendingOfflineResume? {
+        val regions = suspendCancellableCoroutine<List<OfflineRegion>> { cont ->
+            offlineManager.listOfflineRegions(object : OfflineManager.ListOfflineRegionsCallback {
+                override fun onList(offlineRegions: Array<OfflineRegion>?) {
+                    if (cont.isActive) cont.resume(offlineRegions?.toList().orEmpty())
+                }
+
+                override fun onError(error: String) {
+                    if (cont.isActive) {
+                        cont.resumeWithException(Exception("listOfflineRegions failed: $error"))
+                    }
+                }
+            })
+        }
+        for (sdkRegion in regions) {
+            val regionId = parseRegionId(sdkRegion) ?: continue
+            val status = sdkRegion.awaitStatus()
+            if (status.isComplete || !isResumable(status)) continue
+            return PendingOfflineResume(
+                regionId = regionId,
+                pixelRatio = parsePixelRatio(sdkRegion),
+            )
+        }
+        return null
+    }
+
+data class PendingOfflineResume(val regionId: String, val pixelRatio: Float)
+
+    private fun logStatus(regionId: String, status: OfflineRegionStatus, phase: String) {
+        Log.i(
+            TAG,
+            "Offline $regionId [$phase]: ${status.completedResourceCount}/${status.requiredResourceCount} " +
+                "bytes=${status.completedResourceSize} complete=${status.isComplete} " +
+                "state=${status.downloadState}",
+        )
     }
 
     private fun OfflineRegionStatus.toInstallState(regionId: String): OfflineRegionInstallState {
@@ -402,12 +529,25 @@ class OfflineMapRepository(context: Context) {
         }
     }
 
-    private fun metadataBytes(regionId: String, name: String): ByteArray {
+    private fun metadataBytes(regionId: String, name: String, pixelRatio: Float): ByteArray {
         val json = JSONObject()
             .put("id", regionId)
             .put("name", name)
+            .put("pixelRatio", pixelRatio.toDouble())
+            .put("styleTransport", STYLE_TRANSPORT_LOOPBACK)
             .toString()
         return json.toByteArray(StandardCharsets.UTF_8)
+    }
+
+    private fun parsePixelRatio(region: OfflineRegion): Float {
+        return try {
+            val metadata = region.metadata ?: return DEFAULT_PIXEL_RATIO
+            val json = JSONObject(String(metadata, StandardCharsets.UTF_8))
+            json.optDouble("pixelRatio", DEFAULT_PIXEL_RATIO.toDouble()).toFloat()
+                .coerceIn(1f, MAX_OFFLINE_PIXEL_RATIO)
+        } catch (exception: Exception) {
+            DEFAULT_PIXEL_RATIO
+        }
     }
 
     private suspend fun OfflineRegion.awaitStatus(): OfflineRegionStatus =
@@ -481,8 +621,10 @@ class OfflineMapRepository(context: Context) {
         private const val TAG = "OfflineMapRepository"
         private const val CATALOG_ASSET = "map/offline_regions.json"
         private const val OFFLINE_TILE_COUNT_LIMIT = 1_000_000L
-        private const val PREPARE_TIMEOUT_MS = 90_000L
-        private const val PREPARE_POLL_MS = 400L
+        private const val PREPARE_TIMEOUT_MS = 120_000L
         private const val DOWNLOAD_TIMEOUT_MS = 45L * 60L * 1000L
+        private const val MAX_OFFLINE_PIXEL_RATIO = 2f
+        private const val DEFAULT_PIXEL_RATIO = 2f
+        private const val STYLE_TRANSPORT_LOOPBACK = "loopback-v1"
     }
 }

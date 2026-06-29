@@ -206,6 +206,13 @@ class LauncherPreferences(context: Context) {
             prefs.edit().putBoolean(KEY_REMEMBER_ENCOUNTERED_PLACES, value).apply()
         }
 
+    /** When false, POI + offline map pack downloads require Wi‑Fi or Ethernet. */
+    var allowMapDownloadOnMobileData: Boolean
+        get() = prefs.getBoolean(KEY_ALLOW_MAP_DOWNLOAD_MOBILE_DATA, false)
+        set(value) {
+            prefs.edit().putBoolean(KEY_ALLOW_MAP_DOWNLOAD_MOBILE_DATA, value).apply()
+        }
+
     companion object {
         private const val PREFS_NAME = "launcher_prefs"
         private const val KEY_LEFT_HAND_DRIVE = "lhd"
@@ -236,6 +243,7 @@ class LauncherPreferences(context: Context) {
         private const val KEY_SHOW_SYSTEM_STATUS_BAR = "show_system_status_bar"
         private const val KEY_MUSIC_PANE_ENABLED = "music_pane_enabled"
         private const val KEY_REMEMBER_ENCOUNTERED_PLACES = "remember_encountered_places"
+        private const val KEY_ALLOW_MAP_DOWNLOAD_MOBILE_DATA = "allow_map_download_mobile_data"
         const val DEFAULT_ALBUM_ART_MODE = "PLAIN"
         const val MAX_RECENT_DESTINATIONS = 10
         const val MAX_SAVED_PLACES = 50
@@ -246,7 +254,7 @@ class LauncherPreferences(context: Context) {
         const val DEFAULT_PUCK_V_OFFSET = 0.4f
         const val DEFAULT_PUCK_SCALE = 1.0f
         const val MIN_NAVIGATION_VOICE_VOLUME = 0.5f
-        const val MAX_NAVIGATION_VOICE_VOLUME = 2.0f
+        const val MAX_NAVIGATION_VOICE_VOLUME = 5.0f
         const val DEFAULT_NAVIGATION_VOICE_VOLUME = 1.0f
 
         private fun placeToJson(place: SearchResultPlace): JSONObject =

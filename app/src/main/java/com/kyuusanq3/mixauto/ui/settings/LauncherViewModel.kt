@@ -112,6 +112,9 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     var rememberEncounteredPlaces by mutableStateOf(preferences.rememberEncounteredPlaces)
         private set
 
+    var allowMapDownloadOnMobileData by mutableStateOf(preferences.allowMapDownloadOnMobileData)
+        private set
+
     var tomTomKeyCheckState by mutableStateOf<TomTomKeyCheckState>(TomTomKeyCheckState.Idle)
         private set
 
@@ -290,6 +293,11 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     fun updateRememberEncounteredPlaces(enabled: Boolean) {
         rememberEncounteredPlaces = enabled
         preferences.rememberEncounteredPlaces = enabled
+    }
+
+    fun toggleAllowMapDownloadOnMobileData() {
+        allowMapDownloadOnMobileData = !allowMapDownloadOnMobileData
+        preferences.allowMapDownloadOnMobileData = allowMapDownloadOnMobileData
     }
 
     fun toggleShowStatusStrip() {

@@ -15,9 +15,23 @@ MINOR_ROAD_FACTOR = 3.4
 # MapLibreEngineImpl.applyAutomotiveRoadBoost() applies AUTOMOTIVE_*_ROAD_EXTRA on top at style load.
 LABEL_FACTOR = 1.35
 LABEL_MIN_ZOOM = 16
+# Road boost ramps with zoom so parallel streets do not blob together when zoomed out.
+BOOST_ZOOM_START = 10.0
+BOOST_ZOOM_FULL = 17.0
 
 
-def boost_interpolate(obj, factor: float, min_zoom: float = 0):
+def factor_at_zoom(z: float, max_factor: float) -> float:
+    if max_factor <= 1.0:
+        return max_factor
+    if z <= BOOST_ZOOM_START:
+        return 1.0
+    if z >= BOOST_ZOOM_FULL:
+        return max_factor
+    t = (z - BOOST_ZOOM_START) / (BOOST_ZOOM_FULL - BOOST_ZOOM_START)
+    return 1.0 + t * (max_factor - 1.0)
+
+
+def boost_interpolate(obj, factor: float, min_zoom: float = 0, zoom_relative: bool = False):
     if not isinstance(obj, list):
         return obj
     if len(obj) >= 4 and obj[0] == "interpolate" and obj[2] == ["zoom"]:
@@ -31,15 +45,18 @@ def boost_interpolate(obj, factor: float, min_zoom: float = 0):
             ):
                 z, value = obj[i], obj[i + 1]
                 if value > 0 and z >= min_zoom:
-                    out.extend([z, value * factor])
+                    effective = (
+                        factor_at_zoom(z, factor) if zoom_relative else factor
+                    )
+                    out.extend([z, value * effective])
                 else:
                     out.extend([z, value])
                 i += 2
             else:
-                out.append(boost_interpolate(obj[i], factor, min_zoom))
+                out.append(boost_interpolate(obj[i], factor, min_zoom, zoom_relative))
                 i += 1
         return out
-    return [boost_interpolate(item, factor, min_zoom) for item in obj]
+    return [boost_interpolate(item, factor, min_zoom, zoom_relative) for item in obj]
 
 
 def is_road_line_layer(layer_id: str) -> bool:
@@ -88,6 +105,7 @@ def main() -> int:
                 paint["line-width"] = boost_interpolate(
                     paint["line-width"],
                     road_factor(layer_id),
+                    zoom_relative=True,
                 )
         if layer_id in ("highway-name-minor", "highway-name-major"):
             layout = layer.setdefault("layout", {})

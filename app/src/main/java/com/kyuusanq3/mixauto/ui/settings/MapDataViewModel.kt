@@ -7,11 +7,13 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.kyuusanq3.mixauto.data.map.MapDownloadNetworkGate
 import com.kyuusanq3.mixauto.data.map.OfflineCountryCatalog
 import com.kyuusanq3.mixauto.data.map.OfflineMapRepository
 import com.kyuusanq3.mixauto.data.map.OfflineRegionDefinition
 import com.kyuusanq3.mixauto.data.map.OfflineRegionInstallState
 import com.kyuusanq3.mixauto.data.places.LocalDbMeta
+import com.kyuusanq3.mixauto.service.OfflineMapDownloadService
 import com.kyuusanq3.mixauto.data.places.LocalPlacesRepository
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -47,6 +49,7 @@ sealed class MapDataUiState {
         val regionId: String,
         val regionName: String,
         val progress: Float,
+        val isPreparing: Boolean = false,
         val packs: List<RemoteCountryPack>,
     ) : MapDataUiState()
     data class Importing(val progress: Float, val label: String) : MapDataUiState()
@@ -74,11 +77,27 @@ class MapDataViewModel(
 
     private var catalogPacks: List<RemoteCountryPack> = emptyList()
 
+    private val launcherPreferences = LauncherPreferences(application)
+
+    private fun mapDownloadBlockReason(): String? =
+        MapDownloadNetworkGate.blockReason(
+            getApplication(),
+            launcherPreferences.allowMapDownloadOnMobileData,
+        )
+
     init {
         loadCatalog()
         refreshOfflineRegions()
         viewModelScope.launch {
             offlineMapRepository.installStates.collect { states ->
+                val failed = states.values.firstOrNull {
+                    !it.errorMessage.isNullOrBlank() && !it.isComplete && !it.isDownloading
+                }
+                if (failed != null) {
+                    _uiState.value = MapDataUiState.Error(
+                        failed.errorMessage ?: "Offline map download failed",
+                    )
+                }
                 val downloading = states.values.firstOrNull { it.isDownloading }
                 val current = _uiState.value
                 if (downloading != null && current !is MapDataUiState.DownloadingOfflineMap) {
@@ -87,10 +106,14 @@ class MapDataViewModel(
                         regionId = downloading.regionId,
                         regionName = definition?.name ?: downloading.regionId,
                         progress = downloading.downloadProgress,
+                        isPreparing = downloading.requiredResourceCount == 0L,
                         packs = catalogPacks,
                     )
                 } else if (downloading != null && current is MapDataUiState.DownloadingOfflineMap) {
-                    _uiState.value = current.copy(progress = downloading.downloadProgress)
+                    _uiState.value = current.copy(
+                        progress = downloading.downloadProgress,
+                        isPreparing = downloading.requiredResourceCount == 0L,
+                    )
                 } else if (downloading == null && current is MapDataUiState.DownloadingOfflineMap) {
                     refreshCatalogAfterChange()
                 }
@@ -141,6 +164,11 @@ class MapDataViewModel(
     fun downloadOfflineRegion(regionId: String, pixelRatio: Float) {
         if (isTransferInProgress()) return
 
+        mapDownloadBlockReason()?.let { reason ->
+            _uiState.value = MapDataUiState.Error(reason)
+            return
+        }
+
         val definition = offlineMapRepository.regionDefinition(regionId) ?: return
         _uiState.value = MapDataUiState.DownloadingOfflineMap(
             regionId = regionId,
@@ -150,25 +178,16 @@ class MapDataViewModel(
         )
 
         viewModelScope.launch {
-            val result = withContext(Dispatchers.IO) {
-                runCatching { offlineMapRepository.downloadRegion(regionId, pixelRatio) }
-            }
-            result.fold(
-                onSuccess = { refreshCatalogAfterChange() },
-                onFailure = { error ->
-                    _uiState.value = MapDataUiState.Error(
-                        when (error) {
-                            is TimeoutCancellationException ->
-                                "Map download timed out. Tap ✕ to cancel, then retry on Wi‑Fi."
-                            else -> error.message ?: "Offline map download failed"
-                        },
-                    )
-                },
+            OfflineMapDownloadService.startDownload(
+                context = getApplication(),
+                regionId = regionId,
+                pixelRatio = pixelRatio,
             )
         }
     }
 
     fun deleteOfflineRegion(regionId: String) {
+        OfflineMapDownloadService.stop(getApplication())
         viewModelScope.launch {
             val result = withContext(Dispatchers.IO) {
                 runCatching { offlineMapRepository.deleteRegion(regionId) }
@@ -189,6 +208,11 @@ class MapDataViewModel(
 
     fun downloadCountryData(pack: RemoteCountryPack) {
         if (isTransferInProgress()) return
+
+        mapDownloadBlockReason()?.let { reason ->
+            _uiState.value = MapDataUiState.Error(reason)
+            return
+        }
 
         viewModelScope.launch {
             _uiState.value = MapDataUiState.Downloading(

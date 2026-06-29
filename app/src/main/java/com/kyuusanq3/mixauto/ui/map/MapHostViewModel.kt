@@ -8,6 +8,7 @@ import com.kyuusanq3.mixauto.data.navigation.NavigationVoiceController
 import com.kyuusanq3.mixauto.data.places.EncounteredPlacesRepository
 import com.kyuusanq3.mixauto.data.places.LocalPlacesRepository
 import com.kyuusanq3.mixauto.domain.map.CarMapEngine
+import com.kyuusanq3.mixauto.service.OfflineMapDownloadService
 import com.kyuusanq3.mixauto.ui.settings.LauncherPreferences
 
 /**
@@ -48,6 +49,7 @@ class MapHostViewModel(application: Application) : AndroidViewModel(application)
         ).also { engine ->
             engine.setTrafficEnabled(prefs.showTraffic, prefs.tomTomApiKey)
         }
+        OfflineMapDownloadService.resumeIfNeeded(getApplication())
     }
 
     override fun onCleared() {
