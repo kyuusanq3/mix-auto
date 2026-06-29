@@ -109,6 +109,9 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     var musicPaneEnabled by mutableStateOf(preferences.musicPaneEnabled)
         private set
 
+    var rememberEncounteredPlaces by mutableStateOf(preferences.rememberEncounteredPlaces)
+        private set
+
     var tomTomKeyCheckState by mutableStateOf<TomTomKeyCheckState>(TomTomKeyCheckState.Idle)
         private set
 
@@ -282,6 +285,11 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     fun updateNavigationVoiceBoost(enabled: Boolean) {
         navigationVoiceBoost = enabled
         preferences.navigationVoiceBoost = enabled
+    }
+
+    fun updateRememberEncounteredPlaces(enabled: Boolean) {
+        rememberEncounteredPlaces = enabled
+        preferences.rememberEncounteredPlaces = enabled
     }
 
     fun toggleShowStatusStrip() {

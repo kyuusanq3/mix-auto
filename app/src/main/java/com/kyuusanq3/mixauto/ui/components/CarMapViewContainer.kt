@@ -301,8 +301,8 @@ private fun MapToolbarOverlay(
             }
         }
 
-        if (isCameraDetached && !isNavigating) {
-            if (!isInTopDownView) {
+        if (isCameraDetached) {
+            if (!isNavigating && !isInTopDownView) {
                 Spacer(modifier = Modifier.height(CarDimensions.PaneGap))
                 IconButton(
                     onClick = { engine.enterTopDownView() },
@@ -326,7 +326,11 @@ private fun MapToolbarOverlay(
             ) {
                 Icon(
                     imageVector = Icons.Filled.GpsFixed,
-                    contentDescription = "Recenter map",
+                    contentDescription = if (isNavigating) {
+                        "Resume navigation view"
+                    } else {
+                        "Recenter map"
+                    },
                     tint = MaterialTheme.colorScheme.primary,
                 )
             }

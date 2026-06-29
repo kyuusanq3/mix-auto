@@ -97,7 +97,7 @@ Swap map provider: change `MapHostViewModel` to construct a new `CarMapEngine` i
 
 ## Shortcut dock behavior
 
-`ShortcutDock.kt` dock layout: driver cluster (App Drawer + Mic) | **pinned apps (up to 5)** in center | **music side control** (`DockMusicSideControl`). **Launcher settings** is in the app drawer header (gear icon). **Destination search** is a circular FAB at **top-center** of the map (`DestinationSearchFab`, 84 dp); end nav / recenter / top-view stay top-right. **Map settings** toggle is bottom-left on the map (above MapLibre watermark); panel still opens in media pane via `ActivePanel.MAP_DATA`.
+`ShortcutDock.kt` dock layout: driver cluster (App Drawer + Mic) | **pinned apps (up to 5)** in center | **music side control** (`DockMusicSideControl`). **Launcher settings** is in the app drawer header (gear icon). **Destination search** is a circular FAB at **top-center** of the map (`DestinationSearchFab`, 84 dp); **top-end** toolbar = End nav (when routing) + recenter when camera detached + CropFree (free-drive detached only). **Map settings** toggle is bottom-left on the map (above MapLibre watermark); panel still opens in media pane via `ActivePanel.MAP_DATA`.
 
 | Icon / control | Panel / action |
 |------|----------------|
@@ -245,7 +245,9 @@ After enabling Launcher Mode, press Home and select **Mix Auto** as the default 
 | Catalog loads but download 404 | Release exists but assets array empty — edit release and upload both files from `places-dist/` |
 | Manual import of `.gz` fails | Import path expects uncompressed `.db`; use in-app Download or decompress first |
 | Search shows overseas / 5000 km destinations | Default 500 km cap is ON — disable **Nearby results only (within 500 km)** in Launcher Settings to include farther Photon results; routing still may fail for long/cross-water trips |
-| Empty search shows no Nearby rows | Nearby loads from offline DB at panel open (±0.5° bbox) merged with `poiCache` — install Map Data (PH pack); snapshot origin on open; no pan/zoom required |
+| Empty search shows no Nearby rows | Nearby loads from offline DB at panel open (±0.5° bbox) merged with `poiCache` + `encountered.db` — install Map Data (PH pack); drive to sample corridor POIs; snapshot origin on open; no pan/zoom required |
+| Passed places not in search after driving | Map Settings → **Remember passed places** ON; needs GPS sampling (200 m / 30 s throttle) — Logcat `EncounteredPlaces`; nav corridor uses Overture only; free drive also samples vector POIs at zoom ≥ 15 |
+| Clear drive-memory POIs | Map Settings → **Clear passed places** — deletes `filesDir/places/encountered.db` rows; toggle **Remember passed places** OFF to stop new writes |
 | Vector tiles show POI labels but no teardrop pins | `queryTilePois()` must use `map.queryRenderedFeatures` on Liberty layer IDs (`poi_r1`, `poi_r7`, `poi_r20`, `poi_transit`) — `VectorSource.querySourceFeatures("poi")` misses rendered POIs; zoom ≥ 15 for Liberty POI labels |
 | Pin tap does not center map | `animateTopDownCamera()` must call `clearViewportPaddingForPreview()` (zero map + tracking padding), defer animation via `mapView.post { }` so it runs after POI detail 40/60 split resize, and `handleMapLayoutChange()` must re-center on `selectedPoi` when `isInTopDownView` — do not re-apply driving padding from `OnLayoutChangeListener` during POI preview |
 | Saved tab empty | Star a place from map tap drawer or search row star button — `LauncherPreferences.savedPlaces` persists up to 50 entries |
@@ -309,7 +311,8 @@ After enabling Launcher Mode, press Home and select **Mix Auto** as the default 
 | No nav-start traffic line | Needs TomTom API key + **Traffic Incidents** product; Tier 1 `findJamOnRoute()` or Tier 2 `trafficDelaySeconds ≥ 120`; prefetch during route overview — skip if IO not done before dive |
 | Maneuver TTS too early/late | Constants in `NavigationVoiceController`: early 35 s, prepare 12 s / 200 m, turn 3 s / 40 m; continue phrase still uses distance on long segments |
 | No nav voice / robotic voice | Map Settings → **Voice navigation** ON; install a better system TTS (Google TTS APK, NekoSpeak/Piper) — app uses `TextToSpeech`, no bundled voice |
-| Nav voice too quiet | Map Settings → **Voice volume** slider (50–100%, default 100%); tap speaker icon to preview "In 500 meters, turn right"; also check head-unit guidance volume in system settings |
+| Nav voice too quiet | Map Settings → **Voice volume** slider (50–200%, default 100%) + optional **Boost guidance volume**; tap speaker icon to preview; raise head-unit Navigation/Guidance system volume |
+| No recenter after pan during navigation | `MapToolbarOverlay` shows `GpsFixed` when `isCameraDetached` (not gated on `!isNavigating`); tap → `recenterCamera()` → `enterNavigationCamera()` |
 | Nav voice during route overview | By design silent until `activateNavigationTracking()` after 10 s overview + camera dive — do not speak from route fetch |
 | Onboarding wizard shows icon only, no title/body | `OnboardingWizard` root must be `Surface(color = OledBlack)` — bare `Box` leaves `LocalContentColor` black and `Car*Text` invisible on OLED background |
 | Re-test permission onboarding wizard | Clear app data or set `launcher_prefs` key `onboarding_version` to `0`; wizard shows when `onboardingVersion < CURRENT_ONBOARDING_VERSION` in `OnboardingWizard.kt` |

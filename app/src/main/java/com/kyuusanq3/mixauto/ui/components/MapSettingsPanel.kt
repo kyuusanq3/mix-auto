@@ -16,23 +16,27 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.kyuusanq3.mixauto.domain.map.CarMapEngine
 import com.kyuusanq3.mixauto.ui.settings.LauncherPreferences
 import com.kyuusanq3.mixauto.ui.settings.LauncherViewModel
 import com.kyuusanq3.mixauto.ui.settings.MapDataViewModel
 import com.kyuusanq3.mixauto.ui.theme.CarBodyText
 import com.kyuusanq3.mixauto.ui.theme.CarDimensions
 import com.kyuusanq3.mixauto.ui.theme.CarLabelText
+import com.kyuusanq3.mixauto.ui.theme.ElectricCyan
 import com.kyuusanq3.mixauto.ui.theme.OledBlack
 import kotlin.math.roundToInt
 
 @Composable
 fun MapSettingsPanelContent(
     mapDataViewModel: MapDataViewModel,
+    mapEngine: CarMapEngine,
     limitSearchDistance: Boolean,
     useVectorTiles: Boolean,
     show3dBuildings: Boolean,
@@ -155,6 +159,27 @@ fun MapSettingsPanelContent(
                 onPuckScaleChange = onPuckScaleChange,
                 onDrivingZoomChange = onDrivingZoomChange,
             )
+
+            SettingsSwitchRow(
+                label = "Remember passed places",
+                checked = launcherViewModel.rememberEncounteredPlaces,
+                onCheckedChange = { enabled ->
+                    if (enabled != launcherViewModel.rememberEncounteredPlaces) {
+                        launcherViewModel.updateRememberEncounteredPlaces(enabled)
+                        mapEngine.setRememberEncounteredPlaces(enabled)
+                    }
+                },
+            )
+
+            TextButton(
+                onClick = { mapEngine.clearEncounteredPlaces() },
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                CarLabelText(
+                    text = "Clear passed places",
+                    style = MaterialTheme.typography.labelLarge.copy(color = ElectricCyan),
+                )
+            }
 
             MapDataSectionContent(
                 viewModel = mapDataViewModel,

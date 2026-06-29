@@ -44,6 +44,7 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -179,6 +180,7 @@ fun NavigationSearchContent(
     onToggleSavedPlace: (SearchResultPlace) -> Unit,
     onPreviewPlace: (SearchResultPlace) -> Unit,
     onDismiss: () -> Unit,
+    onOpenMapData: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
@@ -634,17 +636,31 @@ fun NavigationSearchContent(
                             displayedSuggestionsNearby.isEmpty()
 
                         if (suggestionsEmpty) {
-                            CarBodyText(
-                                text = when {
-                                    !snapshotOriginReliable ->
-                                        "Waiting for GPS — nearby suggestions appear once location is available"
-                                    engine.hasOfflinePlacesDatabase() ->
-                                        "No recent destinations — no nearby places found"
-                                    else ->
-                                        "No recent destinations — install Map Data for nearby suggestions"
-                                },
-                                style = MaterialTheme.typography.bodyLarge,
-                            )
+                            Column(
+                                verticalArrangement = Arrangement.spacedBy(CarDimensions.PaneGap / 2),
+                            ) {
+                                CarBodyText(
+                                    text = when {
+                                        !snapshotOriginReliable ->
+                                            "Waiting for GPS — nearby suggestions appear once location is available"
+                                        engine.hasOfflinePlacesDatabase() ->
+                                            "No recent destinations — drive to build nearby suggestions from places you pass"
+                                        else ->
+                                            "No recent destinations — install a country pack in Map Data for offline nearby search and richer suggestions while driving"
+                                    },
+                                    style = MaterialTheme.typography.bodyLarge,
+                                )
+                                if (snapshotOriginReliable && !engine.hasOfflinePlacesDatabase()) {
+                                    TextButton(onClick = onOpenMapData) {
+                                        CarLabelText(
+                                            text = "Open Map Data",
+                                            style = MaterialTheme.typography.labelLarge.copy(
+                                                color = ElectricCyan,
+                                            ),
+                                        )
+                                    }
+                                }
+                            }
                         } else {
                             Box(
                                 modifier = Modifier

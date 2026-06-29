@@ -52,6 +52,12 @@ interface CarMapEngine {
     /** True when an offline Overture places database is installed on device. */
     fun hasOfflinePlacesDatabase(): Boolean
 
+    /** Enable or disable persisting POIs encountered while driving. */
+    fun setRememberEncounteredPlaces(enabled: Boolean) {}
+
+    /** Delete all persisted encountered-place records. */
+    fun clearEncounteredPlaces() {}
+
     fun setSavedPlaces(places: List<SearchResultPlace>)
 
     /** Compose/host resized the map pane — engine should re-apply preview camera if needed. */

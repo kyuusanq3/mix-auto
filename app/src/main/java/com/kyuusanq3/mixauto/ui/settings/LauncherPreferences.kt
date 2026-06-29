@@ -200,6 +200,12 @@ class LauncherPreferences(context: Context) {
             prefs.edit().putBoolean(KEY_MUSIC_PANE_ENABLED, value).apply()
         }
 
+    var rememberEncounteredPlaces: Boolean
+        get() = prefs.getBoolean(KEY_REMEMBER_ENCOUNTERED_PLACES, true)
+        set(value) {
+            prefs.edit().putBoolean(KEY_REMEMBER_ENCOUNTERED_PLACES, value).apply()
+        }
+
     companion object {
         private const val PREFS_NAME = "launcher_prefs"
         private const val KEY_LEFT_HAND_DRIVE = "lhd"
@@ -229,6 +235,7 @@ class LauncherPreferences(context: Context) {
         private const val KEY_SHOW_STATUS_STRIP = "show_status_strip"
         private const val KEY_SHOW_SYSTEM_STATUS_BAR = "show_system_status_bar"
         private const val KEY_MUSIC_PANE_ENABLED = "music_pane_enabled"
+        private const val KEY_REMEMBER_ENCOUNTERED_PLACES = "remember_encountered_places"
         const val DEFAULT_ALBUM_ART_MODE = "PLAIN"
         const val MAX_RECENT_DESTINATIONS = 10
         const val MAX_SAVED_PLACES = 50
@@ -239,7 +246,7 @@ class LauncherPreferences(context: Context) {
         const val DEFAULT_PUCK_V_OFFSET = 0.4f
         const val DEFAULT_PUCK_SCALE = 1.0f
         const val MIN_NAVIGATION_VOICE_VOLUME = 0.5f
-        const val MAX_NAVIGATION_VOICE_VOLUME = 1.5f
+        const val MAX_NAVIGATION_VOICE_VOLUME = 2.0f
         const val DEFAULT_NAVIGATION_VOICE_VOLUME = 1.0f
 
         private fun placeToJson(place: SearchResultPlace): JSONObject =

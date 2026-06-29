@@ -14,4 +14,5 @@ data class NavTickContext(
     val distToNextManeuverM: Float,
     val speedMps: Float,
     val isRouteOverviewActive: Boolean,
+    val isRerouteInProgress: Boolean = false,
 )

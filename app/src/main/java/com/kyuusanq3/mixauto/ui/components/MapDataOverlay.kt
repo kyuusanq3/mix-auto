@@ -128,8 +128,13 @@ fun MapDataSectionContent(
         verticalArrangement = Arrangement.spacedBy(CarDimensions.DockItemSpacing),
     ) {
         CarBodyText(
-            text = "Download offline Overture POI packs from GitHub (~50 MB compressed per country).",
+            text = "Download a country pack for offline search, nearby suggestions, and remembering places you drive past. Sizes are shown per country below.",
             style = MaterialTheme.typography.bodyMedium,
+        )
+
+        CarLabelText(
+            text = "Places you drive past are remembered on device for search and Nearby suggestions.",
+            style = MaterialTheme.typography.labelMedium,
         )
 
         when (val state = uiState) {

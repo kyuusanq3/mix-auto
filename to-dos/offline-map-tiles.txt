@@ -1,0 +1,12 @@
+Practical recommendation for Mix Auto
+Short term: expose/cache settings — increase MapLibre resource cache budget if the SDK allows it in your version; optional corridor prefetch during nav. Modest improvement, low risk.
+
+Medium term: MapLibre offline regions in Map Data UI, scoped to city or province (not whole country at z17). Bundle automotive style JSON as assets first (to-dos/automotive-vector-style.txt).
+
+Long term (best head-unit experience): MBTiles/PMTiles releases alongside ph_places.db.gz — one “Philippines map pack” + one “Philippines POI pack”, same GitHub release pattern you already use.
+
+Don’t: bulk-save OSM raster tiles from tile.openstreetmap.org while driving — policy violation and huge storage.
+
+Bottom line: Map rendering can be saved for offline use, but it requires deliberate offline tile packs (MapLibre OfflineManager or MBTiles), not just driving around. The app already saves search data offline via Overture; it does not yet save map tiles beyond MapLibre’s small automatic cache.
+
+If you want this implemented, switch to Agent mode and say whether you prefer offline region download UI (Option B) or MBTiles side-load (Option C) — the architecture differs quite a bit.

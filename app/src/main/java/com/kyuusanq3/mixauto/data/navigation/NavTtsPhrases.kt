@@ -7,6 +7,13 @@ import kotlin.math.roundToInt
 object NavTtsPhrases {
 
     const val MIN_CONTINUE_SEGMENT_M = 150.0
+    /** Below this length only the turn cue is spoken. */
+    const val SEGMENT_TURN_ONLY_M = 60f
+    /** Below this length ahead is skipped (prepare + turn only). */
+    const val SEGMENT_SKIP_AHEAD_M = 120f
+    /** Below this length prepare may be suppressed when time-to-turn is short. */
+    const val SEGMENT_FULL_PHASE_M = 200f
+    const val SEGMENT_SUPPRESS_PREPARE_TIME_SEC = 8f
     private const val MIN_NAV_START_DELAY_SEC = 120
 
     fun buildFullInstruction(type: String, modifier: String, name: String): String {

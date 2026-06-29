@@ -4,6 +4,7 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import com.kyuusanq3.mixauto.data.map.MapLibreEngineImpl
 import com.kyuusanq3.mixauto.data.navigation.NavigationVoiceController
+import com.kyuusanq3.mixauto.data.places.EncounteredPlacesRepository
 import com.kyuusanq3.mixauto.data.places.LocalPlacesRepository
 import com.kyuusanq3.mixauto.domain.map.CarMapEngine
 import com.kyuusanq3.mixauto.ui.settings.LauncherPreferences
@@ -15,6 +16,8 @@ import com.kyuusanq3.mixauto.ui.settings.LauncherPreferences
 class MapHostViewModel(application: Application) : AndroidViewModel(application) {
 
     val localPlacesRepository = LocalPlacesRepository(application)
+
+    val encounteredPlacesRepository = EncounteredPlacesRepository(application)
 
     val navigationVoiceController: NavigationVoiceController
 
@@ -29,6 +32,7 @@ class MapHostViewModel(application: Application) : AndroidViewModel(application)
         }
         mapEngine = MapLibreEngineImpl(
             localPlaces = localPlacesRepository,
+            encounteredPlaces = encounteredPlacesRepository,
             navigationVoice = navigationVoiceController,
             initialUseVectorTiles = prefs.useVectorTiles,
             initialShow3dBuildings = prefs.show3dBuildings,
@@ -36,6 +40,7 @@ class MapHostViewModel(application: Application) : AndroidViewModel(application)
             initialPuckHOffset = prefs.puckHorizontalOffset,
             initialPuckVOffset = prefs.puckVerticalOffset,
             initialPuckScale = prefs.puckScale,
+            initialRememberEncounteredPlaces = prefs.rememberEncounteredPlaces,
         ).also { engine ->
             engine.setTrafficEnabled(prefs.showTraffic, prefs.tomTomApiKey)
         }

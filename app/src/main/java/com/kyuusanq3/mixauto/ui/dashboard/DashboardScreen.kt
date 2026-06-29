@@ -256,6 +256,13 @@ fun DashboardScreen(
         }
         launcherViewModel.setActivePanel(dismissToBasePanel(musicPaneEnabled))
     }
+    val onOpenMapData = {
+        if (activePanel == ActivePanel.SEARCH) {
+            launcherViewModel.isDestinationSearchOpen = false
+            launcherViewModel.clearDestinationSearchState()
+        }
+        launcherViewModel.setActivePanel(ActivePanel.MAP_DATA)
+    }
     val onDismissAppDrawer = { launcherViewModel.setActivePanel(dismissToBasePanel(musicPaneEnabled)) }
     val onOpenLauncherSettingsFromDrawer = { launcherViewModel.setActivePanel(ActivePanel.SETTINGS) }
 
@@ -438,6 +445,7 @@ fun DashboardScreen(
                                     mapEngine = mapEngine,
                                     mapDataViewModel = mapDataViewModel,
                                     onDismissPanel = onDismissPanel,
+                                    onOpenMapData = onOpenMapData,
                                     onPreviewSearchPlace = onPreviewSearchPlace,
                                     recentDestinations = recentDestinations,
                                     savedPlaces = savedPlaces,
@@ -573,6 +581,7 @@ fun DashboardScreen(
                                     mapEngine = mapEngine,
                                     mapDataViewModel = mapDataViewModel,
                                     onDismissPanel = onDismissPanel,
+                                    onOpenMapData = onOpenMapData,
                                     onPreviewSearchPlace = onPreviewSearchPlace,
                                     recentDestinations = recentDestinations,
                                     savedPlaces = savedPlaces,
@@ -642,6 +651,7 @@ fun DashboardScreen(
                                     mapEngine = mapEngine,
                                     mapDataViewModel = mapDataViewModel,
                                     onDismissPanel = onDismissPanel,
+                                    onOpenMapData = onOpenMapData,
                                     onPreviewSearchPlace = onPreviewSearchPlace,
                                     recentDestinations = recentDestinations,
                                     savedPlaces = savedPlaces,
@@ -802,6 +812,7 @@ fun DashboardScreen(
                                         mapEngine = mapEngine,
                                         mapDataViewModel = mapDataViewModel,
                                         onDismissPanel = onDismissPanel,
+                                        onOpenMapData = onOpenMapData,
                                         onPreviewSearchPlace = onPreviewSearchPlace,
                                         recentDestinations = recentDestinations,
                                         savedPlaces = savedPlaces,
@@ -951,6 +962,7 @@ fun DashboardScreen(
                                         mapEngine = mapEngine,
                                         mapDataViewModel = mapDataViewModel,
                                         onDismissPanel = onDismissPanel,
+                                        onOpenMapData = onOpenMapData,
                                         onPreviewSearchPlace = onPreviewSearchPlace,
                                         recentDestinations = recentDestinations,
                                         savedPlaces = savedPlaces,
@@ -1050,6 +1062,7 @@ private fun DashboardSecondaryPane(
     mapEngine: CarMapEngine,
     mapDataViewModel: MapDataViewModel,
     onDismissPanel: () -> Unit,
+    onOpenMapData: () -> Unit,
     onPreviewSearchPlace: (SearchResultPlace) -> Unit,
     recentDestinations: List<SearchResultPlace>,
     savedPlaces: List<SearchResultPlace>,
@@ -1114,6 +1127,7 @@ private fun DashboardSecondaryPane(
         mapEngine = mapEngine,
         mapDataViewModel = mapDataViewModel,
         onDismissPanel = onDismissPanel,
+        onOpenMapData = onOpenMapData,
         onPreviewSearchPlace = onPreviewSearchPlace,
         recentDestinations = recentDestinations,
         savedPlaces = savedPlaces,
@@ -1181,6 +1195,7 @@ private fun MediaOrSettingsPane(
     mapEngine: CarMapEngine,
     mapDataViewModel: MapDataViewModel,
     onDismissPanel: () -> Unit,
+    onOpenMapData: () -> Unit,
     onPreviewSearchPlace: (SearchResultPlace) -> Unit,
     recentDestinations: List<SearchResultPlace>,
     savedPlaces: List<SearchResultPlace>,
@@ -1254,6 +1269,7 @@ private fun MediaOrSettingsPane(
                     onToggleSavedPlace = onToggleSavedPlace,
                     onPreviewPlace = onPreviewSearchPlace,
                     onDismiss = onDismissPanel,
+                    onOpenMapData = onOpenMapData,
                     modifier = Modifier.fillMaxSize(),
                 )
             }
@@ -1316,6 +1332,7 @@ private fun MediaOrSettingsPane(
             ActivePanel.MAP_DATA -> {
                 MapSettingsPanelContent(
                     mapDataViewModel = mapDataViewModel,
+                    mapEngine = mapEngine,
                     limitSearchDistance = limitSearchDistance,
                     useVectorTiles = useVectorTiles,
                     show3dBuildings = show3dBuildings,
