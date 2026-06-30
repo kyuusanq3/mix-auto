@@ -125,6 +125,7 @@ enum class ActivePanel {
     MAP_DATA,
     APP_DRAWER,
     SEARCH,
+    ADD_PLACE,
     POI_DETAIL,
     ROUTE_PICKER,
     HIDDEN,

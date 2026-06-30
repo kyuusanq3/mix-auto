@@ -154,6 +154,19 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         destinationSearchState = DestinationSearchUiState()
     }
 
+    var addPlaceLinkState by mutableStateOf(AddPlaceLinkUiState())
+        private set
+
+    fun updateAddPlaceLink(
+        transform: (AddPlaceLinkUiState) -> AddPlaceLinkUiState,
+    ) {
+        addPlaceLinkState = transform(addPlaceLinkState)
+    }
+
+    fun clearAddPlaceLinkState() {
+        addPlaceLinkState = AddPlaceLinkUiState()
+    }
+
     var launchableApps by mutableStateOf<List<LaunchableAppEntry>>(emptyList())
         private set
 
@@ -433,4 +446,11 @@ data class DestinationSearchUiState(
     val snapshotOriginReliable: Boolean = false,
     val hasSearched: Boolean = false,
     val savedFilterActive: Boolean = false,
+)
+
+/** Survives rotation while add-from-link panel is open; cleared when panel dismisses. */
+data class AddPlaceLinkUiState(
+    val linkText: String = "",
+    val errorMessage: String? = null,
+    val isResolving: Boolean = false,
 )

@@ -55,6 +55,7 @@ import com.kyuusanq3.mixauto.data.apps.LaunchableAppEntry
 import com.kyuusanq3.mixauto.domain.map.CarMapEngine
 import com.kyuusanq3.mixauto.domain.map.SearchResultPlace
 import com.kyuusanq3.mixauto.domain.media.MediaPlaybackState
+import com.kyuusanq3.mixauto.ui.components.AddPlaceFromLinkContent
 import com.kyuusanq3.mixauto.ui.components.AppUpdatePrompts
 import com.kyuusanq3.mixauto.ui.components.CarMapViewContainer
 import com.kyuusanq3.mixauto.ui.components.DashboardStatusBar
@@ -220,6 +221,7 @@ fun DashboardScreen(
                 else -> launcherViewModel.setActivePanel(ActivePanel.APP_DRAWER)
             }
             ActivePanel.SEARCH,
+            ActivePanel.ADD_PLACE,
             ActivePanel.POI_DETAIL,
             ActivePanel.MAP_DATA,
             ActivePanel.ROUTE_PICKER,
@@ -273,13 +275,18 @@ fun DashboardScreen(
     }
 
     val isDestinationPanelOpen =
-        activePanel == ActivePanel.SEARCH || activePanel == ActivePanel.POI_DETAIL
+        activePanel == ActivePanel.SEARCH ||
+            activePanel == ActivePanel.ADD_PLACE ||
+            activePanel == ActivePanel.POI_DETAIL
     val isMapSettingsPanelOpen = activePanel == ActivePanel.MAP_DATA
     val onToggleSearch = {
         when (activePanel) {
-            ActivePanel.SEARCH -> {
+            ActivePanel.SEARCH,
+            ActivePanel.ADD_PLACE,
+            -> {
                 launcherViewModel.isDestinationSearchOpen = false
                 launcherViewModel.clearDestinationSearchState()
+                launcherViewModel.clearAddPlaceLinkState()
                 launcherViewModel.setActivePanel(dismissToBasePanel(musicPaneEnabled))
             }
             ActivePanel.POI_DETAIL -> mapEngine.dismissSelectedPoi()
@@ -314,6 +321,17 @@ fun DashboardScreen(
         launcherViewModel.isDestinationSearchOpen = false
         launcherViewModel.setActivePanel(ActivePanel.POI_DETAIL)
     }
+    val onOpenAddFromLink = {
+        launcherViewModel.setActivePanel(ActivePanel.ADD_PLACE)
+    }
+    val onDismissAddPlacePanel = {
+        launcherViewModel.clearAddPlaceLinkState()
+        launcherViewModel.setActivePanel(ActivePanel.SEARCH)
+    }
+    val onConfirmAddPlaceFromLink: (SearchResultPlace) -> Unit = { place ->
+        launcherViewModel.clearAddPlaceLinkState()
+        onPreviewSearchPlace(place)
+    }
     val mapUiState by mapEngine.uiState.collectAsStateWithLifecycle()
     val appUpdateViewModel: AppUpdateViewModel = viewModel()
     val appUpdateState by appUpdateViewModel.uiState.collectAsStateWithLifecycle()
@@ -327,6 +345,7 @@ fun DashboardScreen(
     val isPortrait = configuration.orientation == Configuration.ORIENTATION_PORTRAIT
     val isSplitLockedForOverlay =
         activePanel == ActivePanel.SEARCH ||
+            activePanel == ActivePanel.ADD_PLACE ||
             activePanel == ActivePanel.POI_DETAIL ||
             activePanel == ActivePanel.MAP_DATA ||
             activePanel == ActivePanel.ROUTE_PICKER
@@ -447,6 +466,9 @@ fun DashboardScreen(
                                     onDismissPanel = onDismissPanel,
                                     onOpenMapData = onOpenMapData,
                                     onPreviewSearchPlace = onPreviewSearchPlace,
+                                    onOpenAddFromLink = onOpenAddFromLink,
+                                    onDismissAddPlacePanel = onDismissAddPlacePanel,
+                                    onConfirmAddPlaceFromLink = onConfirmAddPlaceFromLink,
                                     recentDestinations = recentDestinations,
                                     savedPlaces = savedPlaces,
                                     onDestinationSelected = onDestinationSelected,
@@ -583,6 +605,9 @@ fun DashboardScreen(
                                     onDismissPanel = onDismissPanel,
                                     onOpenMapData = onOpenMapData,
                                     onPreviewSearchPlace = onPreviewSearchPlace,
+                                    onOpenAddFromLink = onOpenAddFromLink,
+                                    onDismissAddPlacePanel = onDismissAddPlacePanel,
+                                    onConfirmAddPlaceFromLink = onConfirmAddPlaceFromLink,
                                     recentDestinations = recentDestinations,
                                     savedPlaces = savedPlaces,
                                     onDestinationSelected = onDestinationSelected,
@@ -653,6 +678,9 @@ fun DashboardScreen(
                                     onDismissPanel = onDismissPanel,
                                     onOpenMapData = onOpenMapData,
                                     onPreviewSearchPlace = onPreviewSearchPlace,
+                                    onOpenAddFromLink = onOpenAddFromLink,
+                                    onDismissAddPlacePanel = onDismissAddPlacePanel,
+                                    onConfirmAddPlaceFromLink = onConfirmAddPlaceFromLink,
                                     recentDestinations = recentDestinations,
                                     savedPlaces = savedPlaces,
                                     onDestinationSelected = onDestinationSelected,
@@ -814,6 +842,9 @@ fun DashboardScreen(
                                         onDismissPanel = onDismissPanel,
                                         onOpenMapData = onOpenMapData,
                                         onPreviewSearchPlace = onPreviewSearchPlace,
+                                        onOpenAddFromLink = onOpenAddFromLink,
+                                        onDismissAddPlacePanel = onDismissAddPlacePanel,
+                                        onConfirmAddPlaceFromLink = onConfirmAddPlaceFromLink,
                                         recentDestinations = recentDestinations,
                                         savedPlaces = savedPlaces,
                                         onDestinationSelected = onDestinationSelected,
@@ -964,6 +995,9 @@ fun DashboardScreen(
                                         onDismissPanel = onDismissPanel,
                                         onOpenMapData = onOpenMapData,
                                         onPreviewSearchPlace = onPreviewSearchPlace,
+                                        onOpenAddFromLink = onOpenAddFromLink,
+                                        onDismissAddPlacePanel = onDismissAddPlacePanel,
+                                        onConfirmAddPlaceFromLink = onConfirmAddPlaceFromLink,
                                         recentDestinations = recentDestinations,
                                         savedPlaces = savedPlaces,
                                         onDestinationSelected = onDestinationSelected,
@@ -1064,6 +1098,9 @@ private fun DashboardSecondaryPane(
     onDismissPanel: () -> Unit,
     onOpenMapData: () -> Unit,
     onPreviewSearchPlace: (SearchResultPlace) -> Unit,
+    onOpenAddFromLink: () -> Unit,
+    onDismissAddPlacePanel: () -> Unit,
+    onConfirmAddPlaceFromLink: (SearchResultPlace) -> Unit,
     recentDestinations: List<SearchResultPlace>,
     savedPlaces: List<SearchResultPlace>,
     onDestinationSelected: (SearchResultPlace) -> Unit,
@@ -1129,6 +1166,9 @@ private fun DashboardSecondaryPane(
         onDismissPanel = onDismissPanel,
         onOpenMapData = onOpenMapData,
         onPreviewSearchPlace = onPreviewSearchPlace,
+        onOpenAddFromLink = onOpenAddFromLink,
+        onDismissAddPlacePanel = onDismissAddPlacePanel,
+        onConfirmAddPlaceFromLink = onConfirmAddPlaceFromLink,
         recentDestinations = recentDestinations,
         savedPlaces = savedPlaces,
         onDestinationSelected = onDestinationSelected,
@@ -1197,6 +1237,9 @@ private fun MediaOrSettingsPane(
     onDismissPanel: () -> Unit,
     onOpenMapData: () -> Unit,
     onPreviewSearchPlace: (SearchResultPlace) -> Unit,
+    onOpenAddFromLink: () -> Unit,
+    onDismissAddPlacePanel: () -> Unit,
+    onConfirmAddPlaceFromLink: (SearchResultPlace) -> Unit,
     recentDestinations: List<SearchResultPlace>,
     savedPlaces: List<SearchResultPlace>,
     onDestinationSelected: (SearchResultPlace) -> Unit,
@@ -1270,6 +1313,15 @@ private fun MediaOrSettingsPane(
                     onPreviewPlace = onPreviewSearchPlace,
                     onDismiss = onDismissPanel,
                     onOpenMapData = onOpenMapData,
+                    onOpenAddFromLink = onOpenAddFromLink,
+                    modifier = Modifier.fillMaxSize(),
+                )
+            }
+            ActivePanel.ADD_PLACE -> {
+                AddPlaceFromLinkContent(
+                    mapEngine = mapEngine,
+                    onDismiss = onDismissAddPlacePanel,
+                    onConfirmSuccess = onConfirmAddPlaceFromLink,
                     modifier = Modifier.fillMaxSize(),
                 )
             }

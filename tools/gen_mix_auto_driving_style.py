@@ -10,28 +10,35 @@ from pathlib import Path
 
 LIBERTY_URL = "https://tiles.openfreemap.org/styles/liberty"
 OUT_PATH = Path(__file__).resolve().parents[1] / "app/src/main/assets/map/mix-auto-driving.json"
-MAIN_ROAD_FACTOR = 3.0
-MINOR_ROAD_FACTOR = 3.4
+MAIN_ROAD_FACTOR = 2.75
+MINOR_ROAD_FACTOR = 3.1
 # MapLibreEngineImpl.applyAutomotiveRoadBoost() applies AUTOMOTIVE_*_ROAD_EXTRA on top at style load.
 LABEL_FACTOR = 1.35
 LABEL_MIN_ZOOM = 16
 # Road boost ramps with zoom so parallel streets do not blob together when zoomed out.
-BOOST_ZOOM_START = 10.0
+MAIN_BOOST_ZOOM_START = 13.0
+MINOR_BOOST_ZOOM_START = 15.0
 BOOST_ZOOM_FULL = 17.0
 
 
-def factor_at_zoom(z: float, max_factor: float) -> float:
+def factor_at_zoom(z: float, max_factor: float, zoom_start: float) -> float:
     if max_factor <= 1.0:
         return max_factor
-    if z <= BOOST_ZOOM_START:
+    if z <= zoom_start:
         return 1.0
     if z >= BOOST_ZOOM_FULL:
         return max_factor
-    t = (z - BOOST_ZOOM_START) / (BOOST_ZOOM_FULL - BOOST_ZOOM_START)
+    t = (z - zoom_start) / (BOOST_ZOOM_FULL - zoom_start)
     return 1.0 + t * (max_factor - 1.0)
 
 
-def boost_interpolate(obj, factor: float, min_zoom: float = 0, zoom_relative: bool = False):
+def boost_interpolate(
+    obj,
+    factor: float,
+    min_zoom: float = 0,
+    zoom_relative: bool = False,
+    boost_zoom_start: float = MAIN_BOOST_ZOOM_START,
+):
     if not isinstance(obj, list):
         return obj
     if len(obj) >= 4 and obj[0] == "interpolate" and obj[2] == ["zoom"]:
@@ -46,17 +53,19 @@ def boost_interpolate(obj, factor: float, min_zoom: float = 0, zoom_relative: bo
                 z, value = obj[i], obj[i + 1]
                 if value > 0 and z >= min_zoom:
                     effective = (
-                        factor_at_zoom(z, factor) if zoom_relative else factor
+                        factor_at_zoom(z, factor, boost_zoom_start)
+                        if zoom_relative
+                        else factor
                     )
                     out.extend([z, value * effective])
                 else:
                     out.extend([z, value])
                 i += 2
             else:
-                out.append(boost_interpolate(obj[i], factor, min_zoom, zoom_relative))
+                out.append(boost_interpolate(obj[i], factor, min_zoom, zoom_relative, boost_zoom_start))
                 i += 1
         return out
-    return [boost_interpolate(item, factor, min_zoom, zoom_relative) for item in obj]
+    return [boost_interpolate(item, factor, min_zoom, zoom_relative, boost_zoom_start) for item in obj]
 
 
 def is_road_line_layer(layer_id: str) -> bool:
@@ -71,6 +80,15 @@ def is_road_line_layer(layer_id: str) -> bool:
     if "path" in layer_id or "pedestrian" in layer_id or "rail" in layer_id:
         return False
     return True
+
+
+def road_boost_zoom_start(layer_id: str) -> float:
+    if any(
+        token in layer_id
+        for token in ("minor", "service", "track", "tertiary", "living", "street", "link")
+    ):
+        return MINOR_BOOST_ZOOM_START
+    return MAIN_BOOST_ZOOM_START
 
 
 def road_factor(layer_id: str) -> float:
@@ -106,6 +124,7 @@ def main() -> int:
                     paint["line-width"],
                     road_factor(layer_id),
                     zoom_relative=True,
+                    boost_zoom_start=road_boost_zoom_start(layer_id),
                 )
         if layer_id in ("highway-name-minor", "highway-name-major"):
             layout = layer.setdefault("layout", {})

@@ -26,6 +26,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -35,6 +36,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.outlined.Star
@@ -181,6 +183,7 @@ fun NavigationSearchContent(
     onPreviewPlace: (SearchResultPlace) -> Unit,
     onDismiss: () -> Unit,
     onOpenMapData: () -> Unit = {},
+    onOpenAddFromLink: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
@@ -497,32 +500,48 @@ fun NavigationSearchContent(
                     closeContentDescription = "Close search",
                     compact = true,
                     trailingContent = {
-                        IconButton(
-                            onClick = {
-                                launcherViewModel.updateDestinationSearch { state ->
-                                    state.copy(savedFilterActive = !state.savedFilterActive)
-                                }
-                            },
-                            modifier = Modifier.size(CarDimensions.PanelCompactHeaderTapTarget),
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(CarDimensions.PaneGap / 4),
+                            verticalAlignment = Alignment.CenterVertically,
                         ) {
-                            Icon(
-                                imageVector = if (savedFilterActive) {
-                                    Icons.Filled.Star
-                                } else {
-                                    Icons.Outlined.Star
+                            IconButton(
+                                onClick = onOpenAddFromLink,
+                                modifier = Modifier.size(CarDimensions.PanelCompactHeaderTapTarget),
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Filled.Add,
+                                    contentDescription = "Add place from Google Maps link",
+                                    modifier = Modifier.size(CarDimensions.PanelCompactHeaderIconSize),
+                                    tint = MaterialTheme.colorScheme.primary,
+                                )
+                            }
+                            IconButton(
+                                onClick = {
+                                    launcherViewModel.updateDestinationSearch { state ->
+                                        state.copy(savedFilterActive = !state.savedFilterActive)
+                                    }
                                 },
-                                contentDescription = if (savedFilterActive) {
-                                    "Show all suggestions"
-                                } else {
-                                    "Show saved places only"
-                                },
-                                modifier = Modifier.size(CarDimensions.PanelCompactHeaderIconSize),
-                                tint = if (savedFilterActive) {
-                                    Color(0xFFFFD700)
-                                } else {
-                                    MaterialTheme.colorScheme.primary
-                                },
-                            )
+                                modifier = Modifier.size(CarDimensions.PanelCompactHeaderTapTarget),
+                            ) {
+                                Icon(
+                                    imageVector = if (savedFilterActive) {
+                                        Icons.Filled.Star
+                                    } else {
+                                        Icons.Outlined.Star
+                                    },
+                                    contentDescription = if (savedFilterActive) {
+                                        "Show all suggestions"
+                                    } else {
+                                        "Show saved places only"
+                                    },
+                                    modifier = Modifier.size(CarDimensions.PanelCompactHeaderIconSize),
+                                    tint = if (savedFilterActive) {
+                                        Color(0xFFFFD700)
+                                    } else {
+                                        MaterialTheme.colorScheme.primary
+                                    },
+                                )
+                            }
                         }
                     },
                 )

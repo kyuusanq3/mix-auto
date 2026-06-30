@@ -530,7 +530,7 @@ class MapLibreEngineImpl(
             val layerId = layer.id
             if (!isAutomotiveRoadLineLayer(layerId)) return@forEach
             val factor = automotiveRoadWidthFactor(layerId)
-            val zoomFactor = automotiveRoadWidthZoomFactor(factor)
+            val zoomFactor = automotiveRoadWidthZoomFactor(layerId, factor)
             val widthProp = layer.lineWidth
             when {
                 widthProp.isExpression -> {
@@ -553,12 +553,17 @@ class MapLibreEngineImpl(
         }
     }
 
-    /** 1.0× below [AUTOMOTIVE_BOOST_ZOOM_START]; full [baseFactor] at nav zoom and above. */
-    private fun automotiveRoadWidthZoomFactor(baseFactor: Float): Expression {
+    /** 1.0× below per-class zoom start; full [baseFactor] at nav zoom and above. */
+    private fun automotiveRoadWidthZoomFactor(layerId: String, baseFactor: Float): Expression {
+        val zoomStart = if (isAutomotiveMinorRoadLineLayer(layerId)) {
+            AUTOMOTIVE_MINOR_BOOST_ZOOM_START
+        } else {
+            AUTOMOTIVE_MAIN_BOOST_ZOOM_START
+        }
         return Expression.interpolate(
             Expression.linear(),
             Expression.zoom(),
-            Expression.literal(AUTOMOTIVE_BOOST_ZOOM_START),
+            Expression.literal(zoomStart),
             Expression.literal(1.0f),
             Expression.literal(AUTOMOTIVE_BOOST_ZOOM_FULL),
             Expression.literal(baseFactor),
@@ -578,7 +583,7 @@ class MapLibreEngineImpl(
         return true
     }
 
-    private fun automotiveRoadWidthFactor(layerId: String): Float {
+    private fun isAutomotiveMinorRoadLineLayer(layerId: String): Boolean {
         val minorTokens = listOf(
             "minor",
             "service",
@@ -588,7 +593,11 @@ class MapLibreEngineImpl(
             "street",
             "link",
         )
-        return if (minorTokens.any { layerId.contains(it) }) {
+        return minorTokens.any { layerId.contains(it) }
+    }
+
+    private fun automotiveRoadWidthFactor(layerId: String): Float {
+        return if (isAutomotiveMinorRoadLineLayer(layerId)) {
             AUTOMOTIVE_MINOR_ROAD_EXTRA
         } else {
             AUTOMOTIVE_MAIN_ROAD_EXTRA
@@ -5103,9 +5112,10 @@ class MapLibreEngineImpl(
         private const val RASTER_BASE_LAYER_ID = "osm"
         private const val TRAFFIC_SOURCE_ID = "mix-traffic-source"
         private const val TRAFFIC_LAYER_ID = "mix-traffic-layer"
-        private const val AUTOMOTIVE_MAIN_ROAD_EXTRA = 1.65f
-        private const val AUTOMOTIVE_MINOR_ROAD_EXTRA = 1.8f
-        private const val AUTOMOTIVE_BOOST_ZOOM_START = 10.0
+        private const val AUTOMOTIVE_MAIN_ROAD_EXTRA = 1.55f
+        private const val AUTOMOTIVE_MINOR_ROAD_EXTRA = 1.65f
+        private const val AUTOMOTIVE_MAIN_BOOST_ZOOM_START = 13.0
+        private const val AUTOMOTIVE_MINOR_BOOST_ZOOM_START = 15.0
         private const val AUTOMOTIVE_BOOST_ZOOM_FULL = 17.0
         private const val REROUTE_THRESHOLD_M = 75f
         private const val SNAP_TO_ROUTE_MAX_M = 40f
