@@ -32,7 +32,15 @@ object GoogleMapsLinkParser {
     private val LAT_3D_REGEX = Regex("""!3d(-?\d+(?:\.\d+)?)""")
     private val LNG_4D_REGEX = Regex("""!4d(-?\d+(?:\.\d+)?)""")
     private val LNG_2D_REGEX = Regex("""!2d(-?\d+(?:\.\d+)?)""")
+    private val ENC_DATA_3D_4D_REGEX = Regex(
+        """%213d(-?\d+(?:\.\d+)?)%214d(-?\d+(?:\.\d+)?)""",
+        RegexOption.IGNORE_CASE,
+    )
+    private val ENC_LAT_3D_REGEX = Regex("""%213d(-?\d+(?:\.\d+)?)""", RegexOption.IGNORE_CASE)
+    private val ENC_LNG_4D_REGEX = Regex("""%214d(-?\d+(?:\.\d+)?)""", RegexOption.IGNORE_CASE)
+    private val ENC_LNG_2D_REGEX = Regex("""%212d(-?\d+(?:\.\d+)?)""", RegexOption.IGNORE_CASE)
     private val PLACE_NAME_REGEX = Regex("""/maps/(?:place|preview/place)/([^/@?]+)""")
+    private val QUERY_PLACE_NAME_REGEX = Regex("""[?&]q=([^&]+)""")
 
     private data class ExpandedLink(
         val finalUrl: String,
@@ -40,7 +48,7 @@ object GoogleMapsLinkParser {
     )
 
     suspend fun resolve(input: String): Result<ParsedMapCoordinates> = withContext(Dispatchers.IO) {
-        val trimmed = input.trim()
+        val trimmed = sanitizeInput(input)
         if (trimmed.isBlank()) {
             return@withContext Result.failure(IllegalArgumentException("Link is empty"))
         }
@@ -81,8 +89,9 @@ object GoogleMapsLinkParser {
         parsed: ParsedMapCoordinates,
         redirectUrl: String,
     ): ParsedMapCoordinates {
-        if (!parsed.suggestedName.isNullOrBlank()) return parsed
-        val name = extractPlaceName(redirectUrl) ?: return parsed
+        val redirectName = extractPlaceName(redirectUrl)
+        val parsedName = parsed.suggestedName?.let(::formatPlaceDisplayName)?.takeIf { it.isNotBlank() }
+        val name = parsedName ?: redirectName ?: return parsed
         return parsed.copy(suggestedName = name)
     }
 
@@ -132,6 +141,16 @@ object GoogleMapsLinkParser {
     }
 
     private fun parseDataParameterCoords(text: String): ParsedMapCoordinates? {
+        parseDecodedProtobufCoords(text)?.let { return it }
+        parseEncodedProtobufCoords(text)?.let { return it }
+        val normalized = normalizeForParsing(text)
+        if (normalized !== text) {
+            parseDecodedProtobufCoords(normalized)?.let { return it }
+        }
+        return null
+    }
+
+    private fun parseDecodedProtobufCoords(text: String): ParsedMapCoordinates? {
         DATA_3D_4D_REGEX.findAll(text).lastOrNull()?.let { match ->
             return coordsFromMatch(match.groupValues[1], match.groupValues[2], text)
         }
@@ -168,8 +187,49 @@ object GoogleMapsLinkParser {
         )
     }
 
+    private fun parseEncodedProtobufCoords(text: String): ParsedMapCoordinates? {
+        ENC_DATA_3D_4D_REGEX.findAll(text).lastOrNull()?.let { match ->
+            return coordsFromMatch(match.groupValues[1], match.groupValues[2], text)
+        }
+
+        val latMatches = ENC_LAT_3D_REGEX.findAll(text)
+            .mapNotNull { match ->
+                val value = match.groupValues[1].toDoubleOrNull() ?: return@mapNotNull null
+                if (value !in -90.0..90.0) return@mapNotNull null
+                match.range.first to value
+            }
+            .toList()
+        if (latMatches.isEmpty()) return null
+
+        val lngMatches = (ENC_LNG_4D_REGEX.findAll(text) + ENC_LNG_2D_REGEX.findAll(text))
+            .mapNotNull { match ->
+                val value = match.groupValues[1].toDoubleOrNull() ?: return@mapNotNull null
+                if (value !in -180.0..180.0) return@mapNotNull null
+                match.range.first to value
+            }
+            .sortedBy { it.first }
+
+        val latIndex = latMatches.last().first
+        val (_, lat) = latMatches.last()
+        val lng = lngMatches
+            .filter { (index, _) -> kotlin.math.abs(index - latIndex) <= 500 }
+            .minByOrNull { (index, _) -> kotlin.math.abs(index - latIndex) }
+            ?.second
+            ?: return null
+
+        return coordsFromMatch(
+            latText = lat.toString(),
+            lngText = lng.toString(),
+            sourceText = text,
+        )
+    }
+
     private fun normalizeForParsing(text: String): String {
         val withoutEntities = text.replace("&amp;", "&")
+        // Full Google Maps HTML contains bare '%' (CSS, etc.) that breaks URLDecoder.decode.
+        if (withoutEntities.length > 2_048) {
+            return withoutEntities
+        }
         return try {
             URLDecoder.decode(withoutEntities, Charsets.UTF_8.name())
         } catch (_: IllegalArgumentException) {
@@ -210,6 +270,8 @@ object GoogleMapsLinkParser {
             instanceFollowRedirects = true
             requestMethod = "GET"
             setRequestProperty("User-Agent", USER_AGENT)
+            setRequestProperty("Accept", "text/html,application/xhtml+xml,*/*")
+            setRequestProperty("Accept-Language", "en-US,en;q=0.9")
             connectTimeout = CONNECT_TIMEOUT_MS
             readTimeout = READ_TIMEOUT_MS
         }
@@ -243,11 +305,40 @@ object GoogleMapsLinkParser {
 
     private fun extractPlaceName(text: String): String? {
         val normalized = normalizeForParsing(text)
-        val match = PLACE_NAME_REGEX.find(normalized) ?: return null
-        val encoded = match.groupValues[1]
-        val decoded = URLDecoder.decode(encoded.replace('+', ' '), Charsets.UTF_8.name())
-            .trim()
-            .trimEnd('/')
-        return decoded.takeIf { it.isNotBlank() }
+        PLACE_NAME_REGEX.find(normalized)?.let { match ->
+            return formatPlaceDisplayName(match.groupValues[1]).takeIf { it.isNotBlank() }
+        }
+        QUERY_PLACE_NAME_REGEX.find(normalized)?.let { match ->
+            val candidate = match.groupValues[1].trim()
+            if (PLAIN_COORDS_REGEX.matches(candidate)) return null
+            return formatPlaceDisplayName(candidate).takeIf { it.isNotBlank() }
+        }
+        return null
     }
+
+    /** Decodes URL-encoded place text and keeps only the primary name segment. */
+    internal fun formatPlaceDisplayName(raw: String): String {
+        val plusAsSpace = raw.replace('+', ' ')
+        val decoded = try {
+            URLDecoder.decode(plusAsSpace, Charsets.UTF_8.name())
+        } catch (_: IllegalArgumentException) {
+            plusAsSpace
+        }
+        // %2B decodes to '+' — treat any remaining plus signs as spaces for display.
+        return primaryPlaceName(decoded.replace('+', ' ').trim())
+    }
+
+    /** Google Maps place paths often encode the full address after the business name. */
+    internal fun primaryPlaceName(decoded: String): String {
+        val trimmed = decoded.trim().trimEnd(',')
+        val commaIndex = trimmed.indexOf(',')
+        return if (commaIndex < 0) trimmed else trimmed.substring(0, commaIndex).trim()
+    }
+
+    private fun sanitizeInput(text: String): String = text
+        .replace("\u200B", "")
+        .replace("\u200C", "")
+        .replace("\u200D", "")
+        .replace("\uFEFF", "")
+        .trim()
 }

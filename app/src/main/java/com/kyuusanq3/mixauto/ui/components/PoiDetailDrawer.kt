@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.outlined.Star
 import androidx.compose.material3.Button
@@ -196,6 +197,18 @@ private fun PoiDetailCardContent(
                         )
                     },
                     singleLine = true,
+                    trailingIcon = if (customName.isNotEmpty()) {
+                        {
+                            IconButton(onClick = { customName = "" }) {
+                                Icon(
+                                    imageVector = Icons.Filled.Clear,
+                                    contentDescription = "Clear pin name",
+                                )
+                            }
+                        }
+                    } else {
+                        null
+                    },
                     colors = TextFieldDefaults.colors(
                         focusedContainerColor = DeepCharcoal,
                         unfocusedContainerColor = DeepCharcoal,

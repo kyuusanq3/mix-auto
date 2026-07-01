@@ -201,7 +201,6 @@ class MapLibreEngineImpl(
     private var hasSnappedCameraToGps = false
     private var locationEngine: LocationEngine? = null
     private var rawLocationEngine: LocationEngine? = null
-    private var locationEngineCallback: LocationEngineCallback<LocationEngineResult>? = null
     private var freshLocationListener: LocationListener? = null
     private var pendingLocationActivation = false
     private var pendingLocationFix: Location? = null
@@ -272,6 +271,9 @@ class MapLibreEngineImpl(
     private var navStartTrafficEligible = false
     private var drivingTilePrefetcher: DrivingTilePrefetcher? = null
     private var lastDrivingSpeedMps: Float = 0f
+    /** Hysteresis gate for speed-based lookahead padding (enter 2.5 m/s, exit 1.5 m/s). */
+    private var lookaheadPaddingActive: Boolean = false
+    private var routeSnapEngaged: Boolean = false
 
     override fun createMapView(context: Context): View {
         mapView?.let { existing ->
@@ -487,12 +489,15 @@ class MapLibreEngineImpl(
     private fun forceLocationUpdateForImmediateRender(
         map: MapLibreMap,
         bypassThrottle: Boolean = false,
+        allowDuringSmoothing: Boolean = false,
     ) {
+        if (!allowDuringSmoothing && shouldSmoothPuckMotion()) return
         val now = System.currentTimeMillis()
         if (!bypassThrottle && now - lastForcePuckRenderMs < FORCE_PUCK_RENDER_MIN_MS) return
         val component = map.locationComponent
         if (!component.isLocationComponentActivated || !component.isLocationComponentEnabled) return
-        val location = component.lastKnownLocation
+        val location = smoothingLocationEngine?.currentDisplayLocation()
+            ?: component.lastKnownLocation
             ?: lastKnownLocation?.let { ll ->
                 Location("forced").apply {
                     latitude = ll.latitude
@@ -709,10 +714,6 @@ class MapLibreEngineImpl(
         removeFreshLocationListener()
         smoothingLocationEngine?.reset()
         smoothingLocationEngine = null
-        locationEngineCallback?.let { callback ->
-            rawLocationEngine?.removeLocationUpdates(callback)
-        }
-        locationEngineCallback = null
         locationEngine = null
         rawLocationEngine = null
         drivingTilePrefetcher?.cancel()
@@ -1220,6 +1221,8 @@ class MapLibreEngineImpl(
         }
         updateLocationEngineInterval()
         smoothingLocationEngine?.reset()
+        lookaheadPaddingActive = false
+        routeSnapEngaged = false
     }
 
     override fun dismissSelectedPoi() {
@@ -1274,7 +1277,7 @@ class MapLibreEngineImpl(
             if (isSavedPlace(place)) {
                 clearCustomPin()
             } else {
-                placeCustomPin(place.latitude, place.longitude, pending = false)
+                placeCustomPin(place.latitude, place.longitude, pending = true)
             }
         } else {
             clearCustomPin()
@@ -1501,20 +1504,22 @@ class MapLibreEngineImpl(
             return
         }
         if (!state.isCameraDetached) {
-            lastAppliedTrackingPadding = null
-            lastEngagedTrackingPadding = null
             val component = map.locationComponent
             val componentReady = component.isLocationComponentActivated &&
                 component.isLocationComponentEnabled
             val trackingGps = componentReady && component.cameraMode == CameraMode.TRACKING_GPS
-            if (trackingGps) {
-                applyDrivingTrackingPadding(map)
-                forceLocationUpdateForImmediateRender(map, bypassThrottle = true)
-            } else {
-                applyDrivingViewportPadding(map)
-                applyDrivingTrackingPadding(map)
-                if (state.isNavigating) {
-                    forceLocationUpdateForImmediateRender(map, bypassThrottle = true)
+            val padding = computeDrivingViewportPadding(map)
+            val paddingKey = intArrayOf(padding.left, padding.top, padding.right, padding.bottom)
+            val paddingChanged = lastEngagedTrackingPadding?.contentEquals(paddingKey) != true
+            if (paddingChanged) {
+                if (trackingGps) {
+                    applyDrivingTrackingPadding(map)
+                } else {
+                    applyDrivingViewportPadding(map)
+                    applyDrivingTrackingPadding(map)
+                    if (state.isNavigating) {
+                        forceLocationUpdateForImmediateRender(map, bypassThrottle = true)
+                    }
                 }
             }
             if (state.isNavigating && componentReady && component.cameraMode != CameraMode.TRACKING_GPS) {
@@ -1536,11 +1541,19 @@ class MapLibreEngineImpl(
         val trackingGps = componentReady && component.cameraMode == CameraMode.TRACKING_GPS
         if (trackingGps) {
             applyDrivingTrackingPadding(map)
-            forceLocationUpdateForImmediateRender(map, bypassThrottle = bypassRenderThrottle)
+            forceLocationUpdateForImmediateRender(
+                map,
+                bypassThrottle = bypassRenderThrottle,
+                allowDuringSmoothing = true,
+            )
         } else {
             applyDrivingViewportPadding(map)
             applyDrivingTrackingPadding(map)
-            forceLocationUpdateForImmediateRender(map, bypassThrottle = bypassRenderThrottle)
+            forceLocationUpdateForImmediateRender(
+                map,
+                bypassThrottle = bypassRenderThrottle,
+                allowDuringSmoothing = true,
+            )
         }
         if (_uiState.value.isNavigating && componentReady && component.cameraMode != CameraMode.TRACKING_GPS) {
             activateNavigationTracking(componentReady)
@@ -1587,6 +1600,14 @@ class MapLibreEngineImpl(
         savedPlacesKeys = places.map { savedPlaceKey(it) }.toSet()
         updatePoiLayerFromCache()
         updateSavedPlacesLayer(places)
+        val selected = _uiState.value.selectedPoi
+        if (selected != null && selected.isDroppedPin) {
+            if (isSavedPlace(selected)) {
+                clearCustomPin()
+            } else {
+                placeCustomPin(selected.latitude, selected.longitude, pending = true)
+            }
+        }
     }
 
     private fun applyFreeDriveToMap(map: MapLibreMap) {
@@ -2062,10 +2083,10 @@ class MapLibreEngineImpl(
 
         val alreadyTracking = component.cameraMode == CameraMode.TRACKING_GPS &&
             component.renderMode == RenderMode.GPS
-        if (!alreadyTracking) {
-            component.renderMode = RenderMode.GPS
-            component.cameraMode = CameraMode.TRACKING_GPS
-        }
+        if (alreadyTracking) return
+
+        component.renderMode = RenderMode.GPS
+        component.cameraMode = CameraMode.TRACKING_GPS
         component.setMaxAnimationFps(Integer.MAX_VALUE)
         applyDrivingTrackingPadding(map)
     }
@@ -3053,23 +3074,56 @@ class MapLibreEngineImpl(
     )
 
     private fun computeDrivingViewportPadding(map: MapLibreMap): ViewportPadding {
-        val lookaheadFrac = lookaheadTopFraction(lastDrivingSpeedMps)
+        val lookaheadFrac = bucketedLookaheadTopFraction(lastDrivingSpeedMps)
         val topFraction = (puckVerticalOffset + lookaheadFrac).coerceAtMost(0.55f)
         val w = map.width
         val h = map.height
         if (w > 0 && h > 0) {
             return ViewportPadding(
-                left = (w * puckHorizontalOffset).toInt(),
-                top = (h * topFraction).toInt(),
+                left = quantizePaddingPx((w * puckHorizontalOffset).toInt()),
+                top = quantizePaddingPx((h * topFraction).toInt()),
             )
         }
         val dm = appContext?.resources?.displayMetrics
         val fallbackW = dm?.widthPixels?.takeIf { it > 0 } ?: 1080
         val fallbackH = dm?.heightPixels?.takeIf { it > 0 } ?: 1920
         return ViewportPadding(
-            left = (fallbackW * puckHorizontalOffset).toInt(),
-            top = (fallbackH * topFraction).toInt(),
+            left = quantizePaddingPx((fallbackW * puckHorizontalOffset).toInt()),
+            top = quantizePaddingPx((fallbackH * topFraction).toInt()),
         )
+    }
+
+    private fun quantizePaddingPx(px: Int): Int {
+        val density = appContext?.resources?.displayMetrics?.density ?: 1f
+        val stepPx = (PADDING_QUANTIZE_DP * density).toInt().coerceAtLeast(1)
+        return (px / stepPx) * stepPx
+    }
+
+    private fun updateLookaheadPaddingState(speedMps: Float) {
+        if (!lookaheadPaddingActive && speedMps >= LOOKAHEAD_ENTER_SPEED_MPS) {
+            lookaheadPaddingActive = true
+        } else if (lookaheadPaddingActive && speedMps < LOOKAHEAD_EXIT_SPEED_MPS) {
+            lookaheadPaddingActive = false
+        }
+    }
+
+    private fun bucketedLookaheadTopFraction(speedMps: Float): Float {
+        if (!lookaheadPaddingActive) return 0f
+        val bucketedSpeed = when {
+            speedMps < 5f -> 3.5f
+            speedMps < 12f -> 8f
+            else -> 20f
+        }
+        return lookaheadTopFraction(bucketedSpeed)
+    }
+
+    private fun maybeApplyDrivingPaddingForSpeedChange(map: MapLibreMap) {
+        if (isRouteOverviewActive() || navigationCameraTransitionActive) return
+        if (_uiState.value.isInTopDownView || _uiState.value.isCameraDetached) return
+        val padding = computeDrivingViewportPadding(map)
+        val paddingKey = intArrayOf(padding.left, padding.top, padding.right, padding.bottom)
+        if (lastEngagedTrackingPadding?.contentEquals(paddingKey) == true) return
+        applyDrivingTrackingPadding(map)
     }
 
     private fun lookaheadTopFraction(speedMps: Float): Float {
@@ -3104,7 +3158,9 @@ class MapLibreEngineImpl(
         lastAppliedTrackingPadding = paddingKey
         lastEngagedTrackingPadding = paddingKey
         applyPaddingWhileTrackingIfEngaged(component, padding)
-        forceLocationUpdateForImmediateRender(map)
+        if (!shouldSmoothPuckMotion()) {
+            forceLocationUpdateForImmediateRender(map)
+        }
     }
 
     private fun registerPoiInteractions(map: MapLibreMap) {
@@ -3295,14 +3351,6 @@ class MapLibreEngineImpl(
                 } else {
                     state
                 }
-            }
-            val stillSelected = _uiState.value.selectedPoi
-            if (stillSelected?.isDroppedPin == true &&
-                stillSelected.latitude == lat &&
-                stillSelected.longitude == lng &&
-                !isSavedPlace(stillSelected)
-            ) {
-                placeCustomPin(lat, lng, pending = false)
             }
         }
     }
@@ -3993,7 +4041,7 @@ class MapLibreEngineImpl(
             rawLocationEngine?.getLastLocation(object : LocationEngineCallback<LocationEngineResult> {
                 override fun onSuccess(result: LocationEngineResult) {
                     result.lastLocation?.let { location ->
-                        applyAndroidLocation(location, snapCamera = !hasSnappedCameraToGps)
+                        onLocationFixForAppLogic(location)
                     }
                 }
 
@@ -4001,10 +4049,19 @@ class MapLibreEngineImpl(
                     Log.w(TAG, "Initial location fetch failed: ${exception.message}")
                 }
             })
-            rawLocationEngine?.let { registerSpeedUpdates(it) }
         }.onFailure { error ->
             Log.w(TAG, "Failed to activate LocationComponent: ${error.message}", error)
         }
+    }
+
+    private fun onLocationFixForAppLogic(location: Location) {
+        applyAndroidLocation(location, snapCamera = !hasSnappedCameraToGps)
+        val speedKmh = if (location.hasSpeed()) {
+            (location.speed * 3.6f).toInt().coerceAtLeast(0)
+        } else {
+            0
+        }
+        _uiState.update { it.copy(currentSpeed = speedKmh) }
     }
 
     private fun createLocationEngine(context: Context): LocationEngine {
@@ -4022,6 +4079,7 @@ class MapLibreEngineImpl(
                 }
             },
             shouldEmit = ::shouldEmitPuckFix,
+            onRawFix = ::onLocationFixForAppLogic,
         )
         val smoothing = SmoothingLocationEngine(
             delegate = enriched,
@@ -4042,8 +4100,20 @@ class MapLibreEngineImpl(
     }
 
     private fun blendSnapToRoute(location: Location): Location? {
-        val projection = projectionForLocation(location) ?: return null
-        if (projection.distToRouteM > SNAP_TO_ROUTE_MAX_M) return null
+        val projection = projectionForLocation(location) ?: run {
+            routeSnapEngaged = false
+            return null
+        }
+        val releaseThreshold = if (routeSnapEngaged) {
+            SNAP_TO_ROUTE_RELEASE_M
+        } else {
+            SNAP_TO_ROUTE_MAX_M
+        }
+        if (projection.distToRouteM > releaseThreshold) {
+            routeSnapEngaged = false
+            return null
+        }
+        routeSnapEngaged = true
         val speed = if (location.hasSpeed()) location.speed else 0f
         if (speed < HIGH_SPEED_SNAP_BLEND_MPS) {
             return Location(location).apply {
@@ -4058,12 +4128,8 @@ class MapLibreEngineImpl(
         }
     }
 
-    private fun currentLocationIntervalMs(): Long {
-        return if (_uiState.value.isNavigating) LOCATION_INTERVAL_NAV_MS else LOCATION_INTERVAL_MS
-    }
-
     private fun updateLocationEngineInterval() {
-        rawLocationEngine?.let { registerSpeedUpdates(it, currentLocationIntervalMs()) }
+        // Interval is owned by LocationComponent's single subscription through the engine chain.
     }
 
     private fun scheduleLocationRetries(context: Context) {
@@ -4087,36 +4153,6 @@ class MapLibreEngineImpl(
         if (BuildConfig.DEBUG) {
             Log.d(TAG, "Applied queued location fix to LocationComponent")
         }
-    }
-
-    private fun registerSpeedUpdates(engine: LocationEngine, intervalMs: Long = currentLocationIntervalMs()) {
-        locationEngineCallback?.let { previous ->
-            rawLocationEngine?.removeLocationUpdates(previous)
-        }
-
-        val request = LocationEngineRequest.Builder(intervalMs)
-            .setPriority(LocationEngineRequest.PRIORITY_HIGH_ACCURACY)
-            .build()
-
-        val callback = object : LocationEngineCallback<LocationEngineResult> {
-            override fun onSuccess(result: LocationEngineResult) {
-                val location = result.lastLocation ?: return
-                applyAndroidLocation(location, snapCamera = !hasSnappedCameraToGps)
-                val speedKmh = if (location.hasSpeed()) {
-                    (location.speed * 3.6f).toInt().coerceAtLeast(0)
-                } else {
-                    0
-                }
-                _uiState.update { it.copy(currentSpeed = speedKmh) }
-            }
-
-            override fun onFailure(exception: Exception) {
-                Log.w(TAG, "Location engine error: ${exception.message}")
-            }
-        }
-
-        engine.requestLocationUpdates(request, callback, Looper.getMainLooper())
-        locationEngineCallback = callback
     }
 
     private fun resolveMapViewOrigin(): LatLng? {
@@ -4241,7 +4277,11 @@ class MapLibreEngineImpl(
         val distM = prev.distanceTo(next)
         if (distM >= minDist) return true
         if (!next.hasBearing() || !prev.hasBearing()) return false
-        return normalizeBearingDelta(next.bearing - prev.bearing) >= minBearing
+        val bearingChange = normalizeBearingDelta(next.bearing - prev.bearing)
+        if (bearingChange < minBearing) return false
+        // Bearing-only updates while stopped cause visible puck rotation flicker.
+        if (speed < STOPPED_SPEED_MPS) return false
+        return true
     }
 
     private fun normalizeBearingDelta(delta: Float): Float {
@@ -4375,11 +4415,13 @@ class MapLibreEngineImpl(
         maybeUpdateUiStateCoords(displayLocation.latitude, displayLocation.longitude)
 
         val newSpeedMps = if (displayLocation.hasSpeed()) displayLocation.speed else lastDrivingSpeedMps
-        if (lookaheadTopFraction(newSpeedMps) != lookaheadTopFraction(lastDrivingSpeedMps)) {
-            lastAppliedTrackingPadding = null
-            lastEngagedTrackingPadding = null
-        }
+        updateLookaheadPaddingState(newSpeedMps)
         lastDrivingSpeedMps = newSpeedMps
+        mapLibreMap?.let { map ->
+            if (!_uiState.value.isCameraDetached) {
+                maybeApplyDrivingPaddingForSpeedChange(map)
+            }
+        }
 
         val component = mapLibreMap?.locationComponent
         val componentReady = component != null &&
@@ -5199,6 +5241,7 @@ class MapLibreEngineImpl(
         private const val AUTOMOTIVE_BOOST_ZOOM_FULL = 17.0
         private const val REROUTE_THRESHOLD_M = 75f
         private const val SNAP_TO_ROUTE_MAX_M = 40f
+        private const val SNAP_TO_ROUTE_RELEASE_M = 45f
         private const val REROUTE_CONFIRM_COUNT = 3
         private const val REROUTE_COOLDOWN_MS = 20_000L
         private const val OFF_ROUTE_GRACE_AFTER_MANEUVER_MS = 8_000L
@@ -5206,8 +5249,6 @@ class MapLibreEngineImpl(
         private const val ROUTE_OVERVIEW_MIN_BOUNDS_PAD_DEGREES = 0.0008
         private const val ROUTE_OVERVIEW_ANIMATION_MS = 2000
         private const val ROUTE_OVERVIEW_HOLD_MS = 10_000L
-        private const val LOCATION_INTERVAL_MS = 500L
-        private const val LOCATION_INTERVAL_NAV_MS = 500L
         private const val FRESH_LOCATION_MIN_TIME_MS = 500L
         private const val LOCATION_FIX_DEDUP_TIME_MS = 50L
         private const val LOCATION_FIX_DEDUP_DIST_M = 2f
@@ -5314,7 +5355,10 @@ class MapLibreEngineImpl(
         private const val DRIVING_PREFETCH_ZOOM_DELTA = 3
         private const val AMBIENT_CACHE_MAX_BYTES = 256L * 1024L * 1024L
         private const val LOOKAHEAD_MIN_SPEED_MPS = 2f
+        private const val LOOKAHEAD_ENTER_SPEED_MPS = 2.5f
+        private const val LOOKAHEAD_EXIT_SPEED_MPS = 1.5f
         private const val LOOKAHEAD_MAX_TOP_FRACTION = 0.12f
+        private const val PADDING_QUANTIZE_DP = 8
         private val DEFAULT_LOCATION = LatLng(12.8797, 121.7740)
 
         /**
@@ -5399,6 +5443,8 @@ private class SmoothingLocationEngine(
         choreographer.removeFrameCallback(frameCallback)
         frameCallbackPosted = false
     }
+
+    fun currentDisplayLocation(): Location? = displayLocation?.let { Location(it) }
 
     private fun shouldExtrapolate(target: Location, now: Long): Boolean {
         if (!target.hasSpeed() || target.speed < STOPPED_SPEED_MPS) return false
@@ -5561,12 +5607,13 @@ private class SmoothingLocationEngine(
 /**
  * Feeds bearing-smoothed fixes into MapLibre's LocationComponent so the puck and
  * TRACKING_GPS camera don't spin on noisy compass/GPS headings while parked.
- * App logic listens on the raw engine via [MapLibreEngineImpl.rawLocationEngine].
+ * App HUD/nav logic listens via [onRawFix] on the same delegate subscription.
  */
 private class BearingEnrichedLocationEngine(
     private val delegate: LocationEngine,
     private val enrich: (Location) -> Location,
     private val shouldEmit: (Location, Location?) -> Boolean = { _, _ -> true },
+    private val onRawFix: (Location) -> Unit = {},
 ) : LocationEngine {
 
     private val callbackMap =
@@ -5583,6 +5630,7 @@ private class BearingEnrichedLocationEngine(
                     callback.onSuccess(result)
                     return
                 }
+                onRawFix(raw)
                 val enriched = enrich(raw)
                 if (!shouldEmit(enriched, lastEmitted)) return
                 lastEmitted = Location(enriched)

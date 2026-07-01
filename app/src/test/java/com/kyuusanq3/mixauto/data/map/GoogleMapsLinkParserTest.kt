@@ -94,7 +94,70 @@ class GoogleMapsLinkParserTest {
         assertNotNull(result)
         assertEquals(10.6654242, result!!.lat, 0.0001)
         assertEquals(123.000084, result.lng, 0.0001)
-        assertEquals("Upstar Variety Store, Bacolod", result.suggestedName)
+        assertEquals("Upstar Variety Store", result.suggestedName)
+    }
+
+    @Test
+    fun parsePlaceNameStripsFullAddressFromPath() {
+        val url = "https://www.google.com/maps/place/" +
+            "Upstar+Variety+Store,+Do%C3%B1a+Juliana+Subdivision,+9+St+Bartholomew+Ave,+Taculing,+" +
+            "/data=!4m2!3m1!1s0x33aed179998a4a2f:0xd8ebe45701913e62!8m2!3d10.6654242!4d123.000084"
+        val result = GoogleMapsLinkParser.parseCoordinatesFromText(url)
+        assertNotNull(result)
+        assertEquals("Upstar Variety Store", result!!.suggestedName)
+    }
+
+    @Test
+    fun primaryPlaceNameKeepsSingleSegment() {
+        assertEquals("SM City Bacolod", GoogleMapsLinkParser.primaryPlaceName("SM City Bacolod"))
+        assertEquals(
+            "Upstar Variety Store",
+            GoogleMapsLinkParser.primaryPlaceName(
+                "Upstar Variety Store, Doña Juliana Subdivision, 9 St Bartholomew Ave, Taculing,",
+            ),
+        )
+    }
+
+    @Test
+    fun formatPlaceDisplayNameDecodesPlusSigns() {
+        assertEquals(
+            "Upstar Variety Store",
+            GoogleMapsLinkParser.formatPlaceDisplayName("Upstar+Variety+Store"),
+        )
+        assertEquals(
+            "Upstar Variety Store",
+            GoogleMapsLinkParser.formatPlaceDisplayName("Upstar+Variety+Store,+Bacolod"),
+        )
+        assertEquals(
+            "Upstar Variety Store",
+            GoogleMapsLinkParser.formatPlaceDisplayName("Upstar%20Variety%20Store"),
+        )
+    }
+
+    @Test
+    fun parsePreviewBodyExtractsNameFromQueryParam() {
+        val bodySnippet = """
+            <link href="/maps/preview/place?q=Upstar+Variety+Store&amp;pb=
+            %211m3%211d15683%212d123.000084%213d10.6654242%212m3" rel="preload">
+        """.trimIndent()
+        val result = GoogleMapsLinkParser.parseCoordinatesFromText(bodySnippet)
+        assertNotNull(result)
+        assertEquals("Upstar Variety Store", result!!.suggestedName)
+    }
+
+    @Test
+    fun parsePreviewBodyWithBarePercentAndEncodedCoords() {
+        val bodySnippet = buildString {
+            repeat(120) { append("<style>section{width:100%;height:100%}</style>") }
+            append(
+                """<link href="/maps/preview/place?pb=%211m3%211d15683""" +
+                    """%212d123.000084%213d10.6654242" rel="preload">""",
+            )
+        }
+        val result = GoogleMapsLinkParser.parseCoordinatesFromText(bodySnippet)
+        assertNotNull(result)
+        assertEquals(10.6654242, result!!.lat, 0.0001)
+        assertEquals(123.000084, result.lng, 0.0001)
     }
 
     @Test

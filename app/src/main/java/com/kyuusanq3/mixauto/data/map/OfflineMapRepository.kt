@@ -251,7 +251,7 @@ class OfflineMapRepository(context: Context) {
                 )
                 return
             }
-            if (!needsUpgrade && isResumable(status)) {
+            if (!needsUpgrade && isResumable(existing, status)) {
                 Log.i(TAG, "Resuming offline region $regionId at ${status.completedResourceCount}/${status.requiredResourceCount}")
                 observeAndActivate(existing, regionId)
                 return
@@ -450,11 +450,49 @@ class OfflineMapRepository(context: Context) {
         }
     }
 
-    private fun isResumable(status: OfflineRegionStatus): Boolean {
+    private fun isResumable(region: OfflineRegion, status: OfflineRegionStatus): Boolean {
         if (status.isComplete) return false
         // Legacy file:// style regions stall as a single unfetchable style resource.
         if (status.requiredResourceCount == 1L && status.completedResourceCount == 0L) return false
+        if (!hasLoopbackStyleTransport(region)) {
+            Log.w(TAG, "Region ${parseRegionId(region)} uses legacy style transport — not resumable")
+            return false
+        }
+        val styleUrl = parseRegionStyleUrl(region)
+        if (styleUrl != null && isLegacyStyleUrl(styleUrl)) {
+            Log.w(TAG, "Region ${parseRegionId(region)} uses legacy style URL $styleUrl — not resumable")
+            return false
+        }
         return true
+    }
+
+    private fun hasLoopbackStyleTransport(region: OfflineRegion): Boolean {
+        return try {
+            val metadata = region.metadata ?: return false
+            val json = JSONObject(String(metadata, StandardCharsets.UTF_8))
+            json.optString("styleTransport") == STYLE_TRANSPORT_LOOPBACK
+        } catch (exception: Exception) {
+            false
+        }
+    }
+
+    private fun parseRegionStyleUrl(region: OfflineRegion): String? {
+        return try {
+            val definition = region.definition
+            if (definition is OfflineTilePyramidRegionDefinition) {
+                definition.styleURL
+            } else {
+                null
+            }
+        } catch (exception: Exception) {
+            Log.w(TAG, "Failed to parse region style URL", exception)
+            null
+        }
+    }
+
+    private fun isLegacyStyleUrl(styleUrl: String): Boolean {
+        val lower = styleUrl.lowercase()
+        return lower.startsWith("file://") || lower.startsWith("asset://")
     }
 
     suspend fun findPendingResumeRegion(): PendingOfflineResume? = withContext(Dispatchers.Main) {
@@ -478,7 +516,7 @@ class OfflineMapRepository(context: Context) {
         for (sdkRegion in regions) {
             val regionId = parseRegionId(sdkRegion) ?: continue
             val status = sdkRegion.awaitStatus()
-            if (status.isComplete || !isResumable(status)) continue
+            if (status.isComplete || !isResumable(sdkRegion, status)) continue
             return PendingOfflineResume(
                 regionId = regionId,
                 pixelRatio = parsePixelRatio(sdkRegion),

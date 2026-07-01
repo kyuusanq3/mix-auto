@@ -63,6 +63,7 @@ import com.kyuusanq3.mixauto.ui.theme.DeepCharcoal
 import com.kyuusanq3.mixauto.ui.theme.ElectricCyan
 import com.kyuusanq3.mixauto.ui.theme.OledBlack
 import kotlin.math.roundToInt
+import kotlinx.coroutines.delay
 
 private val InstalledGreen = Color(0xFF4CAF50)
 
@@ -309,6 +310,7 @@ fun MapDataSectionContent(
                 )
             }
             is MapDataUiState.DownloadingOfflineMap -> {
+                val offlineInstall = offlineStates[state.regionId]
                 LinearProgressIndicator(
                     progress = { if (state.isPreparing) 0f else state.progress },
                     modifier = Modifier.fillMaxWidth(),
@@ -320,6 +322,11 @@ fun MapDataSectionContent(
                         "Downloading ${state.regionName}… ${(state.progress * 100).roundToInt()}%"
                     },
                     style = MaterialTheme.typography.labelMedium,
+                )
+                OfflineDownloadStatusHints(
+                    isPreparing = state.isPreparing,
+                    completedResourceCount = offlineInstall?.completedResourceCount ?: 0L,
+                    requiredResourceCount = offlineInstall?.requiredResourceCount ?: 0L,
                 )
                 CountryCatalogList(
                     modifier = catalogModifier,
@@ -784,59 +791,117 @@ private fun OfflineRegionRow(
         modifier = Modifier.fillMaxWidth(),
         color = OledBlack,
     ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(CarDimensions.MinTapTarget)
-                .padding(horizontal = CarDimensions.PaneGap / 2),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(CarDimensions.PaneGap),
-        ) {
-            if (isSuggested) {
-                Icon(
-                    imageVector = Icons.Filled.Star,
-                    contentDescription = "Near you",
-                    tint = ElectricCyan,
-                    modifier = Modifier.size(CarDimensions.PanelHeaderIconSize),
-                )
-            }
-            Column(modifier = Modifier.weight(1f)) {
-                CarBodyText(
-                    text = if (isSuggested) "Near you — ${region.name}" else region.name,
-                    style = MaterialTheme.typography.bodyMedium,
-                )
-                CarLabelText(
-                    text = buildString {
-                        if (isSuggested) append("Suggested from GPS · ")
-                        if (needsDetailUpgrade) {
-                            append("Installed z${installState?.installedMaxZoom ?: "?"} · ")
-                            append("Update to z${region.maxZoom.toInt()} (~${region.sizeEstimateMb} MB)")
-                        } else {
-                            append("z${region.minZoom.toInt()}–${region.maxZoom.toInt()}")
-                            append(" · est. ${region.sizeEstimateMb} MB")
-                        }
+        Column(modifier = Modifier.fillMaxWidth()) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(CarDimensions.MinTapTarget)
+                    .padding(horizontal = CarDimensions.PaneGap / 2),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(CarDimensions.PaneGap),
+            ) {
+                if (isSuggested) {
+                    Icon(
+                        imageVector = Icons.Filled.Star,
+                        contentDescription = "Near you",
+                        tint = ElectricCyan,
+                        modifier = Modifier.size(CarDimensions.PanelHeaderIconSize),
+                    )
+                }
+                Column(modifier = Modifier.weight(1f)) {
+                    CarBodyText(
+                        text = if (isSuggested) "Near you — ${region.name}" else region.name,
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                    CarLabelText(
+                        text = buildString {
+                            if (isSuggested) append("Suggested from GPS · ")
+                            if (needsDetailUpgrade) {
+                                append("Installed z${installState?.installedMaxZoom ?: "?"} · ")
+                                append("Update to z${region.maxZoom.toInt()} (~${region.sizeEstimateMb} MB)")
+                            } else {
+                                append("z${region.minZoom.toInt()}–${region.maxZoom.toInt()}")
+                                append(" · est. ${region.sizeEstimateMb} MB")
+                            }
+                        },
+                        style = MaterialTheme.typography.labelMedium,
+                    )
+                }
+                PackRowActions(
+                    isDownloading = isDownloading || installState?.isDownloading == true,
+                    isPreparing = isPreparing,
+                    downloadProgress = downloadProgress,
+                    isInstalled = isInstalledCurrent,
+                    needsDetailUpgrade = needsDetailUpgrade,
+                    transferInProgress = transferInProgress,
+                    itemName = region.name,
+                    onDownload = onDownload,
+                    onUpdate = { showUpdateConfirm = true },
+                    onDelete = { showDeleteConfirm = true },
+                    onCancelDownload = if (isDownloading || installState?.isDownloading == true) {
+                        { showDeleteConfirm = true }
+                    } else {
+                        null
                     },
-                    style = MaterialTheme.typography.labelMedium,
+                    showDelete = isInstalledCurrent || needsDetailUpgrade ||
+                        (installState?.completedResourceCount ?: 0L) > 0L,
                 )
             }
-            PackRowActions(
-                isDownloading = isDownloading || installState?.isDownloading == true,
-                isPreparing = isPreparing,
-                downloadProgress = downloadProgress,
-                isInstalled = isInstalledCurrent,
-                needsDetailUpgrade = needsDetailUpgrade,
-                transferInProgress = transferInProgress,
-                itemName = region.name,
-                onDownload = onDownload,
-                onUpdate = { showUpdateConfirm = true },
-                onDelete = { showDeleteConfirm = true },
-                onCancelDownload = if (isDownloading || installState?.isDownloading == true) {
-                    { showDeleteConfirm = true }
-                } else {
-                    null
-                },
-                showDelete = isInstalledCurrent || needsDetailUpgrade ||
-                    (installState?.completedResourceCount ?: 0L) > 0L,
+            if (isDownloading || installState?.isDownloading == true) {
+                OfflineDownloadStatusHints(
+                    isPreparing = isPreparing,
+                    completedResourceCount = installState?.completedResourceCount ?: 0L,
+                    requiredResourceCount = installState?.requiredResourceCount ?: 0L,
+                    modifier = Modifier.padding(
+                        start = CarDimensions.PaneGap / 2,
+                        end = CarDimensions.PaneGap / 2,
+                        bottom = CarDimensions.PaneGap / 2,
+                    ),
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun OfflineDownloadStatusHints(
+    isPreparing: Boolean,
+    completedResourceCount: Long,
+    requiredResourceCount: Long,
+    modifier: Modifier = Modifier,
+) {
+    var showPreparingHint by remember { mutableStateOf(false) }
+    var showStallHint by remember { mutableStateOf(false) }
+
+    LaunchedEffect(isPreparing) {
+        showPreparingHint = false
+        if (isPreparing) {
+            delay(30_000)
+            showPreparingHint = true
+        }
+    }
+
+    LaunchedEffect(isPreparing, completedResourceCount, requiredResourceCount) {
+        showStallHint = false
+        if (isPreparing || requiredResourceCount == 0L) return@LaunchedEffect
+        val snapshot = completedResourceCount
+        delay(5 * 60 * 1000L)
+        if (!isPreparing && requiredResourceCount > 0L && completedResourceCount == snapshot) {
+            showStallHint = true
+        }
+    }
+
+    Column(modifier = modifier) {
+        if (showPreparingHint && isPreparing) {
+            CarLabelText(
+                text = "Building tile list from OpenFreeMap — can take 1–2 minutes on first download.",
+                style = MaterialTheme.typography.labelMedium,
+            )
+        }
+        if (showStallHint) {
+            CarLabelText(
+                text = "Stuck? Tap ✕ to cancel, delete the region, and retry on Wi‑Fi.",
+                style = MaterialTheme.typography.labelMedium,
             )
         }
     }

@@ -328,6 +328,7 @@ fun DashboardScreen(
         launcherViewModel.clearAddPlaceLinkState()
         launcherViewModel.setActivePanel(ActivePanel.SEARCH)
     }
+    val onDismissSelectedPoi = { mapEngine.dismissSelectedPoi() }
     val onConfirmAddPlaceFromLink: (SearchResultPlace) -> Unit = { place ->
         launcherViewModel.clearAddPlaceLinkState()
         onPreviewSearchPlace(place)
@@ -367,6 +368,8 @@ fun DashboardScreen(
     LaunchedEffect(activePanel) {
         launcherViewModel.isDestinationSearchOpen = activePanel == ActivePanel.SEARCH
         when (activePanel) {
+            ActivePanel.ADD_PLACE -> mapEngine.setMapTapDismissHandler(onDismissAddPlacePanel)
+            ActivePanel.POI_DETAIL -> mapEngine.setMapTapDismissHandler(onDismissSelectedPoi)
             ActivePanel.SEARCH,
             ActivePanel.MAP_DATA,
             -> mapEngine.setMapTapDismissHandler(onDismissPanel)

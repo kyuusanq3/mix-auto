@@ -22,6 +22,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
@@ -85,6 +86,7 @@ class OfflineMapDownloadService : Service() {
                         }
                         result.onFailure { error ->
                             Log.e(TAG, "Offline resume failed for ${pending.regionId}", error)
+                            handleDownloadFailure(pending.regionId, error)
                         }
                         stopForegroundAndSelf()
                     }
@@ -117,6 +119,7 @@ class OfflineMapDownloadService : Service() {
                 }
                 result.onFailure { error ->
                     Log.e(TAG, "Offline download failed for $regionId", error)
+                    handleDownloadFailure(regionId, error)
                 }
                 stopForegroundAndSelf()
             }
@@ -231,6 +234,18 @@ class OfflineMapDownloadService : Service() {
             setShowBadge(false)
         }
         manager.createNotificationChannel(channel)
+    }
+
+    private suspend fun handleDownloadFailure(regionId: String, error: Throwable) {
+        val message = when (error) {
+            is TimeoutCancellationException ->
+                "Map download timed out while preparing tiles. Delete the region and retry on Wi‑Fi."
+            else -> error.message ?: "Offline map download failed"
+        }
+        withContext(Dispatchers.IO) {
+            runCatching { repository.pauseDownload(regionId) }
+            repository.reportRegionDownloadError(regionId, message)
+        }
     }
 
     private suspend fun ensureNetworkAllowed(regionId: String): Boolean {
