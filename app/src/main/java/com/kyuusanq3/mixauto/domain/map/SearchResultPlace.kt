@@ -8,4 +8,6 @@ data class SearchResultPlace(
     val distanceInMeters: Float = 0f,
     val category: String = "",
     val isDroppedPin: Boolean = false,
+    /** Provenance for map-pin merge priority: overture | vector | photon | search */
+    val poiSource: String = "",
 )

@@ -214,6 +214,7 @@ class MapLibreEngineImpl(
     private var rememberEncounteredPlaces = initialRememberEncounteredPlaces
     private var lastPhotonQueryCenter: LatLng? = null
     private val poiCache = mutableMapOf<String, SearchResultPlace>()
+    private var mixPoiOverlayActive = false
     private var savedPlacesKeys = emptySet<String>()
     private var savedPlacesCache = emptyList<SearchResultPlace>()
     private var routeGeometryPoints: List<LatLng> = emptyList()
@@ -317,6 +318,7 @@ class MapLibreEngineImpl(
                                 topDownExploreUserAdjusted = true
                             }
                         }
+                        map.getStyle { syncPoiOverlayVisibility(it) }
                     }
                 }
                 registerPoiInteractions(map)
@@ -749,7 +751,12 @@ class MapLibreEngineImpl(
 
         val hasOfflineData = localPlaces?.hasInstalledDatabase == true
         val local = if (hasOfflineData) {
-            localPlaces?.searchPlaces(query, searchLat, searchLng).orEmpty()
+            localPlaces?.searchPlaces(query, searchLat, searchLng).orEmpty().map { place ->
+                place.copy(
+                    category = normalizeOvertureCategory(place.category),
+                    poiSource = POI_SOURCE_OVERTURE,
+                )
+            }
         } else {
             emptyList()
         }
@@ -855,6 +862,7 @@ class MapLibreEngineImpl(
                 place.copy(
                     distanceInMeters = distanceResults[0],
                     category = normalizeOvertureCategory(place.category),
+                    poiSource = POI_SOURCE_OVERTURE,
                 )
             }
         } else {
@@ -1072,8 +1080,8 @@ class MapLibreEngineImpl(
             val duplicateIndex = findDuplicateIndex(place)
             if (duplicateIndex == null) {
                 merged.add(place)
-            } else if (merged[duplicateIndex].category.isBlank() && place.category.isNotBlank()) {
-                merged[duplicateIndex] = merged[duplicateIndex].copy(category = place.category)
+            } else {
+                merged[duplicateIndex] = preferPoiEntry(merged[duplicateIndex], place)
             }
         }
         return merged.take(MAX_POI_PINS)
@@ -1121,6 +1129,7 @@ class MapLibreEngineImpl(
                 longitude = placeLng,
                 distanceInMeters = distanceResults[0],
                 category = category,
+                poiSource = POI_SOURCE_PHOTON,
             )
         }.sortedBy { it.distanceInMeters }
     }
@@ -1169,6 +1178,7 @@ class MapLibreEngineImpl(
             } else {
                 activateFreeDriveTrackingMode(map)
             }
+            map.getStyle { syncPoiOverlayVisibility(it) }
         }
     }
 
@@ -1184,6 +1194,7 @@ class MapLibreEngineImpl(
         cancelPoiPreviewRetries()
         pendingPoiPreviewTarget = null
         topDownExploreUserAdjusted = false
+        clearForcedPreviewPoi()
         fullRouteSteps = emptyList()
         currentStepIndex = 0
         destinationLatLng = null
@@ -1229,6 +1240,7 @@ class MapLibreEngineImpl(
         cancelPoiPreviewRetries()
         pendingPoiPreviewTarget = null
         topDownExploreUserAdjusted = false
+        clearForcedPreviewPoi()
         _uiState.update {
             it.copy(
                 selectedPoi = null,
@@ -1246,6 +1258,7 @@ class MapLibreEngineImpl(
     }
 
     override fun focusOnPoi(place: SearchResultPlace, moveCamera: Boolean) {
+        clearForcedPreviewPoi()
         if (moveCamera) {
             _uiState.update { it.copy(isCameraDetached = true, isInTopDownView = true) }
         }
@@ -1284,6 +1297,16 @@ class MapLibreEngineImpl(
         }
         if (moveCamera) {
             clearPoiOverlay()
+            if (!place.isDroppedPin && !isPlaceRenderedOnMap(place)) {
+                val enriched = place.copy(
+                    poiSource = place.poiSource.ifBlank { POI_SOURCE_SEARCH },
+                    category = place.category.ifBlank { normalizeOvertureCategory(place.category) },
+                )
+                encounteredPlaces?.upsertAll(listOf(enriched), SOURCE_SEARCH)
+                encounteredPlaces?.pruneToMaxRecords()
+                mergeIntoPoiCache(listOf(enriched))
+                showForcedPreviewPoi(enriched)
+            }
             focusOnLocation(place.latitude, place.longitude)
         }
     }
@@ -2210,6 +2233,7 @@ class MapLibreEngineImpl(
         if (!isReroute) {
             poiRefreshJob?.cancel()
             poiRefreshJob = null
+            clearForcedPreviewPoi()
             clearPoiLayer()
             clearCustomPin()
             clearRoutePreviewState()
@@ -3208,7 +3232,10 @@ class MapLibreEngineImpl(
                         maxLng = queryBounds.maxLng,
                         limit = MAX_POI_PINS,
                     ) ?: emptyList()).map { place ->
-                        place.copy(category = normalizeOvertureCategory(place.category))
+                        place.copy(
+                            category = normalizeOvertureCategory(place.category),
+                            poiSource = POI_SOURCE_OVERTURE,
+                        )
                     }
                 }
                 if (!isActive) return@launch
@@ -3541,7 +3568,10 @@ class MapLibreEngineImpl(
                 maxLng = queryBounds.maxLng,
                 limit = MAX_POI_PINS,
             ) ?: emptyList()).map { place ->
-                place.copy(category = normalizeOvertureCategory(place.category))
+                place.copy(
+                    category = normalizeOvertureCategory(place.category),
+                    poiSource = POI_SOURCE_OVERTURE,
+                )
             }
         }
         val deduped = mergePoiPins(localResults + tileResults, emptyList())
@@ -3603,6 +3633,7 @@ class MapLibreEngineImpl(
             longitude = lng,
             distanceInMeters = distanceInMeters,
             category = maplibreClassToCategory(cls, sub),
+            poiSource = POI_SOURCE_VECTOR,
         )
     }
 
@@ -3708,17 +3739,34 @@ class MapLibreEngineImpl(
             place.longitude in bounds.minLng..bounds.maxLng
     }
 
-    private fun poiCacheKey(place: SearchResultPlace): String =
-        "${place.latitude},${place.longitude}"
+    private fun findPoiCacheEntryNear(place: SearchResultPlace): Pair<String, SearchResultPlace>? {
+        for ((key, cached) in poiCache) {
+            if (placesWithinMeters(
+                    cached.latitude,
+                    cached.longitude,
+                    place.latitude,
+                    place.longitude,
+                    DEDUP_THRESHOLD_M,
+                )
+            ) {
+                return key to cached
+            }
+        }
+        return null
+    }
 
     private fun mergeIntoPoiCache(places: List<SearchResultPlace>) {
         for (place in places) {
-            val key = poiCacheKey(place)
-            val existing = poiCache[key]
-            if (existing == null) {
-                poiCache[key] = place
-            } else if (existing.category.isBlank() && place.category.isNotBlank()) {
-                poiCache[key] = existing.copy(category = place.category)
+            val near = findPoiCacheEntryNear(place)
+            if (near == null) {
+                poiCache[poiCacheKey(place)] = place
+            } else {
+                val (existingKey, existing) = near
+                val merged = preferPoiEntry(existing, place)
+                if (existingKey != poiCacheKey(merged)) {
+                    poiCache.remove(existingKey)
+                }
+                poiCache[poiCacheKey(merged)] = merged
             }
         }
     }
@@ -3746,7 +3794,7 @@ class MapLibreEngineImpl(
     private fun refreshPoiOverlay() {
         if (_uiState.value.selectedPoi != null || _uiState.value.isInTopDownView) return
 
-        val pins = mergePoiPins(poiCache.values.toList(), emptyList())
+        val pins = mergePoiPins(sortPoiPinsForMerge(poiCache.values.toList()), emptyList())
         if (pins.isNotEmpty()) {
             updatePoiLayer(pins)
         } else {
@@ -3813,33 +3861,164 @@ class MapLibreEngineImpl(
     private fun updatePoiLayer(places: List<SearchResultPlace>) {
         val map = mapLibreMap ?: return
         val geoJson = buildPoiGeoJson(places)
+        mixPoiOverlayActive = places.isNotEmpty()
         map.getStyle { style ->
-            val existing = style.getSource(POI_SOURCE_ID)
-            if (existing is GeoJsonSource) {
-                existing.setGeoJson(geoJson)
-            } else {
-                style.addSource(GeoJsonSource(POI_SOURCE_ID, geoJson))
-                val poiLayer = SymbolLayer(POI_LAYER_ID, POI_SOURCE_ID).withProperties(
-                    *poiIconOnlyLayerProperties(mixPoiIconExpression()),
-                )
-                val anchor = resolveMapOverlayAnchorLayerId(style)
-                if (anchor != null) {
-                    style.addLayerAbove(poiLayer, anchor)
-                } else {
-                    style.addLayer(poiLayer)
-                }
-            }
+            ensureMixPoiOverlayLayers(style, geoJson)
+            syncPoiOverlayVisibility(style)
         }
+    }
+
+    private fun ensureMixPoiOverlayLayers(style: Style, geoJson: String) {
+        val existing = style.getSource(POI_SOURCE_ID)
+        if (existing is GeoJsonSource) {
+            existing.setGeoJson(geoJson)
+            return
+        }
+        style.addSource(GeoJsonSource(POI_SOURCE_ID, geoJson))
+        val poiLayer = SymbolLayer(POI_LAYER_ID, POI_SOURCE_ID).withProperties(
+            *poiIconOnlyLayerProperties(mixPoiIconExpression()),
+        )
+        val anchor = resolveMapOverlayAnchorLayerId(style)
+        if (anchor != null) {
+            style.addLayerAbove(poiLayer, anchor)
+        } else {
+            style.addLayer(poiLayer)
+        }
+        val labelLayer = SymbolLayer(POI_LABEL_LAYER_ID, POI_SOURCE_ID).withProperties(
+            *poiTextOnlyLayerProperties(),
+        )
+        style.addLayerAbove(labelLayer, POI_LAYER_ID)
     }
 
     private fun clearPoiOverlay() {
         val map = mapLibreMap ?: return
+        mixPoiOverlayActive = false
         map.getStyle { style ->
             val existing = style.getSource(POI_SOURCE_ID)
             if (existing is GeoJsonSource) {
                 existing.setGeoJson(EMPTY_POI_GEOJSON)
             }
+            syncPoiOverlayVisibility(style)
         }
+    }
+
+    private fun shouldShowMixPoiLabels(): Boolean {
+        val state = _uiState.value
+        return state.isCameraDetached &&
+            !state.isInTopDownView &&
+            !state.isNavigating &&
+            state.selectedPoi == null
+    }
+
+    private fun syncPoiLabelVisibility(style: Style) {
+        val visibility = if (shouldShowMixPoiLabels() && mixPoiOverlayActive) {
+            Property.VISIBLE
+        } else {
+            Property.NONE
+        }
+        style.getLayer(POI_LABEL_LAYER_ID)?.setProperties(PropertyFactory.visibility(visibility))
+    }
+
+    private fun syncNativePoiLayerVisibility(style: Style) {
+        if (!useVectorTiles) return
+        val state = _uiState.value
+        if (state.isNavigating) return
+        val zoom = mapLibreMap?.cameraPosition?.zoom ?: 0.0
+        val showLiberty = when {
+            zoom < MIN_POI_ZOOM -> true
+            !mixPoiOverlayActive -> true
+            state.isInTopDownView || state.selectedPoi != null -> true
+            else -> false
+        }
+        val visibility = if (showLiberty) Property.VISIBLE else Property.NONE
+        VECTOR_POI_LAYER_IDS.forEach { id ->
+            style.getLayer(id)?.setProperties(PropertyFactory.visibility(visibility))
+        }
+    }
+
+    private fun syncPoiOverlayVisibility(style: Style) {
+        syncPoiLabelVisibility(style)
+        syncNativePoiLayerVisibility(style)
+    }
+
+    private fun isPlaceRenderedOnMap(place: SearchResultPlace): Boolean {
+        if (poiCache.values.any { cached ->
+                placesWithinMeters(
+                    cached.latitude,
+                    cached.longitude,
+                    place.latitude,
+                    place.longitude,
+                    DEDUP_THRESHOLD_M,
+                )
+            }
+        ) {
+            return true
+        }
+        val map = mapLibreMap ?: return false
+        val screenPoint = map.projection.toScreenLocation(LatLng(place.latitude, place.longitude))
+        if (map.queryRenderedFeatures(screenPoint, POI_LAYER_ID).isNotEmpty()) return true
+        if (useVectorTiles &&
+            map.queryRenderedFeatures(screenPoint, *VECTOR_POI_LAYER_IDS).isNotEmpty()
+        ) {
+            return true
+        }
+        return false
+    }
+
+    private fun showForcedPreviewPoi(place: SearchResultPlace) {
+        val map = mapLibreMap ?: return
+        val geoJson = buildPoiGeoJson(listOf(place))
+        map.getStyle { style ->
+            ensurePreviewPoiLayers(style, geoJson)
+            style.getLayer(PREVIEW_POI_LAYER_ID)?.setProperties(PropertyFactory.visibility(Property.VISIBLE))
+            style.getLayer(PREVIEW_POI_LABEL_LAYER_ID)?.setProperties(PropertyFactory.visibility(Property.VISIBLE))
+            syncNativePoiLayerVisibility(style)
+        }
+    }
+
+    private fun clearForcedPreviewPoi() {
+        val map = mapLibreMap ?: return
+        map.getStyle { style ->
+            (style.getSource(PREVIEW_POI_SOURCE_ID) as? GeoJsonSource)?.setGeoJson(EMPTY_POI_GEOJSON)
+            style.getLayer(PREVIEW_POI_LAYER_ID)?.setProperties(PropertyFactory.visibility(Property.NONE))
+            style.getLayer(PREVIEW_POI_LABEL_LAYER_ID)?.setProperties(PropertyFactory.visibility(Property.NONE))
+            syncNativePoiLayerVisibility(style)
+        }
+    }
+
+    private fun ensurePreviewPoiLayers(style: Style, geoJson: String) {
+        val existing = style.getSource(PREVIEW_POI_SOURCE_ID)
+        if (existing is GeoJsonSource) {
+            existing.setGeoJson(geoJson)
+            return
+        }
+        style.addSource(GeoJsonSource(PREVIEW_POI_SOURCE_ID, geoJson))
+        val iconLayer = SymbolLayer(PREVIEW_POI_LAYER_ID, PREVIEW_POI_SOURCE_ID).withProperties(
+            *poiIconOnlyLayerProperties(mixPoiIconExpression()),
+        )
+        val labelLayer = SymbolLayer(PREVIEW_POI_LABEL_LAYER_ID, PREVIEW_POI_SOURCE_ID).withProperties(
+            *poiTextOnlyLayerProperties(),
+        )
+        when {
+            style.getLayer(SAVED_PLACES_LAYER_ID) != null -> {
+                style.addLayerBelow(iconLayer, SAVED_PLACES_LAYER_ID)
+            }
+            style.getLayer(POI_LABEL_LAYER_ID) != null -> {
+                style.addLayerAbove(iconLayer, POI_LABEL_LAYER_ID)
+            }
+            style.getLayer(POI_LAYER_ID) != null -> {
+                style.addLayerAbove(iconLayer, POI_LAYER_ID)
+            }
+            else -> {
+                val anchor = resolveMapOverlayAnchorLayerId(style)
+                if (anchor != null) {
+                    style.addLayerAbove(iconLayer, anchor)
+                } else {
+                    style.addLayer(iconLayer)
+                }
+            }
+        }
+        style.addLayerAbove(labelLayer, PREVIEW_POI_LAYER_ID)
     }
 
     /** Clears overlay GeoJSON and in-memory POI cache (navigation teardown, style reset). */
@@ -4543,7 +4722,10 @@ class MapLibreEngineImpl(
             maxLng = bounds.maxLng,
             limit = MAX_POI_PINS,
         ).map { place ->
-            place.copy(category = normalizeOvertureCategory(place.category))
+            place.copy(
+                category = normalizeOvertureCategory(place.category),
+                poiSource = POI_SOURCE_OVERTURE,
+            )
         }
     }
 
@@ -5030,58 +5212,6 @@ class MapLibreEngineImpl(
         return bestLocation?.let { LatLng(it.latitude, it.longitude) }
     }
 
-    private fun normalizeOvertureCategory(raw: String): String {
-        if (raw in POI_CATEGORY_GROUPS) return raw
-        return when (raw.lowercase().trim()) {
-            "food_and_beverage" -> "food"
-            "gas_station" -> "fuel"
-            "health_and_medical" -> "health"
-            "accommodation" -> "accommodation"
-            "financial" -> "finance"
-            "retail" -> "shopping"
-            "recreation", "entertainment" -> "recreation"
-            else -> ""
-        }
-    }
-
-    private fun maplibreClassToCategory(cls: String, sub: String): String {
-        val values = listOf(cls, sub).map { it.lowercase().trim() }.filter { it.isNotEmpty() }
-        for (value in values) {
-            when (value) {
-                "food", "restaurant", "fast_food", "cafe", "bar", "pub", "food_court" -> return "food"
-                "fuel" -> return "fuel"
-                "hospital", "pharmacy", "clinic", "doctor", "doctors" -> return "health"
-                "hotel", "hostel", "motel", "guest_house" -> return "accommodation"
-                "bank", "atm" -> return "finance"
-                "shop", "mall", "department_store", "supermarket" -> return "shopping"
-                "attraction", "museum", "park", "stadium", "viewpoint" -> return "recreation"
-            }
-        }
-        return ""
-    }
-
-    private fun photonToCategory(osmKey: String, osmValue: String): String {
-        val key = osmKey.lowercase().trim()
-        val value = osmValue.lowercase().trim()
-        return when (key) {
-            "amenity" -> when (value) {
-                "restaurant", "cafe", "fast_food", "bar", "pub", "food_court" -> "food"
-                "fuel" -> "fuel"
-                "hospital", "pharmacy", "clinic", "doctors" -> "health"
-                "bank", "atm" -> "finance"
-                else -> ""
-            }
-            "tourism" -> when (value) {
-                "hotel", "hostel", "motel", "guest_house" -> "accommodation"
-                "attraction", "museum", "viewpoint" -> "recreation"
-                else -> ""
-            }
-            "shop" -> "shopping"
-            "leisure" -> "recreation"
-            else -> ""
-        }
-    }
-
     private fun poiIconOnlyLayerProperties(iconImageExpression: Expression): Array<PropertyValue<*>> {
         return arrayOf(
             PropertyFactory.iconImage(iconImageExpression),
@@ -5093,24 +5223,22 @@ class MapLibreEngineImpl(
         )
     }
 
-    private fun poiLabelLayerProperties(iconImageExpression: Expression): Array<PropertyValue<*>> {
+    private fun poiTextOnlyLayerProperties(): Array<PropertyValue<*>> {
         return arrayOf(
-            PropertyFactory.iconImage(iconImageExpression),
-            PropertyFactory.iconAnchor(Property.ICON_ANCHOR_CENTER),
-            PropertyFactory.iconAllowOverlap(true),
-            PropertyFactory.iconSize(1f),
             PropertyFactory.textField(Expression.get("name")),
-            PropertyFactory.textFont(arrayOf("Noto Sans Italic")),
+            PropertyFactory.textFont(arrayOf("Noto Sans Regular")),
             PropertyFactory.textSize(12f),
             PropertyFactory.textAnchor(Property.TEXT_ANCHOR_TOP),
-            PropertyFactory.textOffset(arrayOf(0f, 0.6f)),
-            PropertyFactory.textColor("#666666"),
-            PropertyFactory.textHaloColor("#ffffff"),
-            PropertyFactory.textHaloWidth(1f),
+            PropertyFactory.textOffset(arrayOf(0f, 0.8f)),
+            PropertyFactory.textColor("#E0E0E0"),
+            PropertyFactory.textHaloColor("#000000"),
+            PropertyFactory.textHaloWidth(1.5f),
             PropertyFactory.textHaloBlur(0.5f),
-            PropertyFactory.textAllowOverlap(true),
-            PropertyFactory.textIgnorePlacement(true),
+            PropertyFactory.textAllowOverlap(false),
+            PropertyFactory.textOptional(true),
             PropertyFactory.textMaxWidth(9f),
+            PropertyFactory.textPitchAlignment(Property.TEXT_PITCH_ALIGNMENT_VIEWPORT),
+            PropertyFactory.textRotationAlignment(Property.TEXT_ROTATION_ALIGNMENT_VIEWPORT),
         )
     }
 
@@ -5301,19 +5429,14 @@ class MapLibreEngineImpl(
         private val VECTOR_POI_LAYER_IDS = arrayOf("poi_r1", "poi_r7", "poi_r20", "poi_transit")
         private const val POI_SOURCE_ID = "mix-poi-source"
         private const val POI_LAYER_ID = "mix-poi-layer"
+        private const val POI_LABEL_LAYER_ID = "mix-poi-label-layer"
+        private const val PREVIEW_POI_SOURCE_ID = "mix-preview-poi-source"
+        private const val PREVIEW_POI_LAYER_ID = "mix-preview-poi-layer"
+        private const val PREVIEW_POI_LABEL_LAYER_ID = "mix-preview-poi-label-layer"
         private const val CUSTOM_PIN_SOURCE_ID = "mix-custom-pin-source"
         private const val CUSTOM_PIN_LAYER_ID = "mix-custom-pin-layer"
         private const val SAVED_PLACES_SOURCE_ID = "mix-saved-source"
         private const val SAVED_PLACES_LAYER_ID = "mix-saved-layer"
-        private val POI_CATEGORY_GROUPS = setOf(
-            "food",
-            "fuel",
-            "health",
-            "accommodation",
-            "finance",
-            "shopping",
-            "recreation",
-        )
         private const val MIN_POI_ZOOM = 13.0
         private const val MAX_POI_PINS = 100
         private const val POI_CACHE_SEARCH_LIMIT = 15
