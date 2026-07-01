@@ -21,6 +21,7 @@ import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.NetworkCheck
 import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.filled.SystemUpdate
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ElevatedCard
@@ -163,11 +164,50 @@ fun MapDataSectionContent(
     val mapsMb = formatStorageMb(viewModel.offlineMapsStorageBytes())
     val launcherViewModel: LauncherViewModel = viewModel()
     val allowMapDownloadOnMobileData = launcherViewModel.allowMapDownloadOnMobileData
+    val showDetailUpgradeBanner = offlineStates.values.any { it.needsDetailUpgrade } &&
+        !launcherViewModel.offlineDetailUpgradeBannerDismissed
 
     Column(
         modifier = modifier,
         verticalArrangement = Arrangement.spacedBy(CarDimensions.DockItemSpacing),
     ) {
+        if (showDetailUpgradeBanner) {
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                color = DeepCharcoal,
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = CarDimensions.PaneGap, vertical = CarDimensions.PaneGap / 2),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(CarDimensions.PaneGap),
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.SystemUpdate,
+                        contentDescription = null,
+                        tint = ElectricCyan,
+                        modifier = Modifier.size(CarDimensions.PanelHeaderIconSize),
+                    )
+                    CarBodyText(
+                        text = "Street-detail map update available — tap Update on your region.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier.weight(1f),
+                    )
+                    IconButton(
+                        onClick = { launcherViewModel.dismissOfflineDetailUpgradeBanner() },
+                        modifier = Modifier.size(CarDimensions.PanelHeaderTapTarget),
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.Close,
+                            contentDescription = "Dismiss",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            }
+        }
+
         CarBodyText(
             text = "Download offline search and regional maps. Map packs are per region; POI search is nationwide.",
             style = MaterialTheme.typography.bodyMedium,
@@ -575,7 +615,7 @@ private fun CountryGroupCard(
                     )
                     CarLabelText(
                         text = if (useVectorTiles) {
-                            "Vector tiles to zoom 14 (overzoom to 18)."
+                            "Street detail to zoom 17."
                         } else {
                             "Offline map regions require vector tiles (enable in Map Settings above)."
                         },
@@ -666,6 +706,7 @@ private fun OfflineRegionRow(
     onDelete: () -> Unit,
 ) {
     var showDeleteConfirm by remember { mutableStateOf(false) }
+    var showUpdateConfirm by remember { mutableStateOf(false) }
     val isDownloading = uiState is MapDataUiState.DownloadingOfflineMap &&
         uiState.regionId == region.id
     val isPreparing = (isDownloading || installState?.isDownloading == true) &&
@@ -675,10 +716,41 @@ private fun OfflineRegionRow(
         installState?.isDownloading == true -> installState.downloadProgress
         else -> 0f
     }
-    val isInstalled = installState?.isComplete == true
+    val needsDetailUpgrade = installState?.needsDetailUpgrade == true
+    val isInstalledCurrent = installState?.isCurrentDetail == true
     val transferInProgress = uiState is MapDataUiState.Downloading ||
         uiState is MapDataUiState.DownloadingOfflineMap ||
         uiState is MapDataUiState.Importing
+
+    if (showUpdateConfirm) {
+        AlertDialog(
+            onDismissRequest = { showUpdateConfirm = false },
+            title = { CarBodyText(text = "Update ${region.name}?") },
+            text = {
+                CarBodyText(
+                    text = "Replaces the installed z${installState?.installedMaxZoom ?: "?"} pack with " +
+                        "street detail to zoom ${region.maxZoom.toInt()} (~${region.sizeEstimateMb} MB). " +
+                        "The old map tiles will be removed first.",
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showUpdateConfirm = false
+                        onDownload()
+                    },
+                ) {
+                    CarLabelText(text = "Update", style = MaterialTheme.typography.labelLarge)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showUpdateConfirm = false }) {
+                    CarLabelText(text = "Cancel", style = MaterialTheme.typography.labelLarge)
+                }
+            },
+            containerColor = DeepCharcoal,
+        )
+    }
 
     if (showDeleteConfirm) {
         AlertDialog(
@@ -736,8 +808,13 @@ private fun OfflineRegionRow(
                 CarLabelText(
                     text = buildString {
                         if (isSuggested) append("Suggested from GPS · ")
-                        append("z${region.minZoom.toInt()}–${region.maxZoom.toInt()}")
-                        append(" · est. ${region.sizeEstimateMb} MB")
+                        if (needsDetailUpgrade) {
+                            append("Installed z${installState?.installedMaxZoom ?: "?"} · ")
+                            append("Update to z${region.maxZoom.toInt()} (~${region.sizeEstimateMb} MB)")
+                        } else {
+                            append("z${region.minZoom.toInt()}–${region.maxZoom.toInt()}")
+                            append(" · est. ${region.sizeEstimateMb} MB")
+                        }
                     },
                     style = MaterialTheme.typography.labelMedium,
                 )
@@ -746,17 +823,19 @@ private fun OfflineRegionRow(
                 isDownloading = isDownloading || installState?.isDownloading == true,
                 isPreparing = isPreparing,
                 downloadProgress = downloadProgress,
-                isInstalled = isInstalled,
+                isInstalled = isInstalledCurrent,
+                needsDetailUpgrade = needsDetailUpgrade,
                 transferInProgress = transferInProgress,
                 itemName = region.name,
                 onDownload = onDownload,
+                onUpdate = { showUpdateConfirm = true },
                 onDelete = { showDeleteConfirm = true },
                 onCancelDownload = if (isDownloading || installState?.isDownloading == true) {
                     { showDeleteConfirm = true }
                 } else {
                     null
                 },
-                showDelete = isInstalled ||
+                showDelete = isInstalledCurrent || needsDetailUpgrade ||
                     (installState?.completedResourceCount ?: 0L) > 0L,
             )
         }
@@ -769,9 +848,11 @@ private fun PackRowActions(
     isPreparing: Boolean = false,
     downloadProgress: Float,
     isInstalled: Boolean,
+    needsDetailUpgrade: Boolean = false,
     transferInProgress: Boolean,
     itemName: String,
     onDownload: (() -> Unit)?,
+    onUpdate: (() -> Unit)? = null,
     onDelete: () -> Unit,
     onCancelDownload: (() -> Unit)? = null,
     showDelete: Boolean = isInstalled,
@@ -814,6 +895,36 @@ private fun PackRowActions(
             CarLabelText(
                 text = "Installed",
                 style = MaterialTheme.typography.labelMedium.copy(color = InstalledGreen),
+            )
+            if (showDelete) {
+                IconButton(
+                    onClick = onDelete,
+                    enabled = !transferInProgress,
+                    modifier = Modifier.size(CarDimensions.MinTapTarget),
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.Delete,
+                        contentDescription = "Delete $itemName",
+                        tint = MaterialTheme.colorScheme.error,
+                    )
+                }
+            }
+        }
+        needsDetailUpgrade -> {
+            IconButton(
+                onClick = { onUpdate?.invoke() },
+                enabled = !transferInProgress && onUpdate != null,
+                modifier = Modifier.size(CarDimensions.MinTapTarget),
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.SystemUpdate,
+                    contentDescription = "Update $itemName",
+                    tint = ElectricCyan,
+                )
+            }
+            CarLabelText(
+                text = "Update",
+                style = MaterialTheme.typography.labelMedium.copy(color = ElectricCyan),
             )
             if (showDelete) {
                 IconButton(

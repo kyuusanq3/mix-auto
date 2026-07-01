@@ -115,6 +115,11 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     var allowMapDownloadOnMobileData by mutableStateOf(preferences.allowMapDownloadOnMobileData)
         private set
 
+    var offlineDetailUpgradeBannerDismissed by mutableStateOf(
+        preferences.offlineDetailUpgradeBannerDismissed,
+    )
+        private set
+
     var tomTomKeyCheckState by mutableStateOf<TomTomKeyCheckState>(TomTomKeyCheckState.Idle)
         private set
 
@@ -311,6 +316,11 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     fun toggleAllowMapDownloadOnMobileData() {
         allowMapDownloadOnMobileData = !allowMapDownloadOnMobileData
         preferences.allowMapDownloadOnMobileData = allowMapDownloadOnMobileData
+    }
+
+    fun dismissOfflineDetailUpgradeBanner() {
+        offlineDetailUpgradeBannerDismissed = true
+        preferences.offlineDetailUpgradeBannerDismissed = true
     }
 
     fun toggleShowStatusStrip() {

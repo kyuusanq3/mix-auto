@@ -67,7 +67,8 @@ object MapStyleAssetResolver {
         source.remove("url")
         source.put("tiles", tileJson.getJSONArray("tiles"))
         source.put("minzoom", tileJson.optInt("minzoom", 0))
-        source.put("maxzoom", tileJson.optInt("maxzoom", 14))
+        source.put("maxzoom", tileJson.optInt("maxzoom", 17))
+        // glyphs + sprite from bundled pack are preserved — only openmaptiles source is inlined.
         out.writeText(style.toString())
         return out
     }

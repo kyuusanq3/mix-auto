@@ -213,6 +213,12 @@ class LauncherPreferences(context: Context) {
             prefs.edit().putBoolean(KEY_ALLOW_MAP_DOWNLOAD_MOBILE_DATA, value).apply()
         }
 
+    var offlineDetailUpgradeBannerDismissed: Boolean
+        get() = prefs.getBoolean(KEY_OFFLINE_DETAIL_UPGRADE_BANNER_DISMISSED, false)
+        set(value) {
+            prefs.edit().putBoolean(KEY_OFFLINE_DETAIL_UPGRADE_BANNER_DISMISSED, value).apply()
+        }
+
     companion object {
         private const val PREFS_NAME = "launcher_prefs"
         private const val KEY_LEFT_HAND_DRIVE = "lhd"
@@ -244,6 +250,7 @@ class LauncherPreferences(context: Context) {
         private const val KEY_MUSIC_PANE_ENABLED = "music_pane_enabled"
         private const val KEY_REMEMBER_ENCOUNTERED_PLACES = "remember_encountered_places"
         private const val KEY_ALLOW_MAP_DOWNLOAD_MOBILE_DATA = "allow_map_download_mobile_data"
+        private const val KEY_OFFLINE_DETAIL_UPGRADE_BANNER_DISMISSED = "offline_detail_upgrade_banner_dismissed"
         const val DEFAULT_ALBUM_ART_MODE = "PLAIN"
         const val MAX_RECENT_DESTINATIONS = 10
         const val MAX_SAVED_PLACES = 50

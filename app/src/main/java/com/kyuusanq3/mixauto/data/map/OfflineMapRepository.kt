@@ -57,7 +57,18 @@ data class OfflineRegionInstallState(
     val downloadProgress: Float = 0f,
     val isDownloading: Boolean = false,
     val errorMessage: String? = null,
-)
+    val installedMaxZoom: Int? = null,
+    val catalogMaxZoom: Int? = null,
+) {
+    val needsDetailUpgrade: Boolean
+        get() = isComplete &&
+            installedMaxZoom != null &&
+            catalogMaxZoom != null &&
+            installedMaxZoom < catalogMaxZoom
+
+    val isCurrentDetail: Boolean
+        get() = isComplete && !needsDetailUpgrade
+}
 
 class OfflineMapRepository(context: Context) {
 
@@ -97,9 +108,15 @@ class OfflineMapRepository(context: Context) {
     fun hasCompleteRegionCovering(lat: Double, lng: Double): Boolean {
         val states = _installStates.value
         return regionById.values.any { def ->
-            def.contains(lat, lng) && states[def.id]?.isComplete == true
+            def.contains(lat, lng) && states[def.id]?.isCurrentDetail == true
         }
     }
+
+    fun anyRegionNeedsDetailUpgrade(): Boolean =
+        _installStates.value.values.any { it.needsDetailUpgrade }
+
+    fun needsDetailUpgrade(regionId: String): Boolean =
+        _installStates.value[regionId]?.needsDetailUpgrade == true
 
     fun totalInstalledBytes(): Long =
         _installStates.value.values.sumOf { it.completedResourceSize }
@@ -130,7 +147,10 @@ class OfflineMapRepository(context: Context) {
                                 }
                                 return
                             }
-                            base[regionId] = status.toInstallState(regionId)
+                            base[regionId] = status.toInstallState(
+                                regionId = regionId,
+                                installedMaxZoom = parseInstalledMaxZoom(sdkRegion),
+                            )
                             pending--
                             if (pending <= 0) {
                                 _installStates.value = base.toMap()
@@ -217,20 +237,34 @@ class OfflineMapRepository(context: Context) {
         val existing = findSdkRegion(regionId)
         if (existing != null) {
             val status = existing.awaitStatus()
-            if (status.isComplete) {
-                updateStateFromStatus(regionId, status, isDownloading = false)
+            val installedMax = parseInstalledMaxZoom(existing)
+            val catalogMax = definition.maxZoom.toInt()
+            val needsUpgrade = status.isComplete &&
+                installedMax != null &&
+                installedMax < catalogMax
+            if (status.isComplete && !needsUpgrade) {
+                updateStateFromStatus(
+                    regionId,
+                    status,
+                    isDownloading = false,
+                    installedMaxZoom = installedMax,
+                )
                 return
             }
-            if (isResumable(status)) {
+            if (!needsUpgrade && isResumable(status)) {
                 Log.i(TAG, "Resuming offline region $regionId at ${status.completedResourceCount}/${status.requiredResourceCount}")
                 observeAndActivate(existing, regionId)
                 return
             }
-            Log.w(TAG, "Replacing broken incomplete offline region $regionId")
+            if (needsUpgrade) {
+                Log.i(TAG, "Replacing stale offline region $regionId for street-detail upgrade")
+            } else {
+                Log.w(TAG, "Replacing broken incomplete offline region $regionId")
+            }
             deleteSdkRegion(existing)
         }
 
-        val metadata = metadataBytes(regionId, definition.name, effectivePixelRatio)
+        val metadata = metadataBytes(regionId, definition.name, effectivePixelRatio, definition.maxZoom)
         val regionDefinition = OfflineTilePyramidRegionDefinition(
             styleUri,
             definition.toBounds(),
@@ -464,7 +498,10 @@ data class PendingOfflineResume(val regionId: String, val pixelRatio: Float)
         )
     }
 
-    private fun OfflineRegionStatus.toInstallState(regionId: String): OfflineRegionInstallState {
+    private fun OfflineRegionStatus.toInstallState(
+        regionId: String,
+        installedMaxZoom: Int? = null,
+    ): OfflineRegionInstallState {
         val required = requiredResourceCount
         val completed = completedResourceCount
         val progress = if (required > 0) {
@@ -472,6 +509,7 @@ data class PendingOfflineResume(val regionId: String, val pixelRatio: Float)
         } else {
             0f
         }
+        val catalogMax = regionById[regionId]?.maxZoom?.toInt()
         return OfflineRegionInstallState(
             regionId = regionId,
             isComplete = isComplete,
@@ -480,6 +518,8 @@ data class PendingOfflineResume(val regionId: String, val pixelRatio: Float)
             completedResourceSize = completedResourceSize,
             downloadProgress = progress,
             isDownloading = downloadState == OfflineRegion.STATE_ACTIVE && !isComplete,
+            installedMaxZoom = installedMaxZoom,
+            catalogMaxZoom = catalogMax,
         )
     }
 
@@ -505,6 +545,7 @@ data class PendingOfflineResume(val regionId: String, val pixelRatio: Float)
         regionId: String,
         status: OfflineRegionStatus,
         isDownloading: Boolean,
+        installedMaxZoom: Int? = _installStates.value[regionId]?.installedMaxZoom,
     ) {
         val required = status.requiredResourceCount
         val completed = status.completedResourceCount
@@ -513,6 +554,7 @@ data class PendingOfflineResume(val regionId: String, val pixelRatio: Float)
         } else {
             0f
         }
+        val catalogMax = regionById[regionId]?.maxZoom?.toInt()
         _installStates.value = _installStates.value.toMutableMap().apply {
             put(
                 regionId,
@@ -524,16 +566,38 @@ data class PendingOfflineResume(val regionId: String, val pixelRatio: Float)
                     completedResourceSize = status.completedResourceSize,
                     downloadProgress = progress,
                     isDownloading = isDownloading && !status.isComplete,
+                    installedMaxZoom = installedMaxZoom,
+                    catalogMaxZoom = catalogMax,
                 ),
             )
         }
     }
 
-    private fun metadataBytes(regionId: String, name: String, pixelRatio: Float): ByteArray {
+    private fun parseInstalledMaxZoom(region: OfflineRegion): Int? {
+        return try {
+            val definition = region.definition
+            if (definition is OfflineTilePyramidRegionDefinition) {
+                definition.maxZoom.toInt()
+            } else {
+                null
+            }
+        } catch (exception: Exception) {
+            Log.w(TAG, "Failed to parse installed maxZoom", exception)
+            null
+        }
+    }
+
+    private fun metadataBytes(
+        regionId: String,
+        name: String,
+        pixelRatio: Float,
+        catalogMaxZoom: Double,
+    ): ByteArray {
         val json = JSONObject()
             .put("id", regionId)
             .put("name", name)
             .put("pixelRatio", pixelRatio.toDouble())
+            .put("catalogMaxZoom", catalogMaxZoom.toInt())
             .put("styleTransport", STYLE_TRANSPORT_LOOPBACK)
             .toString()
         return json.toByteArray(StandardCharsets.UTF_8)

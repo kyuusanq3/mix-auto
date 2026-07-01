@@ -23,8 +23,8 @@
           "north": 11.05,
           "east": 123.25,
           "minZoom": 10,
-          "maxZoom": 14,
-          "sizeEstimateMb": "50–120"
+          "maxZoom": 17,
+          "sizeEstimateMb": "150–400"
         },
         {
           "id": "ph_western_visayas",
@@ -34,8 +34,8 @@
           "north": 12.0,
           "east": 123.5,
           "minZoom": 10,
-          "maxZoom": 14,
-          "sizeEstimateMb": "120–250"
+          "maxZoom": 17,
+          "sizeEstimateMb": "350–800"
         }
       ]
     }

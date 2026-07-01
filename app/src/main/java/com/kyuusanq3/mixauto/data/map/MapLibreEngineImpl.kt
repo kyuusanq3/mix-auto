@@ -73,6 +73,7 @@ import org.maplibre.android.location.modes.RenderMode
 import org.maplibre.android.maps.MapView
 import org.maplibre.android.maps.MapLibreMap
 import org.maplibre.android.maps.Style
+import org.maplibre.android.offline.OfflineManager
 import org.maplibre.android.style.expressions.Expression
 import org.maplibre.android.style.layers.FillExtrusionLayer
 import org.maplibre.android.style.layers.LineLayer
@@ -269,6 +270,8 @@ class MapLibreEngineImpl(
     private var navTrafficPrefetchJob: Job? = null
     /** True until first [activateNavigationTracking] consumes the nav-start traffic line. */
     private var navStartTrafficEligible = false
+    private var drivingTilePrefetcher: DrivingTilePrefetcher? = null
+    private var lastDrivingSpeedMps: Float = 0f
 
     override fun createMapView(context: Context): View {
         mapView?.let { existing ->
@@ -282,6 +285,7 @@ class MapLibreEngineImpl(
         }
 
         appContext = context.applicationContext
+        drivingTilePrefetcher = DrivingTilePrefetcher(context.applicationContext, engineScope)
         resolveInitialLocation(context)
 
         return MapView(context).also { view ->
@@ -302,6 +306,7 @@ class MapLibreEngineImpl(
                         _uiState.update { it.copy(isCameraDetached = true) }
                         ensureTopDownCameraDetached(map)
                         stopDeadReckoning()
+                        resetSmoothingMotion()
                         if (_uiState.value.isInTopDownView) {
                             cancelTopDownViewportSync()
                             cancelPoiPreviewRetries()
@@ -340,6 +345,8 @@ class MapLibreEngineImpl(
 
         this.useVectorTiles = useVectorTiles
 
+        drivingTilePrefetcher?.cancel()
+        resetSmoothingMotion()
         poiRefreshJob?.cancel()
         poiRefreshJob = null
         encounterSampleJob?.cancel()
@@ -509,6 +516,7 @@ class MapLibreEngineImpl(
                 style.addImage(id, bitmap)
             }
             activateLocationTracking(map, style)
+            configureDrivingTilePrefetch(map)
             if (pendingLocationActivation && hasLocationPermission(context)) {
                 beginLocationAcquisition(context)
                 pendingLocationActivation = false
@@ -520,6 +528,26 @@ class MapLibreEngineImpl(
             apply3dBuildingVisibility(style)
             updateSavedPlacesLayer(savedPlacesCache)
         }
+    }
+
+    private fun configureDrivingTilePrefetch(map: MapLibreMap) {
+        if (!useVectorTiles) return
+        val context = appContext ?: return
+        map.prefetchZoomDelta = DRIVING_PREFETCH_ZOOM_DELTA
+        OfflineManager.getInstance(context).setMaximumAmbientCacheSize(
+            AMBIENT_CACHE_MAX_BYTES,
+            object : OfflineManager.FileSourceCallback {
+                override fun onSuccess() = Unit
+
+                override fun onError(message: String) {
+                    Log.w(TAG, "setMaximumAmbientCacheSize failed: $message")
+                }
+            },
+        )
+    }
+
+    private fun resetSmoothingMotion() {
+        smoothingLocationEngine?.reset()
     }
 
     /** Extra width on bundled Liberty fork (~3× in JSON at nav zoom); runtime factor ramps with zoom. */
@@ -687,6 +715,8 @@ class MapLibreEngineImpl(
         locationEngineCallback = null
         locationEngine = null
         rawLocationEngine = null
+        drivingTilePrefetcher?.cancel()
+        drivingTilePrefetcher = null
         mapView?.onDestroy()
         mapView = null
         mapLibreMap = null
@@ -1289,6 +1319,7 @@ class MapLibreEngineImpl(
             map.cameraPosition.zoom.coerceAtLeast(zoom)
         }
         stopDeadReckoning()
+        resetSmoothingMotion()
         topDownExploreUserAdjusted = false
         val component = map.locationComponent
         if (component.isLocationComponentActivated && component.isLocationComponentEnabled) {
@@ -2382,6 +2413,8 @@ class MapLibreEngineImpl(
     }
 
     private fun enterRouteSelection(origin: LatLng, destination: LatLng, candidates: List<StoredRoute>) {
+        resetSmoothingMotion()
+        drivingTilePrefetcher?.cancel()
         routeResultsById.clear()
         candidates.forEach { routeResultsById[it.id] = it }
 
@@ -2779,6 +2812,8 @@ class MapLibreEngineImpl(
         lastRouteOverviewLayoutWidth = 0
         lastRouteOverviewLayoutHeight = 0
         navigationCameraTransitionActive = false
+        drivingTilePrefetcher?.cancel()
+        resetSmoothingMotion()
         _uiState.update { it.copy(routeOverviewProgress = 0f) }
     }
 
@@ -3018,12 +3053,14 @@ class MapLibreEngineImpl(
     )
 
     private fun computeDrivingViewportPadding(map: MapLibreMap): ViewportPadding {
+        val lookaheadFrac = lookaheadTopFraction(lastDrivingSpeedMps)
+        val topFraction = (puckVerticalOffset + lookaheadFrac).coerceAtMost(0.55f)
         val w = map.width
         val h = map.height
         if (w > 0 && h > 0) {
             return ViewportPadding(
                 left = (w * puckHorizontalOffset).toInt(),
-                top = (h * puckVerticalOffset).toInt(),
+                top = (h * topFraction).toInt(),
             )
         }
         val dm = appContext?.resources?.displayMetrics
@@ -3031,8 +3068,16 @@ class MapLibreEngineImpl(
         val fallbackH = dm?.heightPixels?.takeIf { it > 0 } ?: 1920
         return ViewportPadding(
             left = (fallbackW * puckHorizontalOffset).toInt(),
-            top = (fallbackH * puckVerticalOffset).toInt(),
+            top = (fallbackH * topFraction).toInt(),
         )
+    }
+
+    private fun lookaheadTopFraction(speedMps: Float): Float {
+        if (speedMps < LOOKAHEAD_MIN_SPEED_MPS) return 0f
+        return when {
+            speedMps < 8f -> 0.05f + (speedMps - LOOKAHEAD_MIN_SPEED_MPS) / 6f * 0.04f
+            else -> (0.09f + (speedMps - 8f) / 12f * 0.03f).coerceAtMost(LOOKAHEAD_MAX_TOP_FRACTION)
+        }
     }
 
     private fun applyDrivingViewportPadding(map: MapLibreMap) {
@@ -4282,6 +4327,33 @@ class MapLibreEngineImpl(
         lastDeadReckoningLocation = null
     }
 
+    private fun maybePrefetchDrivingTiles(displayLocation: Location) {
+        val map = mapLibreMap ?: return
+        val context = appContext ?: return
+        val component = map.locationComponent
+        val trackingGps = component.isLocationComponentActivated &&
+            component.isLocationComponentEnabled &&
+            component.cameraMode == CameraMode.TRACKING_GPS
+        val bearing = when {
+            displayLocation.hasBearing() -> displayLocation.bearing
+            lastStableBearing != null -> lastStableBearing!!
+            else -> map.cameraPosition.bearing.toFloat()
+        }
+        drivingTilePrefetcher?.maybePrefetch(
+            lat = displayLocation.latitude,
+            lng = displayLocation.longitude,
+            bearingDeg = bearing,
+            zoom = map.cameraPosition.zoom,
+            enabled = useVectorTiles &&
+                trackingGps &&
+                !_uiState.value.isCameraDetached &&
+                !_uiState.value.isInTopDownView &&
+                !isRouteOverviewActive() &&
+                !_uiState.value.isRouteSelecting &&
+                isNetworkAvailable(context),
+        )
+    }
+
     private fun applyAndroidLocation(location: Location, snapCamera: Boolean) {
         if (isDuplicateLocationFix(location)) return
         lastLocationFixForDedup = Location(location)
@@ -4301,6 +4373,13 @@ class MapLibreEngineImpl(
         val latLng = LatLng(displayLocation.latitude, displayLocation.longitude)
         lastKnownLocation = latLng
         maybeUpdateUiStateCoords(displayLocation.latitude, displayLocation.longitude)
+
+        val newSpeedMps = if (displayLocation.hasSpeed()) displayLocation.speed else lastDrivingSpeedMps
+        if (lookaheadTopFraction(newSpeedMps) != lookaheadTopFraction(lastDrivingSpeedMps)) {
+            lastAppliedTrackingPadding = null
+            lastEngagedTrackingPadding = null
+        }
+        lastDrivingSpeedMps = newSpeedMps
 
         val component = mapLibreMap?.locationComponent
         val componentReady = component != null &&
@@ -4350,6 +4429,7 @@ class MapLibreEngineImpl(
                 }
             }
         }
+        maybePrefetchDrivingTiles(displayLocation)
         maybeSampleEncounteredPlaces(locationWithBearing)
     }
 
@@ -5126,16 +5206,16 @@ class MapLibreEngineImpl(
         private const val ROUTE_OVERVIEW_MIN_BOUNDS_PAD_DEGREES = 0.0008
         private const val ROUTE_OVERVIEW_ANIMATION_MS = 2000
         private const val ROUTE_OVERVIEW_HOLD_MS = 10_000L
-        private const val LOCATION_INTERVAL_MS = 1000L
+        private const val LOCATION_INTERVAL_MS = 500L
         private const val LOCATION_INTERVAL_NAV_MS = 500L
         private const val FRESH_LOCATION_MIN_TIME_MS = 500L
         private const val LOCATION_FIX_DEDUP_TIME_MS = 50L
         private const val LOCATION_FIX_DEDUP_DIST_M = 2f
         private const val PUCK_PUSH_MIN_DIST_M = 3f
-        private const val PUCK_EMIT_MIN_DIST_M = 3f
+        private const val PUCK_EMIT_MIN_DIST_M = 2f
         private const val PUCK_EMIT_MIN_BEARING_DEG = 4f
         private const val PUCK_EMIT_FAST_SPEED_MPS = 8f
-        private const val PUCK_EMIT_FAST_DIST_M = 1.5f
+        private const val PUCK_EMIT_FAST_DIST_M = 1.0f
         private const val PUCK_EMIT_FAST_BEARING_DEG = 2f
         private const val ROUTE_PROJECTION_SEARCH_RADIUS = 20
         private const val ROUTE_SIMPLIFY_MAX_POINTS = 500
@@ -5231,6 +5311,10 @@ class MapLibreEngineImpl(
         private const val DEDUP_THRESHOLD_M = 50f
         private const val MAX_SEARCH_RADIUS_M = 500_000f
         private const val ARRIVAL_FREE_DRIVE_DELAY_MS = 5_000L
+        private const val DRIVING_PREFETCH_ZOOM_DELTA = 3
+        private const val AMBIENT_CACHE_MAX_BYTES = 256L * 1024L * 1024L
+        private const val LOOKAHEAD_MIN_SPEED_MPS = 2f
+        private const val LOOKAHEAD_MAX_TOP_FRACTION = 0.12f
         private val DEFAULT_LOCATION = LatLng(12.8797, 121.7740)
 
         /**
@@ -5278,6 +5362,10 @@ private class SmoothingLocationEngine(
     private var targetLocation: Location? = null
     private var blendFrom: Location? = null
     private var blendStartMs: Long = 0L
+    private var currentBlendDurationMs: Long = SMOOTHING_BLEND_DURATION_DEFAULT_MS
+    private var extrapolationAnchor: Location? = null
+    private var extrapolationStartMs: Long = 0L
+    private var extrapolationDistanceM: Float = 0f
 
     private val frameCallback = Choreographer.FrameCallback {
         frameCallbackPosted = false
@@ -5285,11 +5373,16 @@ private class SmoothingLocationEngine(
         if (target != null && shouldSmooth()) {
             val now = System.currentTimeMillis()
             val from = blendFrom
-            val emitted = if (from != null && now - blendStartMs < SMOOTHING_BLEND_DURATION_MS) {
-                val t = ((now - blendStartMs).toFloat() / SMOOTHING_BLEND_DURATION_MS).coerceIn(0f, 1f)
-                interpolateLocation(from, target, t)
-            } else {
-                Location(target)
+            val emitted = when {
+                from != null && now - blendStartMs < currentBlendDurationMs -> {
+                    val t = ((now - blendStartMs).toFloat() / currentBlendDurationMs).coerceIn(0f, 1f)
+                    interpolateLocation(from, target, t)
+                }
+                shouldExtrapolate(target, now) -> {
+                    extrapolationDistanceM += target.speed * FRAME_DELTA_S
+                    extrapolateLocation(extrapolationAnchor ?: target, target.bearing, extrapolationDistanceM)
+                }
+                else -> Location(target)
             }
             displayLocation = Location(emitted)
             emitToAll(emitted)
@@ -5301,8 +5394,26 @@ private class SmoothingLocationEngine(
         targetLocation = null
         displayLocation = null
         blendFrom = null
+        extrapolationAnchor = null
+        extrapolationDistanceM = 0f
         choreographer.removeFrameCallback(frameCallback)
         frameCallbackPosted = false
+    }
+
+    private fun shouldExtrapolate(target: Location, now: Long): Boolean {
+        if (!target.hasSpeed() || target.speed < STOPPED_SPEED_MPS) return false
+        if (now - extrapolationStartMs > EXTRAPOLATION_MAX_MS) return false
+        if (extrapolationDistanceM >= EXTRAPOLATION_MAX_M) return false
+        return extrapolationAnchor != null
+    }
+
+    private fun blendDurationForSpeed(speedMps: Float): Long {
+        val speedKmh = speedMps * 3.6f
+        return when {
+            speedKmh < 20f -> 500L
+            speedKmh < 60f -> 700L
+            else -> SMOOTHING_BLEND_DURATION_DEFAULT_MS
+        }
     }
 
     private fun scheduleNextFrameIfNeeded() {
@@ -5317,6 +5428,10 @@ private class SmoothingLocationEngine(
         blendFrom = Location(previousDisplay)
         targetLocation = Location(fix)
         blendStartMs = System.currentTimeMillis()
+        currentBlendDurationMs = blendDurationForSpeed(if (fix.hasSpeed()) fix.speed else 0f)
+        extrapolationAnchor = Location(fix)
+        extrapolationStartMs = blendStartMs
+        extrapolationDistanceM = 0f
         if (!shouldSmooth()) {
             displayLocation = Location(fix)
             emitToAll(fix)
@@ -5346,6 +5461,22 @@ private class SmoothingLocationEngine(
             if (to.hasSpeed()) speed = to.speed
             if (to.hasAccuracy()) accuracy = to.accuracy
             time = to.time
+        }
+    }
+
+    private fun extrapolateLocation(anchor: Location, bearingDeg: Float, distanceM: Float): Location {
+        val latMetersPerDegree = 111_320.0
+        val lngMetersPerDegree = latMetersPerDegree * kotlin.math.cos(Math.toRadians(anchor.latitude))
+        val bearingRad = Math.toRadians(bearingDeg.toDouble())
+        val dLat = distanceM * kotlin.math.cos(bearingRad) / latMetersPerDegree
+        val dLng = distanceM * kotlin.math.sin(bearingRad) / lngMetersPerDegree
+        return Location(anchor).apply {
+            latitude = anchor.latitude + dLat
+            longitude = anchor.longitude + dLng
+            if (anchor.hasBearing()) bearing = bearingDeg
+            if (anchor.hasSpeed()) speed = anchor.speed
+            if (anchor.hasAccuracy()) accuracy = anchor.accuracy
+            time = System.currentTimeMillis()
         }
     }
 
@@ -5419,7 +5550,11 @@ private class SmoothingLocationEngine(
     }
 
     companion object {
-        private const val SMOOTHING_BLEND_DURATION_MS = 900L
+        private const val SMOOTHING_BLEND_DURATION_DEFAULT_MS = 900L
+        private const val STOPPED_SPEED_MPS = 1.4f
+        private const val EXTRAPOLATION_MAX_MS = 1_200L
+        private const val EXTRAPOLATION_MAX_M = 30f
+        private const val FRAME_DELTA_S = 1f / 60f
     }
 }
 
