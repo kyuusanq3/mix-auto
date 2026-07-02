@@ -1180,6 +1180,7 @@ class MapLibreEngineImpl(
             } else {
                 activateFreeDriveTrackingMode(map)
             }
+            scheduleFreeDrivePaddingRestore(map)
             map.getStyle { syncPoiOverlayVisibility(it) }
         }
     }
@@ -1618,8 +1619,25 @@ class MapLibreEngineImpl(
     private fun clearViewportPaddingForPreview(map: MapLibreMap) {
         lastAppliedTrackingPadding = null
         lastEngagedTrackingPadding = null
+        lastPaddingMapWidth = 0
+        lastPaddingMapHeight = 0
         applyMapPaddingImmediate(map, ViewportPadding(0, 0, 0, 0))
         applyPaddingWhileTrackingIfEngaged(map.locationComponent, ViewportPadding(0, 0, 0, 0))
+    }
+
+    /** Re-apply puck offset after top-down / POI preview cleared padding (often needs a posted pass). */
+    private fun scheduleFreeDrivePaddingRestore(map: MapLibreMap) {
+        if (_uiState.value.isNavigating) return
+        val view = mapView ?: return
+        view.post {
+            if (_uiState.value.isInTopDownView ||
+                _uiState.value.isCameraDetached ||
+                _uiState.value.isNavigating
+            ) {
+                return@post
+            }
+            applyPuckPaddingUpdate(map, bypassRenderThrottle = true)
+        }
     }
 
     override fun setSavedPlaces(places: List<SearchResultPlace>) {
@@ -2110,7 +2128,18 @@ class MapLibreEngineImpl(
 
         val alreadyTracking = component.cameraMode == CameraMode.TRACKING_GPS &&
             component.renderMode == RenderMode.GPS
-        if (alreadyTracking) return
+        if (alreadyTracking) {
+            // Top-down / preview clears padding caches while camera stays in TRACKING_GPS.
+            if (lastEngagedTrackingPadding == null) {
+                applyDrivingTrackingPadding(map)
+                forceLocationUpdateForImmediateRender(
+                    map,
+                    bypassThrottle = true,
+                    allowDuringSmoothing = true,
+                )
+            }
+            return
+        }
 
         component.renderMode = RenderMode.GPS
         component.cameraMode = CameraMode.TRACKING_GPS
@@ -2161,6 +2190,11 @@ class MapLibreEngineImpl(
         if (componentReady) {
             component.cameraMode = CameraMode.TRACKING_GPS
             applyDrivingTrackingPadding(map)
+            forceLocationUpdateForImmediateRender(
+                map,
+                bypassThrottle = true,
+                allowDuringSmoothing = true,
+            )
         }
 
         hasSnappedCameraToGps = true

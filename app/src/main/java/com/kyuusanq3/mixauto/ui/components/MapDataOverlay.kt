@@ -51,6 +51,9 @@ import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.kyuusanq3.mixauto.data.map.OfflineRegionDefinition
 import com.kyuusanq3.mixauto.data.map.OfflineRegionInstallState
+import com.kyuusanq3.mixauto.data.map.formatOfflineMbProgressLabel
+import com.kyuusanq3.mixauto.data.map.formatOfflineStorageMb
+import com.kyuusanq3.mixauto.data.map.parseSizeEstimateUpperMb
 import com.kyuusanq3.mixauto.ui.settings.LauncherViewModel
 import com.kyuusanq3.mixauto.ui.settings.MapDataUiState
 import com.kyuusanq3.mixauto.ui.settings.MapDataViewModel
@@ -311,30 +314,59 @@ fun MapDataSectionContent(
             }
             is MapDataUiState.DownloadingOfflineMap -> {
                 val offlineInstall = offlineStates[state.regionId]
-                LinearProgressIndicator(
-                    progress = { if (state.isPreparing) 0f else state.progress },
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                CarLabelText(
-                    text = if (state.isPreparing) {
-                        "Preparing ${state.regionName}…"
-                    } else {
-                        buildDownloadProgressLabel(
-                            regionName = state.regionName,
-                            progress = state.progress,
-                            completedCount = offlineInstall?.completedResourceCount ?: 0L,
-                            requiredCount = offlineInstall?.requiredResourceCount ?: 0L,
-                            completedBytes = offlineInstall?.completedResourceSize ?: 0L,
+                val sizeEstimateMb = viewModel.regionDefinition(state.regionId)?.sizeEstimateMb
+                when {
+                    state.isFinishing -> {
+                        LinearProgressIndicator(
+                            progress = { 1f },
+                            modifier = Modifier.fillMaxWidth(),
                         )
-                    },
-                    style = MaterialTheme.typography.labelMedium,
-                )
-                OfflineDownloadStatusHints(
-                    isPreparing = state.isPreparing,
-                    completedResourceCount = offlineInstall?.completedResourceCount ?: 0L,
-                    requiredResourceCount = offlineInstall?.requiredResourceCount ?: 0L,
-                    completedResourceSize = offlineInstall?.completedResourceSize ?: 0L,
-                )
+                        CarLabelText(
+                            text = "Finishing installation…",
+                            style = MaterialTheme.typography.labelMedium,
+                        )
+                    }
+                    state.isPreparing -> {
+                        LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                        CarLabelText(
+                            text = "Preparing ${state.regionName}…",
+                            style = MaterialTheme.typography.labelMedium,
+                        )
+                        OfflineDownloadStatusHints(
+                            isPreparing = true,
+                            completedResourceCount = offlineInstall?.completedResourceCount ?: 0L,
+                            requiredResourceCount = offlineInstall?.requiredResourceCount ?: 0L,
+                            completedResourceSize = offlineInstall?.completedResourceSize ?: 0L,
+                            resourceProgress = 0f,
+                            sizeEstimateMb = sizeEstimateMb,
+                        )
+                    }
+                    else -> {
+                        LinearProgressIndicator(
+                            progress = { state.progress },
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        CarLabelText(
+                            text = buildDownloadProgressLabel(
+                                regionName = state.regionName,
+                                progress = state.progress,
+                                completedCount = offlineInstall?.completedResourceCount ?: 0L,
+                                requiredCount = offlineInstall?.requiredResourceCount ?: 0L,
+                                completedBytes = offlineInstall?.completedResourceSize ?: 0L,
+                                sizeEstimateMb = sizeEstimateMb,
+                            ),
+                            style = MaterialTheme.typography.labelMedium,
+                        )
+                        OfflineDownloadStatusHints(
+                            isPreparing = false,
+                            completedResourceCount = offlineInstall?.completedResourceCount ?: 0L,
+                            requiredResourceCount = offlineInstall?.requiredResourceCount ?: 0L,
+                            completedResourceSize = offlineInstall?.completedResourceSize ?: 0L,
+                            resourceProgress = offlineInstall?.downloadProgress ?: 0f,
+                            sizeEstimateMb = sizeEstimateMb,
+                        )
+                    }
+                }
                 CountryCatalogList(
                     modifier = catalogModifier,
                     packs = state.packs,
@@ -727,9 +759,11 @@ private fun OfflineRegionRow(
         (installState?.requiredResourceCount ?: 0L) == 0L
     val downloadProgress = when {
         isDownloading -> (uiState as MapDataUiState.DownloadingOfflineMap).progress
-        installState?.isDownloading == true -> installState.downloadProgress
+        installState?.isDownloading == true -> installState.displayProgress
         else -> 0f
     }
+    val completedBytes = installState?.completedResourceSize ?: 0L
+    val resourceProgress = installState?.downloadProgress ?: 0f
     val needsDetailUpgrade = installState?.needsDetailUpgrade == true
     val isInstalledCurrent = installState?.isCurrentDetail == true
     val transferInProgress = uiState is MapDataUiState.Downloading ||
@@ -838,6 +872,8 @@ private fun OfflineRegionRow(
                     isDownloading = isDownloading || installState?.isDownloading == true,
                     isPreparing = isPreparing,
                     downloadProgress = downloadProgress,
+                    completedBytes = completedBytes,
+                    sizeEstimateMb = region.sizeEstimateMb,
                     isInstalled = isInstalledCurrent,
                     needsDetailUpgrade = needsDetailUpgrade,
                     transferInProgress = transferInProgress,
@@ -860,6 +896,8 @@ private fun OfflineRegionRow(
                     completedResourceCount = installState?.completedResourceCount ?: 0L,
                     requiredResourceCount = installState?.requiredResourceCount ?: 0L,
                     completedResourceSize = installState?.completedResourceSize ?: 0L,
+                    resourceProgress = resourceProgress,
+                    sizeEstimateMb = region.sizeEstimateMb,
                     modifier = Modifier.padding(
                         start = CarDimensions.PaneGap / 2,
                         end = CarDimensions.PaneGap / 2,
@@ -877,10 +915,13 @@ private fun OfflineDownloadStatusHints(
     completedResourceCount: Long,
     requiredResourceCount: Long,
     completedResourceSize: Long = 0L,
+    resourceProgress: Float = 0f,
+    sizeEstimateMb: String? = null,
     modifier: Modifier = Modifier,
 ) {
     var showPreparingHint by remember { mutableStateOf(false) }
     var showStallHint by remember { mutableStateOf(false) }
+    var showSlowResourceHint by remember { mutableStateOf(false) }
 
     LaunchedEffect(isPreparing) {
         showPreparingHint = false
@@ -890,13 +931,25 @@ private fun OfflineDownloadStatusHints(
         }
     }
 
-    LaunchedEffect(isPreparing, completedResourceCount, requiredResourceCount) {
+    LaunchedEffect(isPreparing, completedResourceCount, requiredResourceCount, completedResourceSize) {
         showStallHint = false
         if (isPreparing || requiredResourceCount == 0L) return@LaunchedEffect
-        val snapshot = completedResourceCount
+        val countSnapshot = completedResourceCount
+        val bytesSnapshot = completedResourceSize
         delay(2 * 60 * 1000L)
-        if (!isPreparing && requiredResourceCount > 0L && completedResourceCount == snapshot) {
+        if (!isPreparing && requiredResourceCount > 0L &&
+            completedResourceCount == countSnapshot &&
+            completedResourceSize == bytesSnapshot
+        ) {
             showStallHint = true
+        }
+    }
+
+    LaunchedEffect(isPreparing, resourceProgress, completedResourceSize) {
+        showSlowResourceHint = false
+        if (isPreparing || completedResourceSize <= 0L) return@LaunchedEffect
+        if (resourceProgress < 0.10f) {
+            showSlowResourceHint = true
         }
     }
 
@@ -907,6 +960,7 @@ private fun OfflineDownloadStatusHints(
                     completedResourceCount,
                     requiredResourceCount,
                     completedResourceSize,
+                    sizeEstimateMb,
                 ),
                 style = MaterialTheme.typography.labelMedium,
             )
@@ -914,6 +968,12 @@ private fun OfflineDownloadStatusHints(
         if (showPreparingHint && isPreparing) {
             CarLabelText(
                 text = "Building tile list from OpenFreeMap — can take 1–2 minutes on first download.",
+                style = MaterialTheme.typography.labelMedium,
+            )
+        }
+        if (showSlowResourceHint && !isPreparing && !showStallHint) {
+            CarLabelText(
+                text = "Downloading map tiles — progress may look slow at first.",
                 style = MaterialTheme.typography.labelMedium,
             )
         }
@@ -931,6 +991,8 @@ private fun PackRowActions(
     isDownloading: Boolean,
     isPreparing: Boolean = false,
     downloadProgress: Float,
+    completedBytes: Long = 0L,
+    sizeEstimateMb: String? = null,
     isInstalled: Boolean,
     needsDetailUpgrade: Boolean = false,
     transferInProgress: Boolean,
@@ -949,10 +1011,12 @@ private fun PackRowActions(
                 strokeWidth = 3.dp,
             )
             CarLabelText(
-                text = if (isPreparing) {
-                    "Preparing…"
-                } else {
-                    "${(downloadProgress * 100).roundToInt()}%"
+                text = when {
+                    isPreparing -> "Preparing…"
+                    else -> {
+                        formatOfflineMbProgressLabel(completedBytes, sizeEstimateMb)
+                            ?: "${(downloadProgress * 100).roundToInt()}%"
+                    }
                 },
                 style = MaterialTheme.typography.labelMedium,
             )
@@ -1087,15 +1151,24 @@ private fun buildDownloadProgressLabel(
     completedCount: Long,
     requiredCount: Long,
     completedBytes: Long,
+    sizeEstimateMb: String?,
 ): String = buildString {
     append("Downloading ")
     append(regionName)
     append("… ")
-    append((progress * 100f).roundToInt())
-    append('%')
+    val mbLabel = formatOfflineMbProgressLabel(completedBytes, sizeEstimateMb)
+    if (mbLabel != null) {
+        append(mbLabel)
+    } else {
+        append((progress * 100f).roundToInt())
+        append('%')
+    }
     if (requiredCount > 0L) {
         append(" · ")
-        append(formatOfflineDownloadDetail(completedCount, requiredCount, completedBytes))
+        append(completedCount)
+        append(" / ")
+        append(requiredCount)
+        append(" resources")
     }
 }
 
@@ -1103,6 +1176,7 @@ private fun formatOfflineDownloadDetail(
     completedCount: Long,
     requiredCount: Long,
     completedBytes: Long,
+    sizeEstimateMb: String? = null,
 ): String = buildString {
     append(completedCount)
     append(" / ")
@@ -1110,6 +1184,13 @@ private fun formatOfflineDownloadDetail(
     append(" resources")
     if (completedBytes > 0L) {
         append(" · ~")
-        append(formatStorageMb(completedBytes))
+        append(formatOfflineStorageMb(completedBytes))
+        sizeEstimateMb?.let { estimate ->
+            parseSizeEstimateUpperMb(estimate)?.let { upperMb ->
+                append(" of ~")
+                append(upperMb)
+                append(" MB est.")
+            }
+        }
     }
 }

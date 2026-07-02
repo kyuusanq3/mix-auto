@@ -15,8 +15,10 @@ import androidx.core.app.NotificationCompat
 import com.kyuusanq3.mixauto.MainActivity
 import com.kyuusanq3.mixauto.R
 import com.kyuusanq3.mixauto.data.map.OfflineMapRepository
+import com.kyuusanq3.mixauto.data.map.OfflineRegionInstallState
 import com.kyuusanq3.mixauto.data.map.MapDownloadNetworkGate
 import com.kyuusanq3.mixauto.data.map.OfflineMapRepositoryHolder
+import com.kyuusanq3.mixauto.data.map.formatOfflineMbProgressLabel
 import com.kyuusanq3.mixauto.ui.settings.LauncherPreferences
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -145,8 +147,9 @@ class OfflineMapDownloadService : Service() {
                 .collect { state ->
                     if (state == null) return@collect
                     val preparing = state.requiredResourceCount == 0L && !state.isComplete
-                    val percent = (state.downloadProgress * 100f).toInt().coerceIn(0, 100)
-                    updateNotification(regionName, percent, preparing)
+                    val sizeEstimateMb = repository.regionDefinition(regionId)?.sizeEstimateMb
+                    val percent = (state.displayProgress * 100f).toInt().coerceIn(0, 100)
+                    updateNotification(regionName, percent, preparing, state, sizeEstimateMb)
                 }
         }
     }
@@ -194,12 +197,27 @@ class OfflineMapDownloadService : Service() {
         }
     }
 
-    private fun updateNotification(regionName: String, progressPercent: Int, preparing: Boolean) {
+    private fun updateNotification(
+        regionName: String,
+        progressPercent: Int,
+        preparing: Boolean,
+        state: OfflineRegionInstallState? = null,
+        sizeEstimateMb: String? = null,
+    ) {
         val manager = getSystemService(NotificationManager::class.java)
-        manager.notify(NOTIFICATION_ID, buildNotification(regionName, progressPercent, preparing))
+        manager.notify(
+            NOTIFICATION_ID,
+            buildNotification(regionName, progressPercent, preparing, state, sizeEstimateMb),
+        )
     }
 
-    private fun buildNotification(regionName: String, progressPercent: Int, preparing: Boolean): Notification {
+    private fun buildNotification(
+        regionName: String,
+        progressPercent: Int,
+        preparing: Boolean,
+        state: OfflineRegionInstallState? = null,
+        sizeEstimateMb: String? = null,
+    ): Notification {
         val launchIntent = PendingIntent.getActivity(
             this,
             0,
@@ -209,7 +227,14 @@ class OfflineMapDownloadService : Service() {
         val body = if (preparing) {
             "Preparing $regionName…"
         } else {
-            "Downloading $regionName… $progressPercent%"
+            val mbLabel = state?.let {
+                formatOfflineMbProgressLabel(it.completedResourceSize, sizeEstimateMb)
+            }
+            if (mbLabel != null) {
+                "Downloading $regionName… $mbLabel"
+            } else {
+                "Downloading $regionName… $progressPercent%"
+            }
         }
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.stat_sys_download)

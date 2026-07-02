@@ -16,6 +16,7 @@ import com.kyuusanq3.mixauto.data.places.LocalDbMeta
 import com.kyuusanq3.mixauto.service.OfflineMapDownloadService
 import com.kyuusanq3.mixauto.data.places.LocalPlacesRepository
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -49,6 +50,7 @@ sealed class MapDataUiState {
         val regionName: String,
         val progress: Float,
         val isPreparing: Boolean = false,
+        val isFinishing: Boolean = false,
         val packs: List<RemoteCountryPack>,
     ) : MapDataUiState()
     data class Importing(val progress: Float, val label: String) : MapDataUiState()
@@ -104,17 +106,26 @@ class MapDataViewModel(
                     _uiState.value = MapDataUiState.DownloadingOfflineMap(
                         regionId = downloading.regionId,
                         regionName = definition?.name ?: downloading.regionId,
-                        progress = downloading.downloadProgress,
+                        progress = downloading.displayProgress,
                         isPreparing = downloading.requiredResourceCount == 0L,
                         packs = catalogPacks,
                     )
                 } else if (downloading != null && current is MapDataUiState.DownloadingOfflineMap) {
                     _uiState.value = current.copy(
-                        progress = downloading.downloadProgress,
+                        progress = downloading.displayProgress,
                         isPreparing = downloading.requiredResourceCount == 0L,
                     )
                 } else if (downloading == null && current is MapDataUiState.DownloadingOfflineMap) {
-                    refreshCatalogAfterChange()
+                    if (!current.isFinishing) {
+                        _uiState.value = current.copy(progress = 1f, isFinishing = true)
+                        viewModelScope.launch {
+                            delay(FINISHING_TRANSITION_MS)
+                            val latest = _uiState.value
+                            if (latest is MapDataUiState.DownloadingOfflineMap && latest.isFinishing) {
+                                refreshCatalogAfterChange()
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -324,6 +335,9 @@ class MapDataViewModel(
     fun regionForCountry(iso: String): List<OfflineRegionDefinition> =
         offlineCatalog.firstOrNull { it.iso.equals(iso, ignoreCase = true) }?.regions.orEmpty()
 
+    fun regionDefinition(regionId: String): OfflineRegionDefinition? =
+        offlineMapRepository.regionDefinition(regionId)
+
     private fun isTransferInProgress(): Boolean = when (_uiState.value) {
         is MapDataUiState.Downloading,
         is MapDataUiState.DownloadingOfflineMap,
@@ -407,5 +421,6 @@ class MapDataViewModel(
             "https://github.com/$DATA_REPO/releases/latest/download/countries.json"
         private const val RELEASE_BASE_URL =
             "https://github.com/$DATA_REPO/releases/latest/download"
+        private const val FINISHING_TRANSITION_MS = 800L
     }
 }

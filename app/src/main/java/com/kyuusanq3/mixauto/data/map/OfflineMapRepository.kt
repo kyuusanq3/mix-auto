@@ -25,6 +25,66 @@ import org.maplibre.android.offline.OfflineTilePyramidRegionDefinition
 import java.nio.charset.StandardCharsets
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
+import kotlin.math.max
+
+/** Upper-bound MB from catalog strings like "150–400" or "40-80". */
+fun parseSizeEstimateUpperMb(sizeEstimateMb: String): Int? {
+    val normalized = sizeEstimateMb.replace('–', '-').replace('—', '-')
+    val parts = normalized.split('-').map { part ->
+        part.trim().filter { it.isDigit() }
+    }
+    val upper = parts.lastOrNull()?.toIntOrNull() ?: parts.firstOrNull()?.toIntOrNull()
+    return upper?.takeIf { it > 0 }
+}
+
+fun parseSizeEstimateUpperBytes(sizeEstimateMb: String): Long? {
+    val mb = parseSizeEstimateUpperMb(sizeEstimateMb) ?: return null
+    return mb.toLong() * 1024L * 1024L
+}
+
+fun computeOfflineDisplayProgress(
+    completedResourceCount: Long,
+    requiredResourceCount: Long,
+    completedResourceSize: Long,
+    sizeEstimateMb: String?,
+    isComplete: Boolean,
+): Float {
+    if (isComplete) return 1f
+    val resourceProgress = if (requiredResourceCount > 0L) {
+        (completedResourceCount.toFloat() / requiredResourceCount.toFloat()).coerceIn(0f, 1f)
+    } else {
+        0f
+    }
+    val estimatedMaxBytes = sizeEstimateMb?.let { parseSizeEstimateUpperBytes(it) }
+    val byteProgress = if (estimatedMaxBytes != null && estimatedMaxBytes > 0L && completedResourceSize > 0L) {
+        (completedResourceSize.toFloat() / estimatedMaxBytes.toFloat()).coerceIn(0f, 0.99f)
+    } else {
+        0f
+    }
+    return max(resourceProgress, byteProgress).coerceIn(0f, 0.99f)
+}
+
+/** Primary user-facing download label, e.g. "~120 MB of ~400 MB". */
+fun formatOfflineMbProgressLabel(completedBytes: Long, sizeEstimateMb: String?): String? {
+    if (completedBytes <= 0L) return null
+    val received = formatOfflineStorageMb(completedBytes)
+    val upperMb = sizeEstimateMb?.let { parseSizeEstimateUpperMb(it) }
+    return if (upperMb != null) {
+        "~$received of ~$upperMb MB"
+    } else {
+        "~$received"
+    }
+}
+
+fun formatOfflineStorageMb(bytes: Long): String {
+    if (bytes <= 0L) return "0 MB"
+    val mb = bytes / (1024.0 * 1024.0)
+    return if (mb < 10.0) {
+        String.format("%.1f MB", mb)
+    } else {
+        "${mb.toInt()} MB"
+    }
+}
 
 data class OfflineRegionDefinition(
     val id: String,
@@ -60,6 +120,8 @@ data class OfflineRegionInstallState(
     val requiredResourceCount: Long = 0,
     val completedResourceSize: Long = 0,
     val downloadProgress: Float = 0f,
+    /** Blended resource-count + byte progress for UI (max of both, capped at 0.99 until complete). */
+    val displayProgress: Float = 0f,
     val isDownloading: Boolean = false,
     val errorMessage: String? = null,
     val installedMaxZoom: Int? = null,
@@ -392,13 +454,17 @@ class OfflineMapRepository(context: Context) {
     private suspend fun observeUntilComplete(region: OfflineRegion, regionId: String) = coroutineScope {
         val completeSignal = CompletableDeferred<Unit>()
         var lastProgressCount = -1L
+        var lastProgressBytes = -1L
         var lastProgressMs = System.currentTimeMillis()
         var kickAttempted = false
         var kickAtMs = 0L
 
         fun noteProgress(status: OfflineRegionStatus) {
-            if (status.completedResourceCount != lastProgressCount) {
+            val countChanged = status.completedResourceCount != lastProgressCount
+            val bytesChanged = status.completedResourceSize != lastProgressBytes
+            if (countChanged || bytesChanged) {
                 lastProgressCount = status.completedResourceCount
+                lastProgressBytes = status.completedResourceSize
                 lastProgressMs = System.currentTimeMillis()
                 kickAttempted = false
             }
@@ -586,6 +652,14 @@ data class PendingOfflineResume(val regionId: String, val pixelRatio: Float)
         } else {
             0f
         }
+        val sizeEstimate = regionById[regionId]?.sizeEstimateMb
+        val displayProgress = computeOfflineDisplayProgress(
+            completedResourceCount = completed,
+            requiredResourceCount = required,
+            completedResourceSize = completedResourceSize,
+            sizeEstimateMb = sizeEstimate,
+            isComplete = isComplete,
+        )
         val catalogMax = regionById[regionId]?.maxZoom?.toInt()
         return OfflineRegionInstallState(
             regionId = regionId,
@@ -594,6 +668,7 @@ data class PendingOfflineResume(val regionId: String, val pixelRatio: Float)
             requiredResourceCount = required,
             completedResourceSize = completedResourceSize,
             downloadProgress = progress,
+            displayProgress = displayProgress,
             isDownloading = downloadState == OfflineRegion.STATE_ACTIVE && !isComplete,
             installedMaxZoom = installedMaxZoom,
             catalogMaxZoom = catalogMax,
@@ -612,6 +687,7 @@ data class PendingOfflineResume(val regionId: String, val pixelRatio: Float)
                     requiredResourceCount = previous?.requiredResourceCount ?: 0L,
                     completedResourceSize = previous?.completedResourceSize ?: 0L,
                     downloadProgress = previous?.downloadProgress ?: 0f,
+                    displayProgress = previous?.displayProgress ?: 0f,
                     isDownloading = true,
                 ),
             )
@@ -631,6 +707,14 @@ data class PendingOfflineResume(val regionId: String, val pixelRatio: Float)
         } else {
             0f
         }
+        val sizeEstimate = regionById[regionId]?.sizeEstimateMb
+        val displayProgress = computeOfflineDisplayProgress(
+            completedResourceCount = completed,
+            requiredResourceCount = required,
+            completedResourceSize = status.completedResourceSize,
+            sizeEstimateMb = sizeEstimate,
+            isComplete = status.isComplete,
+        )
         val catalogMax = regionById[regionId]?.maxZoom?.toInt()
         _installStates.value = _installStates.value.toMutableMap().apply {
             put(
@@ -642,6 +726,7 @@ data class PendingOfflineResume(val regionId: String, val pixelRatio: Float)
                     requiredResourceCount = required,
                     completedResourceSize = status.completedResourceSize,
                     downloadProgress = progress,
+                    displayProgress = displayProgress,
                     isDownloading = isDownloading && !status.isComplete,
                     installedMaxZoom = installedMaxZoom,
                     catalogMaxZoom = catalogMax,
