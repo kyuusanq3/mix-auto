@@ -2,10 +2,15 @@ package com.kyuusanq3.mixauto.data.map
 
 import android.content.Context
 import android.util.Log
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
@@ -384,69 +389,103 @@ class OfflineMapRepository(context: Context) {
         }
     }
 
-    private suspend fun observeUntilComplete(region: OfflineRegion, regionId: String) {
-        suspendCancellableCoroutine { cont ->
-            region.setObserver(object : OfflineRegion.OfflineRegionObserver {
-                override fun onStatusChanged(status: OfflineRegionStatus) {
-                    logStatus(regionId, status, "download")
-                    updateStateFromStatus(regionId, status, isDownloading = !status.isComplete)
-                    if (status.isComplete && cont.isActive) {
-                        cont.resume(Unit)
-                    }
-                }
+    private suspend fun observeUntilComplete(region: OfflineRegion, regionId: String) = coroutineScope {
+        val completeSignal = CompletableDeferred<Unit>()
+        var lastProgressCount = -1L
+        var lastProgressMs = System.currentTimeMillis()
+        var kickAttempted = false
+        var kickAtMs = 0L
 
-                override fun onError(error: OfflineRegionError) {
-                    Log.e(TAG, "Offline $regionId error: ${error.message} type=${error.reason}")
-                    _installStates.value = _installStates.value.toMutableMap().apply {
-                        put(
-                            regionId,
-                            OfflineRegionInstallState(
-                                regionId = regionId,
-                                isComplete = false,
-                                isDownloading = false,
-                                errorMessage = error.message,
-                            ),
-                        )
-                    }
-                    if (cont.isActive) {
-                        cont.resumeWithException(Exception(error.message))
-                    }
-                }
-
-                override fun mapboxTileCountLimitExceeded(limit: Long) {
-                    val message = "Offline tile limit exceeded ($limit)"
-                    _installStates.value = _installStates.value.toMutableMap().apply {
-                        put(
-                            regionId,
-                            OfflineRegionInstallState(
-                                regionId = regionId,
-                                isComplete = false,
-                                isDownloading = false,
-                                errorMessage = message,
-                            ),
-                        )
-                    }
-                    if (cont.isActive) {
-                        cont.resumeWithException(Exception(message))
-                    }
-                }
-            })
-            region.setDownloadState(OfflineRegion.STATE_ACTIVE)
-            region.getStatus(object : OfflineRegion.OfflineRegionStatusCallback {
-                override fun onStatus(status: OfflineRegionStatus?) {
-                    if (status == null) return
-                    logStatus(regionId, status, "download-snapshot")
-                    updateStateFromStatus(regionId, status, isDownloading = !status.isComplete)
-                    if (status.isComplete && cont.isActive) {
-                        cont.resume(Unit)
-                    }
-                }
-
-                override fun onError(error: String?) = Unit
-            })
-            cont.invokeOnCancellation {
-                region.setObserver(null)
+        fun noteProgress(status: OfflineRegionStatus) {
+            if (status.completedResourceCount != lastProgressCount) {
+                lastProgressCount = status.completedResourceCount
+                lastProgressMs = System.currentTimeMillis()
+                kickAttempted = false
             }
+        }
+
+        fun handleStatus(status: OfflineRegionStatus, phase: String) {
+            logStatus(regionId, status, phase)
+            updateStateFromStatus(regionId, status, isDownloading = !status.isComplete)
+            noteProgress(status)
+            if (status.isComplete && !completeSignal.isCompleted) {
+                completeSignal.complete(Unit)
+            }
+        }
+
+        fun failDownload(message: String) {
+            if (completeSignal.isCompleted) return
+            _installStates.value = _installStates.value.toMutableMap().apply {
+                put(
+                    regionId,
+                    OfflineRegionInstallState(
+                        regionId = regionId,
+                        isComplete = false,
+                        isDownloading = false,
+                        errorMessage = message,
+                    ),
+                )
+            }
+            completeSignal.completeExceptionally(Exception(message))
+        }
+
+        region.setObserver(object : OfflineRegion.OfflineRegionObserver {
+            override fun onStatusChanged(status: OfflineRegionStatus) {
+                handleStatus(status, "download")
+            }
+
+            override fun onError(error: OfflineRegionError) {
+                Log.e(TAG, "Offline $regionId error: ${error.message} type=${error.reason}")
+                failDownload(error.message ?: "Offline map download failed")
+            }
+
+            override fun mapboxTileCountLimitExceeded(limit: Long) {
+                failDownload("Offline tile limit exceeded ($limit)")
+            }
+        })
+        region.setDownloadState(OfflineRegion.STATE_ACTIVE)
+        region.getStatus(object : OfflineRegion.OfflineRegionStatusCallback {
+            override fun onStatus(status: OfflineRegionStatus?) {
+                if (status == null) return
+                handleStatus(status, "download-snapshot")
+            }
+
+            override fun onError(error: String?) = Unit
+        })
+
+        val stallJob = launch {
+            while (isActive && !completeSignal.isCompleted) {
+                delay(STALL_CHECK_INTERVAL_MS)
+                if (completeSignal.isCompleted) return@launch
+                val status = runCatching { region.awaitStatus() }.getOrNull() ?: continue
+                handleStatus(status, "download-poll")
+                if (status.isComplete) return@launch
+
+                val stalledMs = System.currentTimeMillis() - lastProgressMs
+                if (status.requiredResourceCount <= 0L || stalledMs < STALL_TIMEOUT_MS) continue
+
+                if (!kickAttempted) {
+                    kickAttempted = true
+                    kickAtMs = System.currentTimeMillis()
+                    Log.w(
+                        TAG,
+                        "Download stalled for $regionId at ${status.completedResourceCount}/" +
+                            "${status.requiredResourceCount} state=${status.downloadState} — kicking",
+                    )
+                    region.setDownloadState(OfflineRegion.STATE_INACTIVE)
+                    region.setDownloadState(OfflineRegion.STATE_ACTIVE)
+                } else if (System.currentTimeMillis() - kickAtMs >= STALL_KICK_GRACE_MS) {
+                    failDownload("Download stalled — check Wi-Fi to OpenFreeMap and retry")
+                    return@launch
+                }
+            }
+        }
+
+        try {
+            completeSignal.await()
+        } finally {
+            stallJob.cancel()
+            region.setObserver(null)
         }
     }
 
@@ -725,6 +764,9 @@ data class PendingOfflineResume(val regionId: String, val pixelRatio: Float)
         private const val OFFLINE_TILE_COUNT_LIMIT = 1_000_000L
         private const val PREPARE_TIMEOUT_MS = 120_000L
         private const val DOWNLOAD_TIMEOUT_MS = 45L * 60L * 1000L
+        private const val STALL_CHECK_INTERVAL_MS = 30_000L
+        private const val STALL_TIMEOUT_MS = 180_000L
+        private const val STALL_KICK_GRACE_MS = 60_000L
         private const val MAX_OFFLINE_PIXEL_RATIO = 2f
         private const val DEFAULT_PIXEL_RATIO = 2f
         private const val STYLE_TRANSPORT_LOOPBACK = "loopback-v1"

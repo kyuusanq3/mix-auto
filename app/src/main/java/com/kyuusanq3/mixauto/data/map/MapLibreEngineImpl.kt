@@ -238,6 +238,8 @@ class MapLibreEngineImpl(
     private var lastAppliedTrackingPadding: IntArray? = null
     /** Padding last pushed via [paddingWhileTracking] while tracking was engaged. */
     private var lastEngagedTrackingPadding: IntArray? = null
+    private var lastPaddingMapWidth: Int = 0
+    private var lastPaddingMapHeight: Int = 0
     private var lastUiStateCoordUpdateMs: Long = 0L
     private var lastUiStateCoordLat: Double? = null
     private var lastUiStateCoordLng: Double? = null
@@ -1533,7 +1535,7 @@ class MapLibreEngineImpl(
             val trackingGps = componentReady && component.cameraMode == CameraMode.TRACKING_GPS
             val padding = computeDrivingViewportPadding(map)
             val paddingKey = intArrayOf(padding.left, padding.top, padding.right, padding.bottom)
-            val paddingChanged = lastEngagedTrackingPadding?.contentEquals(paddingKey) != true
+            val paddingChanged = drivingPaddingNeedsUpdate(map, paddingKey, trackingGps)
             if (paddingChanged) {
                 if (trackingGps) {
                     applyDrivingTrackingPadding(map)
@@ -1558,6 +1560,8 @@ class MapLibreEngineImpl(
     private fun applyPuckPaddingUpdate(map: MapLibreMap, bypassRenderThrottle: Boolean = false) {
         lastAppliedTrackingPadding = null
         lastEngagedTrackingPadding = null
+        lastPaddingMapWidth = 0
+        lastPaddingMapHeight = 0
         val component = map.locationComponent
         val componentReady = component.isLocationComponentActivated &&
             component.isLocationComponentEnabled
@@ -2110,7 +2114,7 @@ class MapLibreEngineImpl(
 
         component.renderMode = RenderMode.GPS
         component.cameraMode = CameraMode.TRACKING_GPS
-        component.setMaxAnimationFps(Integer.MAX_VALUE)
+        component.setMaxAnimationFps(FREE_DRIVE_ANIMATION_FPS)
         applyDrivingTrackingPadding(map)
     }
 
@@ -3123,6 +3127,27 @@ class MapLibreEngineImpl(
         return (px / stepPx) * stepPx
     }
 
+    private fun drivingPaddingNeedsUpdate(
+        map: MapLibreMap,
+        paddingKey: IntArray,
+        trackingGps: Boolean,
+    ): Boolean {
+        val w = map.width.toInt()
+        val h = map.height.toInt()
+        if (w > 0 && h > 0 && (w != lastPaddingMapWidth || h != lastPaddingMapHeight)) {
+            return true
+        }
+        val cached = if (trackingGps) lastEngagedTrackingPadding else lastAppliedTrackingPadding
+        return cached?.contentEquals(paddingKey) != true
+    }
+
+    private fun markDrivingPaddingMapSize(map: MapLibreMap) {
+        val w = map.width.toInt()
+        val h = map.height.toInt()
+        if (w > 0) lastPaddingMapWidth = w
+        if (h > 0) lastPaddingMapHeight = h
+    }
+
     private fun updateLookaheadPaddingState(speedMps: Float) {
         if (!lookaheadPaddingActive && speedMps >= LOOKAHEAD_ENTER_SPEED_MPS) {
             lookaheadPaddingActive = true
@@ -3146,7 +3171,11 @@ class MapLibreEngineImpl(
         if (_uiState.value.isInTopDownView || _uiState.value.isCameraDetached) return
         val padding = computeDrivingViewportPadding(map)
         val paddingKey = intArrayOf(padding.left, padding.top, padding.right, padding.bottom)
-        if (lastEngagedTrackingPadding?.contentEquals(paddingKey) == true) return
+        val component = map.locationComponent
+        val trackingGps = component.isLocationComponentActivated &&
+            component.isLocationComponentEnabled &&
+            component.cameraMode == CameraMode.TRACKING_GPS
+        if (!drivingPaddingNeedsUpdate(map, paddingKey, trackingGps)) return
         applyDrivingTrackingPadding(map)
     }
 
@@ -3173,14 +3202,16 @@ class MapLibreEngineImpl(
         val componentReady = component.isLocationComponentActivated && component.isLocationComponentEnabled
         val alreadyTrackingGps = componentReady && component.cameraMode == CameraMode.TRACKING_GPS
         if (!alreadyTrackingGps) {
-            if (lastAppliedTrackingPadding?.contentEquals(paddingKey) == true) return
+            if (!drivingPaddingNeedsUpdate(map, paddingKey, trackingGps = false)) return
             lastAppliedTrackingPadding = paddingKey
+            markDrivingPaddingMapSize(map)
             applyMapPaddingImmediate(map, padding)
             return
         }
-        if (lastEngagedTrackingPadding?.contentEquals(paddingKey) == true) return
+        if (!drivingPaddingNeedsUpdate(map, paddingKey, trackingGps = true)) return
         lastAppliedTrackingPadding = paddingKey
         lastEngagedTrackingPadding = paddingKey
+        markDrivingPaddingMapSize(map)
         applyPaddingWhileTrackingIfEngaged(component, padding)
         if (!shouldSmoothPuckMotion()) {
             forceLocationUpdateForImmediateRender(map)
@@ -4210,7 +4241,7 @@ class MapLibreEngineImpl(
             }
             locationComponent.isLocationComponentEnabled = true
             locationComponent.renderMode = RenderMode.GPS
-            locationComponent.setMaxAnimationFps(Integer.MAX_VALUE)
+            locationComponent.setMaxAnimationFps(FREE_DRIVE_ANIMATION_FPS)
             applyDrivingTrackingPadding(map)
 
             flushPendingLocationFix()
@@ -4405,6 +4436,11 @@ class MapLibreEngineImpl(
         }
         if (location.hasBearing() && location.bearing != 0f) {
             val rawBearing = location.bearing
+            applyStraightRoadBearingLock(rawBearing)?.let { locked ->
+                val enriched = Location(location)
+                enriched.bearing = locked
+                return enriched
+            }
             val smoothed = smoothBearing(rawBearing)
             lastStableBearing = smoothed
             val enriched = Location(location)
@@ -4415,6 +4451,10 @@ class MapLibreEngineImpl(
         if (prev != null && movedM > 10f) {
             val enriched = Location(location)
             val computed = prev.bearingTo(location)
+            applyStraightRoadBearingLock(computed)?.let { locked ->
+                enriched.bearing = locked
+                return enriched
+            }
             enriched.bearing = smoothBearing(computed)
             lastStableBearing = enriched.bearing
             return enriched
@@ -4429,8 +4469,17 @@ class MapLibreEngineImpl(
 
     private fun smoothBearing(target: Float): Float {
         val previous = lastStableBearing ?: return target
-        val delta = normalizeBearingDelta(target - previous)
+        val delta = signedBearingDelta(target - previous)
         return normalizeBearing(previous + delta * BEARING_EMA_ALPHA)
+    }
+
+    /** Hold bearing steady on straight roads when GPS course noise is below lock threshold. */
+    private fun applyStraightRoadBearingLock(rawBearing: Float): Float? {
+        val stable = lastStableBearing ?: return null
+        if (abs(signedBearingDelta(rawBearing - stable)) < STRAIGHT_ROAD_LOCK_DEG) {
+            return stable
+        }
+        return null
     }
 
     private fun normalizeBearing(bearing: Float): Float {
@@ -4456,19 +4505,21 @@ class MapLibreEngineImpl(
         val distM = prev.distanceTo(next)
         if (distM >= minDist) return true
         if (!next.hasBearing() || !prev.hasBearing()) return false
-        val bearingChange = normalizeBearingDelta(next.bearing - prev.bearing)
+        val bearingChange = bearingChangeDegrees(next.bearing - prev.bearing)
         if (bearingChange < minBearing) return false
         // Bearing-only updates while stopped cause visible puck rotation flicker.
         if (speed < STOPPED_SPEED_MPS) return false
         return true
     }
 
-    private fun normalizeBearingDelta(delta: Float): Float {
+    private fun signedBearingDelta(delta: Float): Float {
         var d = delta % 360f
         if (d > 180f) d -= 360f
         if (d < -180f) d += 360f
-        return abs(d)
+        return d
     }
+
+    private fun bearingChangeDegrees(delta: Float): Float = abs(signedBearingDelta(delta))
 
     private fun resolveFrozenBearing(location: Location): Float {
         lastStableBearing?.let { return it }
@@ -5481,7 +5532,9 @@ class MapLibreEngineImpl(
         private const val LOOKAHEAD_ENTER_SPEED_MPS = 2.5f
         private const val LOOKAHEAD_EXIT_SPEED_MPS = 1.5f
         private const val LOOKAHEAD_MAX_TOP_FRACTION = 0.12f
-        private const val PADDING_QUANTIZE_DP = 8
+        private const val PADDING_QUANTIZE_DP = 4
+        private const val STRAIGHT_ROAD_LOCK_DEG = 4f
+        private const val FREE_DRIVE_ANIMATION_FPS = 30
         private val DEFAULT_LOCATION = LatLng(12.8797, 121.7740)
 
         /**
@@ -5593,8 +5646,14 @@ private class SmoothingLocationEngine(
     }
 
     private fun onDelegateFix(fix: Location) {
-        val previousDisplay = displayLocation ?: fix
-        blendFrom = Location(previousDisplay)
+        val previousDisplay = displayLocation
+        val blendStart = when {
+            previousDisplay != null &&
+                previousDisplay.distanceTo(fix) > EXTRAPOLATION_SNAP_BACK_MAX_M ->
+                Location(fix)
+            else -> Location(previousDisplay ?: fix)
+        }
+        blendFrom = blendStart
         targetLocation = Location(fix)
         blendStartMs = System.currentTimeMillis()
         currentBlendDurationMs = blendDurationForSpeed(if (fix.hasSpeed()) fix.speed else 0f)
@@ -5723,6 +5782,7 @@ private class SmoothingLocationEngine(
         private const val STOPPED_SPEED_MPS = 1.4f
         private const val EXTRAPOLATION_MAX_MS = 1_200L
         private const val EXTRAPOLATION_MAX_M = 30f
+        private const val EXTRAPOLATION_SNAP_BACK_MAX_M = 8f
         private const val FRAME_DELTA_S = 1f / 60f
     }
 }

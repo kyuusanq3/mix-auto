@@ -319,7 +319,13 @@ fun MapDataSectionContent(
                     text = if (state.isPreparing) {
                         "Preparing ${state.regionName}…"
                     } else {
-                        "Downloading ${state.regionName}… ${(state.progress * 100).roundToInt()}%"
+                        buildDownloadProgressLabel(
+                            regionName = state.regionName,
+                            progress = state.progress,
+                            completedCount = offlineInstall?.completedResourceCount ?: 0L,
+                            requiredCount = offlineInstall?.requiredResourceCount ?: 0L,
+                            completedBytes = offlineInstall?.completedResourceSize ?: 0L,
+                        )
                     },
                     style = MaterialTheme.typography.labelMedium,
                 )
@@ -327,6 +333,7 @@ fun MapDataSectionContent(
                     isPreparing = state.isPreparing,
                     completedResourceCount = offlineInstall?.completedResourceCount ?: 0L,
                     requiredResourceCount = offlineInstall?.requiredResourceCount ?: 0L,
+                    completedResourceSize = offlineInstall?.completedResourceSize ?: 0L,
                 )
                 CountryCatalogList(
                     modifier = catalogModifier,
@@ -852,6 +859,7 @@ private fun OfflineRegionRow(
                     isPreparing = isPreparing,
                     completedResourceCount = installState?.completedResourceCount ?: 0L,
                     requiredResourceCount = installState?.requiredResourceCount ?: 0L,
+                    completedResourceSize = installState?.completedResourceSize ?: 0L,
                     modifier = Modifier.padding(
                         start = CarDimensions.PaneGap / 2,
                         end = CarDimensions.PaneGap / 2,
@@ -868,6 +876,7 @@ private fun OfflineDownloadStatusHints(
     isPreparing: Boolean,
     completedResourceCount: Long,
     requiredResourceCount: Long,
+    completedResourceSize: Long = 0L,
     modifier: Modifier = Modifier,
 ) {
     var showPreparingHint by remember { mutableStateOf(false) }
@@ -885,13 +894,23 @@ private fun OfflineDownloadStatusHints(
         showStallHint = false
         if (isPreparing || requiredResourceCount == 0L) return@LaunchedEffect
         val snapshot = completedResourceCount
-        delay(5 * 60 * 1000L)
+        delay(2 * 60 * 1000L)
         if (!isPreparing && requiredResourceCount > 0L && completedResourceCount == snapshot) {
             showStallHint = true
         }
     }
 
     Column(modifier = modifier) {
+        if (!isPreparing && requiredResourceCount > 0L) {
+            CarLabelText(
+                text = formatOfflineDownloadDetail(
+                    completedResourceCount,
+                    requiredResourceCount,
+                    completedResourceSize,
+                ),
+                style = MaterialTheme.typography.labelMedium,
+            )
+        }
         if (showPreparingHint && isPreparing) {
             CarLabelText(
                 text = "Building tile list from OpenFreeMap — can take 1–2 minutes on first download.",
@@ -1059,5 +1078,38 @@ private fun formatStorageMb(bytes: Long): String {
         String.format("%.1f MB", mb)
     } else {
         "${mb.roundToInt()} MB"
+    }
+}
+
+private fun buildDownloadProgressLabel(
+    regionName: String,
+    progress: Float,
+    completedCount: Long,
+    requiredCount: Long,
+    completedBytes: Long,
+): String = buildString {
+    append("Downloading ")
+    append(regionName)
+    append("… ")
+    append((progress * 100f).roundToInt())
+    append('%')
+    if (requiredCount > 0L) {
+        append(" · ")
+        append(formatOfflineDownloadDetail(completedCount, requiredCount, completedBytes))
+    }
+}
+
+private fun formatOfflineDownloadDetail(
+    completedCount: Long,
+    requiredCount: Long,
+    completedBytes: Long,
+): String = buildString {
+    append(completedCount)
+    append(" / ")
+    append(requiredCount)
+    append(" resources")
+    if (completedBytes > 0L) {
+        append(" · ~")
+        append(formatStorageMb(completedBytes))
     }
 }
