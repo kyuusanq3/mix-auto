@@ -53,18 +53,26 @@ object GoogleMapsLinkParser {
             return@withContext Result.failure(IllegalArgumentException("Link is empty"))
         }
 
-        val direct = parseCoordinatesFromText(trimmed)
-        if (direct != null) {
-            return@withContext Result.success(direct)
+        val urlText = extractUrl(trimmed)
+        if (urlText == null) {
+            val plain = parseCoordinatesFromText(trimmed)
+            return@withContext if (plain != null) {
+                Result.success(plain)
+            } else {
+                Result.failure(IllegalArgumentException("Could not find coordinates in this link"))
+            }
         }
 
-        val urlText = extractUrl(trimmed) ?: return@withContext Result.failure(
-            IllegalArgumentException("Could not find coordinates in this link"),
-        )
+        // Pin-precise coords embedded in the URL — no network needed.
+        if (hasProtobufCoordinateMarker(urlText)) {
+            parseCoordinatesFromText(urlText)?.let { parsed ->
+                return@withContext Result.success(enrichWithRedirectPlaceName(parsed, urlText))
+            }
+        }
 
         val expanded = try {
-            if (isShortMapsLink(urlText)) {
-                expandShortLink(urlText)
+            if (isGoogleMapsLink(urlText)) {
+                fetchMapsLinkPage(urlText)
             } else {
                 ExpandedLink(finalUrl = urlText, responseBody = null)
             }
@@ -74,16 +82,49 @@ object GoogleMapsLinkParser {
             )
         }
 
-        val parsed = (
-            parseCoordinatesFromText(expanded.finalUrl)
-                ?: expanded.responseBody?.let { parseCoordinatesFromText(it) }
-            )
+        val parsed = pickBestParsedCoordinates(
+            fromUrl = parseCoordinatesFromText(expanded.finalUrl),
+            fromBody = expanded.responseBody?.let { parseCoordinatesFromText(it) },
+            urlText = expanded.finalUrl,
+            bodyText = expanded.responseBody,
+        )
             ?.let { enrichWithRedirectPlaceName(it, expanded.finalUrl) }
             ?: return@withContext Result.failure(
                 IllegalArgumentException("Could not find coordinates in this link"),
             )
         Result.success(parsed)
     }
+
+    /**
+     * Google Maps puts map-viewport center in `@lat,lng` but the place pin in `!3d`/`!4d` (or
+     * `!2d` in preview `pb=`). When a short link expands to both a redirect URL and HTML body,
+     * prefer protobuf pin coords over viewport `@` coords.
+     */
+    internal fun pickBestParsedCoordinates(
+        fromUrl: ParsedMapCoordinates?,
+        fromBody: ParsedMapCoordinates?,
+        urlText: String,
+        bodyText: String?,
+    ): ParsedMapCoordinates? {
+        if (fromUrl == null) return fromBody
+        if (fromBody == null) return fromUrl
+
+        val urlHasProtobuf = hasProtobufCoordinateMarker(urlText)
+        val bodyHasProtobuf = bodyText != null && hasProtobufCoordinateMarker(bodyText)
+
+        return when {
+            // Redirect URL carries the authoritative !8m2!3d…!4d… pin for shared places.
+            urlHasProtobuf -> fromUrl
+            bodyHasProtobuf -> fromBody
+            else -> fromUrl
+        }
+    }
+
+    private fun hasProtobufCoordinateMarker(text: String): Boolean =
+        LAT_3D_REGEX.containsMatchIn(text) ||
+            ENC_LAT_3D_REGEX.containsMatchIn(text) ||
+            DATA_3D_4D_REGEX.containsMatchIn(text) ||
+            ENC_DATA_3D_4D_REGEX.containsMatchIn(text)
 
     private fun enrichWithRedirectPlaceName(
         parsed: ParsedMapCoordinates,
@@ -96,7 +137,16 @@ object GoogleMapsLinkParser {
     }
 
     fun parseCoordinatesFromText(text: String): ParsedMapCoordinates? {
-        val normalized = normalizeForParsing(text.trim())
+        val trimmed = text.trim()
+        if (trimmed.isBlank()) return null
+
+        extractPbParameter(trimmed)?.let { pb ->
+            parseDataParameterCoords(pb)?.let { coords ->
+                return coords.copy(suggestedName = coords.suggestedName ?: extractPlaceName(trimmed))
+            }
+        }
+
+        val normalized = normalizeForParsing(trimmed)
         if (normalized.isBlank()) return null
 
         PLAIN_COORDS_REGEX.find(normalized)?.let { match ->
@@ -105,12 +155,14 @@ object GoogleMapsLinkParser {
 
         parseDataParameterCoords(normalized)?.let { return it }
 
-        AT_COORDS_REGEX.find(normalized)?.let { match ->
-            return coordsFromMatch(
-                match.groupValues[1],
-                match.groupValues[2],
-                normalized,
-            )
+        if (!shouldSkipAtViewportCoords(normalized)) {
+            AT_COORDS_REGEX.find(normalized)?.let { match ->
+                return coordsFromMatch(
+                    match.groupValues[1],
+                    match.groupValues[2],
+                    normalized,
+                )
+            }
         }
 
         QUERY_COORDS_REGEX.find(normalized)?.let { match ->
@@ -260,12 +312,37 @@ object GoogleMapsLinkParser {
         return httpMatch.trimEnd(',', '.', ')', ']', '"', '\'')
     }
 
+    private fun shouldSkipAtViewportCoords(text: String): Boolean {
+        if (!isGoogleMapsPlaceUrl(text)) return false
+        if (hasProtobufCoordinateMarker(text)) return false
+        val lower = text.lowercase(Locale.US)
+        return lower.contains("data=") && (lower.contains("!1s") || lower.contains("%211s"))
+    }
+
+    private fun extractPbParameter(text: String): String? {
+        val match = Regex("""[?&]pb=([^"'&\s<>]+)""").find(text) ?: return null
+        return match.groupValues[1]
+    }
+
+    private fun isGoogleMapsLink(url: String): Boolean {
+        val lower = url.lowercase(Locale.US)
+        return lower.contains("google.com/maps") ||
+            lower.contains("maps.google.com") ||
+            lower.contains("maps.app.goo.gl") ||
+            lower.contains("goo.gl/maps")
+    }
+
+    private fun isGoogleMapsPlaceUrl(url: String): Boolean {
+        val lower = url.lowercase(Locale.US)
+        return lower.contains("google.com/maps/place/") || lower.contains("maps.google.com")
+    }
+
     private fun isShortMapsLink(url: String): Boolean {
         val lower = url.lowercase(Locale.US)
         return lower.contains("maps.app.goo.gl") || lower.contains("goo.gl/maps")
     }
 
-    private fun expandShortLink(url: String): ExpandedLink {
+    private fun fetchMapsLinkPage(url: String): ExpandedLink {
         val connection = (URL(url).openConnection() as HttpURLConnection).apply {
             instanceFollowRedirects = true
             requestMethod = "GET"

@@ -238,12 +238,13 @@ private fun NavigationVoiceVolumeSection(
             onValueChange = onVolumeChange,
             valueRange = LauncherPreferences.MIN_NAVIGATION_VOICE_VOLUME..
                 LauncherPreferences.MAX_NAVIGATION_VOICE_VOLUME,
+            steps = 8,
             modifier = Modifier
                 .fillMaxWidth()
                 .height(CarDimensions.MinTapTarget),
         )
         CarLabelText(
-            text = "${(volume * 100).roundToInt()}% relative",
+            text = "${"%.1f".format(volume)}× (${(volume * 100).roundToInt()}%)",
             style = MaterialTheme.typography.labelMedium,
         )
     }

@@ -2143,8 +2143,15 @@ class MapLibreEngineImpl(
 
         component.renderMode = RenderMode.GPS
         component.cameraMode = CameraMode.TRACKING_GPS
-        component.setMaxAnimationFps(FREE_DRIVE_ANIMATION_FPS)
+        component.setMaxAnimationFps(DRIVING_ANIMATION_FPS)
         applyDrivingTrackingPadding(map)
+    }
+
+    private fun buildDrivingLocationEngineRequest(): LocationEngineRequest {
+        return LocationEngineRequest.Builder(LOCATION_ENGINE_INTERVAL_MS)
+            .setFastestInterval(LOCATION_ENGINE_FASTEST_INTERVAL_MS)
+            .setPriority(LocationEngineRequest.PRIORITY_HIGH_ACCURACY)
+            .build()
     }
 
     private fun snapCameraToGpsIfNeeded(latLng: LatLng) {
@@ -3112,7 +3119,7 @@ class MapLibreEngineImpl(
             }
             component.renderMode = RenderMode.GPS
             component.cameraMode = CameraMode.TRACKING_GPS
-            component.setMaxAnimationFps(Integer.MAX_VALUE)
+            component.setMaxAnimationFps(DRIVING_ANIMATION_FPS)
             applyDrivingTrackingPadding(map)
         }
         val trafficPhrase = if (navStartTrafficEligible) {
@@ -4264,9 +4271,11 @@ class MapLibreEngineImpl(
             this.locationEngine = locationEngine
             val locationComponent = map.locationComponent
             val componentOptions = buildLocationComponentOptions(ctx, style)
+            val engineRequest = buildDrivingLocationEngineRequest()
             val options = LocationComponentActivationOptions.builder(ctx, style)
                 .locationEngine(locationEngine)
                 .locationComponentOptions(componentOptions)
+                .locationEngineRequest(engineRequest)
                 .build()
             if (!locationComponent.isLocationComponentActivated) {
                 locationComponent.activateLocationComponent(options)
@@ -4275,7 +4284,8 @@ class MapLibreEngineImpl(
             }
             locationComponent.isLocationComponentEnabled = true
             locationComponent.renderMode = RenderMode.GPS
-            locationComponent.setMaxAnimationFps(FREE_DRIVE_ANIMATION_FPS)
+            locationComponent.locationEngineRequest = engineRequest
+            locationComponent.setMaxAnimationFps(DRIVING_ANIMATION_FPS)
             applyDrivingTrackingPadding(map)
 
             flushPendingLocationFix()
@@ -4322,7 +4332,6 @@ class MapLibreEngineImpl(
                     enriched
                 }
             },
-            shouldEmit = ::shouldEmitPuckFix,
             onRawFix = ::onLocationFixForAppLogic,
         )
         val smoothing = SmoothingLocationEngine(
@@ -4522,38 +4531,12 @@ class MapLibreEngineImpl(
         return b
     }
 
-    /** Suppress jittery puck redraws when GPS noise has not materially moved or turned. */
-    private fun shouldEmitPuckFix(next: Location, prev: Location?): Boolean {
-        if (prev == null) return true
-        val speed = when {
-            next.hasSpeed() -> next.speed
-            prev.hasSpeed() -> prev.speed
-            else -> 0f
-        }
-        val minDist = if (speed >= PUCK_EMIT_FAST_SPEED_MPS) PUCK_EMIT_FAST_DIST_M else PUCK_EMIT_MIN_DIST_M
-        val minBearing = if (speed >= PUCK_EMIT_FAST_SPEED_MPS) {
-            PUCK_EMIT_FAST_BEARING_DEG
-        } else {
-            PUCK_EMIT_MIN_BEARING_DEG
-        }
-        val distM = prev.distanceTo(next)
-        if (distM >= minDist) return true
-        if (!next.hasBearing() || !prev.hasBearing()) return false
-        val bearingChange = bearingChangeDegrees(next.bearing - prev.bearing)
-        if (bearingChange < minBearing) return false
-        // Bearing-only updates while stopped cause visible puck rotation flicker.
-        if (speed < STOPPED_SPEED_MPS) return false
-        return true
-    }
-
     private fun signedBearingDelta(delta: Float): Float {
         var d = delta % 360f
         if (d > 180f) d -= 360f
         if (d < -180f) d += 360f
         return d
     }
-
-    private fun bearingChangeDegrees(delta: Float): Float = abs(signedBearingDelta(delta))
 
     private fun resolveFrozenBearing(location: Location): Float {
         lastStableBearing?.let { return it }
@@ -5466,11 +5449,6 @@ class MapLibreEngineImpl(
         private const val LOCATION_FIX_DEDUP_TIME_MS = 50L
         private const val LOCATION_FIX_DEDUP_DIST_M = 2f
         private const val PUCK_PUSH_MIN_DIST_M = 3f
-        private const val PUCK_EMIT_MIN_DIST_M = 2f
-        private const val PUCK_EMIT_MIN_BEARING_DEG = 4f
-        private const val PUCK_EMIT_FAST_SPEED_MPS = 8f
-        private const val PUCK_EMIT_FAST_DIST_M = 1.0f
-        private const val PUCK_EMIT_FAST_BEARING_DEG = 2f
         private const val ROUTE_PROJECTION_SEARCH_RADIUS = 20
         private const val ROUTE_SIMPLIFY_MAX_POINTS = 500
         private const val ROUTE_SIMPLIFY_TOLERANCE_M = 8f
@@ -5568,7 +5546,9 @@ class MapLibreEngineImpl(
         private const val LOOKAHEAD_MAX_TOP_FRACTION = 0.12f
         private const val PADDING_QUANTIZE_DP = 4
         private const val STRAIGHT_ROAD_LOCK_DEG = 4f
-        private const val FREE_DRIVE_ANIMATION_FPS = 30
+        private const val LOCATION_ENGINE_INTERVAL_MS = 750L
+        private const val LOCATION_ENGINE_FASTEST_INTERVAL_MS = 500L
+        private const val DRIVING_ANIMATION_FPS = 60
         private val DEFAULT_LOCATION = LatLng(12.8797, 121.7740)
 
         /**
@@ -5620,24 +5600,42 @@ private class SmoothingLocationEngine(
     private var extrapolationAnchor: Location? = null
     private var extrapolationStartMs: Long = 0L
     private var extrapolationDistanceM: Float = 0f
+    private var lastDelegateFix: Location? = null
+    private var lastMeasuredInterFixMs: Long = 1_000L
+    private var effectiveSpeedMps: Float = 0f
+    private var effectiveBearingDeg: Float = 0f
+    private var lastFrameTimeNanos: Long = 0L
+    private var lastEmittedLocation: Location? = null
+    private var lastEmitTimeMs: Long = 0L
+    private var smoothedTargetLat: Double? = null
+    private var smoothedTargetLng: Double? = null
+    private var lastEmittedBearing: Float? = null
 
-    private val frameCallback = Choreographer.FrameCallback {
+    private val frameCallback = Choreographer.FrameCallback { frameTimeNanos ->
         frameCallbackPosted = false
         val target = targetLocation
         if (target != null && shouldSmooth()) {
+            val deltaS = frameDeltaSeconds(frameTimeNanos)
             val now = System.currentTimeMillis()
             val from = blendFrom
-            val emitted = when {
+            val rawEmitted = when {
                 from != null && now - blendStartMs < currentBlendDurationMs -> {
                     val t = ((now - blendStartMs).toFloat() / currentBlendDurationMs).coerceIn(0f, 1f)
                     interpolateLocation(from, target, t)
                 }
-                shouldExtrapolate(target, now) -> {
-                    extrapolationDistanceM += target.speed * FRAME_DELTA_S
-                    extrapolateLocation(extrapolationAnchor ?: target, target.bearing, extrapolationDistanceM)
+                shouldExtrapolate(now) -> {
+                    val maxAheadM = effectiveSpeedMps * (lastMeasuredInterFixMs / 1000f) * EXTRAPOLATION_AHEAD_FACTOR
+                    extrapolationDistanceM = (extrapolationDistanceM + effectiveSpeedMps * deltaS)
+                        .coerceAtMost(maxAheadM.coerceAtLeast(0f))
+                    extrapolateLocation(
+                        extrapolationAnchor ?: target,
+                        effectiveBearingDeg,
+                        extrapolationDistanceM,
+                    )
                 }
                 else -> Location(target)
             }
+            val emitted = polishEmittedLocation(rawEmitted)
             displayLocation = Location(emitted)
             emitToAll(emitted)
         }
@@ -5650,17 +5648,76 @@ private class SmoothingLocationEngine(
         blendFrom = null
         extrapolationAnchor = null
         extrapolationDistanceM = 0f
+        lastDelegateFix = null
+        lastFrameTimeNanos = 0L
+        effectiveSpeedMps = 0f
+        effectiveBearingDeg = 0f
+        lastEmittedLocation = null
+        lastEmitTimeMs = 0L
+        smoothedTargetLat = null
+        smoothedTargetLng = null
+        lastEmittedBearing = null
         choreographer.removeFrameCallback(frameCallback)
         frameCallbackPosted = false
     }
 
     fun currentDisplayLocation(): Location? = displayLocation?.let { Location(it) }
 
-    private fun shouldExtrapolate(target: Location, now: Long): Boolean {
-        if (!target.hasSpeed() || target.speed < STOPPED_SPEED_MPS) return false
+    private fun frameDeltaSeconds(frameTimeNanos: Long): Float {
+        val deltaS = if (lastFrameTimeNanos > 0L) {
+            ((frameTimeNanos - lastFrameTimeNanos) / 1_000_000_000.0).toFloat()
+        } else {
+            1f / 60f
+        }
+        lastFrameTimeNanos = frameTimeNanos
+        return deltaS.coerceIn(0f, 0.1f)
+    }
+
+    private fun shouldExtrapolate(now: Long): Boolean {
+        if (effectiveSpeedMps < STOPPED_SPEED_MPS) return false
         if (now - extrapolationStartMs > EXTRAPOLATION_MAX_MS) return false
         if (extrapolationDistanceM >= EXTRAPOLATION_MAX_M) return false
         return extrapolationAnchor != null
+    }
+
+    private fun estimateSpeedMps(fix: Location, prevFix: Location?): Float {
+        if (fix.hasSpeed() && fix.speed >= STOPPED_SPEED_MPS) return fix.speed
+        val prev = prevFix ?: return if (fix.hasSpeed()) fix.speed else 0f
+        val interFixMs = (fix.time - prev.time).coerceAtLeast(1L)
+        if (interFixMs > 5_000L) return if (fix.hasSpeed()) fix.speed else 0f
+        val distM = prev.distanceTo(fix)
+        val derivedSpeed = distM / (interFixMs / 1000f)
+        return when {
+            fix.hasSpeed() && fix.speed >= STOPPED_SPEED_MPS -> fix.speed
+            derivedSpeed >= STOPPED_SPEED_MPS || distM >= EMIT_MIN_DIST_M -> derivedSpeed
+            fix.hasSpeed() -> fix.speed
+            else -> derivedSpeed
+        }
+    }
+
+    private fun resolveEffectiveBearing(fix: Location, prevFix: Location?): Float {
+        if (fix.hasBearing() && fix.bearing != 0f) return fix.bearing
+        val prev = prevFix ?: return effectiveBearingDeg
+        val distM = prev.distanceTo(fix)
+        return if (distM >= EMIT_MIN_DIST_M) prev.bearingTo(fix) else effectiveBearingDeg
+    }
+
+    private fun shouldAcceptDelegateFix(fix: Location): Boolean {
+        val prevTarget = targetLocation ?: return true
+        val speedMps = estimateSpeedMps(fix, lastDelegateFix)
+        val minDist = if (speedMps >= EMIT_FAST_SPEED_MPS) EMIT_FAST_DIST_M else EMIT_MIN_DIST_M
+        val distM = prevTarget.distanceTo(fix)
+        if (distM >= minDist) return true
+        // Bearing-only updates while stopped cause visible puck rotation flicker.
+        if (speedMps < STOPPED_SPEED_MPS) return false
+        if (!fix.hasBearing() || !prevTarget.hasBearing()) return false
+        val minBearing = if (speedMps >= EMIT_FAST_SPEED_MPS) {
+            EMIT_FAST_BEARING_DEG
+        } else {
+            EMIT_MIN_BEARING_DEG
+        }
+        val bearingChange = kotlin.math.abs(normalizeBearingDelta(fix.bearing - prevTarget.bearing))
+        return bearingChange >= minBearing
     }
 
     private fun blendDurationForSpeed(speedMps: Float): Long {
@@ -5680,29 +5737,136 @@ private class SmoothingLocationEngine(
     }
 
     private fun onDelegateFix(fix: Location) {
-        val previousDisplay = displayLocation
-        val blendStart = when {
-            previousDisplay != null &&
-                previousDisplay.distanceTo(fix) > EXTRAPOLATION_SNAP_BACK_MAX_M ->
-                Location(fix)
-            else -> Location(previousDisplay ?: fix)
+        if (!shouldAcceptDelegateFix(fix)) return
+
+        val prevFix = lastDelegateFix
+        val speedMps = estimateSpeedMps(fix, prevFix)
+        val bearingDeg = resolveEffectiveBearing(fix, prevFix)
+        if (prevFix != null) {
+            val interFixMs = (fix.time - prevFix.time).coerceAtLeast(1L)
+            if (interFixMs in 1..5_000L) {
+                lastMeasuredInterFixMs = interFixMs
+            }
         }
+        lastDelegateFix = Location(fix)
+        effectiveSpeedMps = speedMps
+        effectiveBearingDeg = bearingDeg
+
+        val motionFix = smoothTargetCoords(
+            Location(fix).apply {
+                this.speed = speedMps
+                this.bearing = bearingDeg
+            },
+        )
+
+        val speedBasedBlend = blendDurationForSpeed(speedMps)
+        currentBlendDurationMs = min(lastMeasuredInterFixMs, speedBasedBlend).coerceAtLeast(100L)
+
+        val previousDisplay = displayLocation
+        val blendStart = resolveBlendStart(previousDisplay, motionFix)
         blendFrom = blendStart
-        targetLocation = Location(fix)
+        targetLocation = Location(motionFix)
         blendStartMs = System.currentTimeMillis()
-        currentBlendDurationMs = blendDurationForSpeed(if (fix.hasSpeed()) fix.speed else 0f)
-        extrapolationAnchor = Location(fix)
+        extrapolationAnchor = Location(motionFix)
         extrapolationStartMs = blendStartMs
         extrapolationDistanceM = 0f
         if (!shouldSmooth()) {
-            displayLocation = Location(fix)
-            emitToAll(fix)
+            val polished = polishEmittedLocation(motionFix)
+            displayLocation = Location(polished)
+            emitToAll(polished, force = true)
             return
         }
         scheduleNextFrameIfNeeded()
     }
 
-    private fun emitToAll(location: Location) {
+    /** EMA-smooth GPS targets to reduce jitter; snap on large corrections. */
+    private fun smoothTargetCoords(fix: Location): Location {
+        val lat = fix.latitude
+        val lng = fix.longitude
+        val prevLat = smoothedTargetLat
+        val prevLng = smoothedTargetLng
+        if (prevLat == null || prevLng == null || effectiveSpeedMps < STOPPED_SPEED_MPS) {
+            smoothedTargetLat = lat
+            smoothedTargetLng = lng
+            return fix
+        }
+        val distFromSmoothed = FloatArray(1)
+        Location.distanceBetween(prevLat, prevLng, lat, lng, distFromSmoothed)
+        if (distFromSmoothed[0] > TARGET_SNAP_DIST_M) {
+            smoothedTargetLat = lat
+            smoothedTargetLng = lng
+            return fix
+        }
+        val alpha = TARGET_EMA_ALPHA
+        smoothedTargetLat = prevLat + (lat - prevLat) * alpha
+        smoothedTargetLng = prevLng + (lng - prevLng) * alpha
+        return Location(fix).apply {
+            latitude = smoothedTargetLat!!
+            longitude = smoothedTargetLng!!
+        }
+    }
+
+    /**
+     * Avoid backward puck animation when extrapolation ran ahead of the next GPS fix.
+     * Snap to the fix instead of blending the display backward.
+     */
+    private fun resolveBlendStart(previousDisplay: Location?, fix: Location): Location {
+        if (previousDisplay == null) return Location(fix)
+        val distM = previousDisplay.distanceTo(fix)
+        if (distM <= EXTRAPOLATION_SNAP_BACK_MAX_M) return Location(previousDisplay)
+        if (distM > MAX_BACKWARD_BLEND_M && isFixBehindDisplay(previousDisplay, fix)) {
+            currentBlendDurationMs = BACKWARD_SNAP_BLEND_MS
+            return Location(fix)
+        }
+        return Location(previousDisplay)
+    }
+
+    private fun isFixBehindDisplay(display: Location, fix: Location): Boolean {
+        val bearingToFix = display.bearingTo(fix)
+        val delta = kotlin.math.abs(normalizeBearingDelta(bearingToFix - effectiveBearingDeg))
+        return delta > 90f
+    }
+
+    private fun polishEmittedLocation(location: Location): Location {
+        return Location(location).apply {
+            if (effectiveSpeedMps >= STOPPED_SPEED_MPS && hasBearing()) {
+                bearing = smoothEmittedBearing(bearing)
+            }
+            if (time <= 0L) time = System.currentTimeMillis()
+        }
+    }
+
+    private fun smoothEmittedBearing(bearing: Float): Float {
+        val prev = lastEmittedBearing
+        if (prev == null) {
+            lastEmittedBearing = bearing
+            return bearing
+        }
+        val delta = normalizeBearingDelta(bearing - prev)
+        val smoothed = normalizeBearing(prev + delta * BEARING_EMIT_ALPHA)
+        lastEmittedBearing = smoothed
+        return smoothed
+    }
+
+    private fun shouldEmitToComponent(location: Location, force: Boolean): Boolean {
+        if (force) return true
+        val prev = lastEmittedLocation ?: return true
+        val now = System.currentTimeMillis()
+        if (now - lastEmitTimeMs < EMIT_MIN_INTERVAL_MS) return false
+        val distM = prev.distanceTo(location)
+        if (distM >= EMIT_FRAME_MIN_DIST_M) return true
+        if (effectiveSpeedMps < STOPPED_SPEED_MPS) return false
+        if (prev.hasBearing() && location.hasBearing()) {
+            val bearingChange = kotlin.math.abs(normalizeBearingDelta(location.bearing - prev.bearing))
+            if (bearingChange >= EMIT_FRAME_MIN_BEARING_DEG) return true
+        }
+        return false
+    }
+
+    private fun emitToAll(location: Location, force: Boolean = false) {
+        if (!shouldEmitToComponent(location, force)) return
+        lastEmittedLocation = Location(location)
+        lastEmitTimeMs = System.currentTimeMillis()
         val result = LocationEngineResult.create(Location(location))
         downstreamCallbacks.forEach { callback ->
             callback.onSuccess(result)
@@ -5720,7 +5884,7 @@ private class SmoothingLocationEngine(
             } else if (to.hasBearing()) {
                 bearing = to.bearing
             }
-            if (to.hasSpeed()) speed = to.speed
+            speed = to.speed
             if (to.hasAccuracy()) accuracy = to.accuracy
             time = to.time
         }
@@ -5735,8 +5899,8 @@ private class SmoothingLocationEngine(
         return Location(anchor).apply {
             latitude = anchor.latitude + dLat
             longitude = anchor.longitude + dLng
-            if (anchor.hasBearing()) bearing = bearingDeg
-            if (anchor.hasSpeed()) speed = anchor.speed
+            bearing = bearingDeg
+            speed = effectiveSpeedMps
             if (anchor.hasAccuracy()) accuracy = anchor.accuracy
             time = System.currentTimeMillis()
         }
@@ -5814,10 +5978,23 @@ private class SmoothingLocationEngine(
     companion object {
         private const val SMOOTHING_BLEND_DURATION_DEFAULT_MS = 900L
         private const val STOPPED_SPEED_MPS = 1.4f
-        private const val EXTRAPOLATION_MAX_MS = 1_200L
-        private const val EXTRAPOLATION_MAX_M = 30f
+        private const val EXTRAPOLATION_MAX_MS = 2_500L
+        private const val EXTRAPOLATION_MAX_M = 50f
         private const val EXTRAPOLATION_SNAP_BACK_MAX_M = 8f
-        private const val FRAME_DELTA_S = 1f / 60f
+        private const val EMIT_MIN_DIST_M = 2f
+        private const val EMIT_MIN_BEARING_DEG = 4f
+        private const val EMIT_FAST_SPEED_MPS = 8f
+        private const val EMIT_FAST_DIST_M = 1.0f
+        private const val EMIT_FAST_BEARING_DEG = 2f
+        private const val EMIT_MIN_INTERVAL_MS = 33L
+        private const val EMIT_FRAME_MIN_DIST_M = 0.3f
+        private const val EMIT_FRAME_MIN_BEARING_DEG = 1.5f
+        private const val TARGET_EMA_ALPHA = 0.45f
+        private const val TARGET_SNAP_DIST_M = 25f
+        private const val MAX_BACKWARD_BLEND_M = 3f
+        private const val BACKWARD_SNAP_BLEND_MS = 80L
+        private const val BEARING_EMIT_ALPHA = 0.3f
+        private const val EXTRAPOLATION_AHEAD_FACTOR = 0.85f
     }
 }
 
@@ -5829,13 +6006,11 @@ private class SmoothingLocationEngine(
 private class BearingEnrichedLocationEngine(
     private val delegate: LocationEngine,
     private val enrich: (Location) -> Location,
-    private val shouldEmit: (Location, Location?) -> Boolean = { _, _ -> true },
     private val onRawFix: (Location) -> Unit = {},
 ) : LocationEngine {
 
     private val callbackMap =
         ConcurrentHashMap<LocationEngineCallback<LocationEngineResult>, LocationEngineCallback<LocationEngineResult>>()
-    private var lastEmitted: Location? = null
 
     private fun wrapCallback(
         callback: LocationEngineCallback<LocationEngineResult>,
@@ -5849,8 +6024,6 @@ private class BearingEnrichedLocationEngine(
                 }
                 onRawFix(raw)
                 val enriched = enrich(raw)
-                if (!shouldEmit(enriched, lastEmitted)) return
-                lastEmitted = Location(enriched)
                 callback.onSuccess(LocationEngineResult.create(enriched))
             }
 

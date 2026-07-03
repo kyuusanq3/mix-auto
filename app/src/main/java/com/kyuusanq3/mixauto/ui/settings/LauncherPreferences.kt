@@ -260,8 +260,8 @@ class LauncherPreferences(context: Context) {
         const val DEFAULT_PUCK_H_OFFSET = 0.3f
         const val DEFAULT_PUCK_V_OFFSET = 0.4f
         const val DEFAULT_PUCK_SCALE = 1.0f
-        const val MIN_NAVIGATION_VOICE_VOLUME = 0.5f
-        const val MAX_NAVIGATION_VOICE_VOLUME = 5.0f
+        const val MIN_NAVIGATION_VOICE_VOLUME = 1.0f
+        const val MAX_NAVIGATION_VOICE_VOLUME = 10.0f
         const val DEFAULT_NAVIGATION_VOICE_VOLUME = 1.0f
 
         private fun placeToJson(place: SearchResultPlace): JSONObject =
