@@ -200,6 +200,12 @@ class LauncherPreferences(context: Context) {
             prefs.edit().putBoolean(KEY_MUSIC_PANE_ENABLED, value).apply()
         }
 
+    var googleMapsMode: Boolean
+        get() = prefs.getBoolean(KEY_GOOGLE_MAPS_MODE, false)
+        set(value) {
+            prefs.edit().putBoolean(KEY_GOOGLE_MAPS_MODE, value).apply()
+        }
+
     var rememberEncounteredPlaces: Boolean
         get() = prefs.getBoolean(KEY_REMEMBER_ENCOUNTERED_PLACES, true)
         set(value) {
@@ -248,6 +254,7 @@ class LauncherPreferences(context: Context) {
         private const val KEY_SHOW_STATUS_STRIP = "show_status_strip"
         private const val KEY_SHOW_SYSTEM_STATUS_BAR = "show_system_status_bar"
         private const val KEY_MUSIC_PANE_ENABLED = "music_pane_enabled"
+        private const val KEY_GOOGLE_MAPS_MODE = "google_maps_mode"
         private const val KEY_REMEMBER_ENCOUNTERED_PLACES = "remember_encountered_places"
         private const val KEY_ALLOW_MAP_DOWNLOAD_MOBILE_DATA = "allow_map_download_mobile_data"
         private const val KEY_OFFLINE_DETAIL_UPGRADE_BANNER_DISMISSED = "offline_detail_upgrade_banner_dismissed"

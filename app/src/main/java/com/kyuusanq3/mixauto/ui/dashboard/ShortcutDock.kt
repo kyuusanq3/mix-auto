@@ -27,6 +27,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Android
 import androidx.compose.material.icons.filled.Apps
+import androidx.compose.material.icons.filled.Map
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material3.CardDefaults
@@ -42,6 +43,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
@@ -50,16 +52,19 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.kyuusanq3.mixauto.data.map.FreeformMapManager
 import com.kyuusanq3.mixauto.domain.media.MediaPlaybackState
 import com.kyuusanq3.mixauto.ui.components.AppContextDropdownMenu
 import com.kyuusanq3.mixauto.ui.components.launchAppByPackage
 import com.kyuusanq3.mixauto.ui.components.loadAudioPlayerPackageNames
 import com.kyuusanq3.mixauto.ui.components.rememberAppIcon
 import com.kyuusanq3.mixauto.ui.theme.CarDimensions
+import com.kyuusanq3.mixauto.ui.theme.CarLabelText
 import com.kyuusanq3.mixauto.ui.theme.DeepCharcoal
 import com.kyuusanq3.mixauto.ui.theme.ElectricCyan
 
 private const val VOICE_SEARCH_KEY = "voice_search"
+private const val GOOGLE_MAPS_MODE_KEY = "google_maps_mode"
 private const val DOCK_MUSIC_CONTROL_KEY = "dock_music_control"
 private const val APP_DRAWER_KEY = "app_drawer"
 private val DOCK_MUSIC_SLOT_WIDTH = 280.dp
@@ -149,6 +154,9 @@ fun ShortcutDock(
     dockPinnedPackages: List<String> = emptyList(),
     onToggleDockPin: (String) -> Unit = {},
     onSelectAudioSource: (String) -> Unit = {},
+    googleMapsMode: Boolean = false,
+    googleMapsInstalled: Boolean = true,
+    onToggleGoogleMapsMode: () -> Unit = {},
     onTogglePanel: (ActivePanel) -> Unit,
     onVoiceSearch: () -> Unit = {},
     modifier: Modifier = Modifier,
@@ -205,6 +213,9 @@ fun ShortcutDock(
                         iconSize = iconSize,
                         itemSpacing = itemSpacing,
                         isLeftHandDrive = isLeftHandDrive,
+                        googleMapsMode = googleMapsMode,
+                        googleMapsInstalled = googleMapsInstalled,
+                        onToggleGoogleMapsMode = onToggleGoogleMapsMode,
                         onToggleDockPin = onToggleDockPin,
                         onSelectAudioSource = onSelectAudioSource,
                     )
@@ -304,6 +315,9 @@ fun ShortcutDock(
                             iconSize = iconSize,
                             itemSpacing = itemSpacing,
                             isLeftHandDrive = isLeftHandDrive,
+                            googleMapsMode = googleMapsMode,
+                            googleMapsInstalled = googleMapsInstalled,
+                            onToggleGoogleMapsMode = onToggleGoogleMapsMode,
                             onToggleDockPin = onToggleDockPin,
                             onSelectAudioSource = onSelectAudioSource,
                         )
@@ -447,6 +461,9 @@ private fun CenterDockCluster(
     iconSize: Dp,
     itemSpacing: Dp,
     isLeftHandDrive: Boolean,
+    googleMapsMode: Boolean,
+    googleMapsInstalled: Boolean,
+    onToggleGoogleMapsMode: () -> Unit,
     onToggleDockPin: (String) -> Unit,
     onSelectAudioSource: (String) -> Unit,
 ) {
@@ -455,6 +472,17 @@ private fun CenterDockCluster(
             horizontalArrangement = Arrangement.spacedBy(itemSpacing, Alignment.CenterHorizontally),
             verticalAlignment = Alignment.CenterVertically,
         ) {
+            key(GOOGLE_MAPS_MODE_KEY) {
+                GoogleMapsDockItem(
+                    isActive = googleMapsMode,
+                    isHorizontal = true,
+                    isInstalled = googleMapsInstalled,
+                    tapTarget = tapTarget,
+                    iconSize = iconSize,
+                    activeIndicatorPlacement = DockActiveIndicatorPlacement.Bottom,
+                    onClick = onToggleGoogleMapsMode,
+                )
+            }
             dockPinnedPackages.forEach { packageName ->
                 key(dockPinnedKey(packageName)) {
                     PinnedDockAppItem(
@@ -478,6 +506,21 @@ private fun CenterDockCluster(
             verticalArrangement = Arrangement.spacedBy(itemSpacing, Alignment.CenterVertically),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
+            key(GOOGLE_MAPS_MODE_KEY) {
+                GoogleMapsDockItem(
+                    isActive = googleMapsMode,
+                    isHorizontal = false,
+                    isInstalled = googleMapsInstalled,
+                    tapTarget = tapTarget,
+                    iconSize = iconSize,
+                    activeIndicatorPlacement = if (isLeftHandDrive) {
+                        DockActiveIndicatorPlacement.End
+                    } else {
+                        DockActiveIndicatorPlacement.Start
+                    },
+                    onClick = onToggleGoogleMapsMode,
+                )
+            }
             dockPinnedPackages.forEach { packageName ->
                 key(dockPinnedKey(packageName)) {
                     PinnedDockAppItem(
@@ -494,6 +537,93 @@ private fun CenterDockCluster(
                         onSelectAudioSource = { onSelectAudioSource(packageName) },
                     )
                 }
+            }
+        }
+    }
+}
+
+@Composable
+private fun GoogleMapsDockItem(
+    isActive: Boolean,
+    isHorizontal: Boolean,
+    isInstalled: Boolean,
+    tapTarget: Dp,
+    iconSize: Dp,
+    activeIndicatorPlacement: DockActiveIndicatorPlacement,
+    onClick: () -> Unit,
+) {
+    val appIcon = rememberAppIcon(FreeformMapManager.GOOGLE_MAPS_PACKAGE)
+    val iconTint = when {
+        !isInstalled -> MaterialTheme.colorScheme.primary
+        isActive -> ElectricCyan
+        else -> MaterialTheme.colorScheme.primary
+    }
+    val enabledModifier = if (isInstalled) {
+        Modifier
+    } else {
+        Modifier.alpha(0.38f)
+    }
+
+    if (isHorizontal) {
+        Column(
+            modifier = enabledModifier
+                .clickable(enabled = isInstalled, onClick = onClick),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Box(
+                modifier = Modifier.size(tapTarget),
+                contentAlignment = Alignment.Center,
+            ) {
+                if (appIcon != null) {
+                    Image(
+                        bitmap = appIcon,
+                        contentDescription = "Google Maps mode",
+                        modifier = Modifier
+                            .size(iconSize)
+                            .clip(CircleShape),
+                    )
+                } else {
+                    Icon(
+                        imageVector = Icons.Filled.Map,
+                        contentDescription = "Google Maps mode",
+                        modifier = Modifier.size(iconSize),
+                        tint = iconTint,
+                    )
+                }
+                if (isActive) {
+                    DockActiveIndicator(isActive = true, activeIndicatorPlacement)
+                }
+            }
+            CarLabelText(
+                text = "G.Maps",
+                modifier = Modifier.padding(top = 2.dp),
+            )
+        }
+    } else {
+        Box(
+            modifier = enabledModifier
+                .size(tapTarget)
+                .clickable(enabled = isInstalled, onClick = onClick),
+            contentAlignment = Alignment.Center,
+        ) {
+            if (appIcon != null) {
+                Image(
+                    bitmap = appIcon,
+                    contentDescription = "Google Maps mode",
+                    modifier = Modifier
+                        .size(iconSize)
+                        .clip(CircleShape),
+                )
+            } else {
+                Icon(
+                    imageVector = Icons.Filled.Map,
+                    contentDescription = "Google Maps mode",
+                    modifier = Modifier.size(iconSize),
+                    tint = iconTint,
+                )
+            }
+            if (isActive) {
+                DockActiveIndicator(isActive = true, activeIndicatorPlacement)
             }
         }
     }

@@ -223,6 +223,8 @@ class MainActivity : ComponentActivity() {
                     onToggleShowStatusStrip = launcherViewModel::toggleShowStatusStrip,
                     onToggleShowSystemStatusBar = launcherViewModel::toggleShowSystemStatusBar,
                     onInstallApk = ::launchApkInstall,
+                    googleMapsMode = launcherViewModel.googleMapsMode,
+                    onSetGoogleMapsMode = launcherViewModel::updateGoogleMapsMode,
                 )
 
                     if (showOnboarding) {

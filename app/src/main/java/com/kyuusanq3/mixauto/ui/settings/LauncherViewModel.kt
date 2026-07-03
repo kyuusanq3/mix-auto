@@ -109,6 +109,9 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     var musicPaneEnabled by mutableStateOf(preferences.musicPaneEnabled)
         private set
 
+    var googleMapsMode by mutableStateOf(preferences.googleMapsMode)
+        private set
+
     var rememberEncounteredPlaces by mutableStateOf(preferences.rememberEncounteredPlaces)
         private set
 
@@ -233,6 +236,11 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     fun updateMusicPaneEnabled(enabled: Boolean) {
         musicPaneEnabled = enabled
         preferences.musicPaneEnabled = enabled
+    }
+
+    fun updateGoogleMapsMode(enabled: Boolean) {
+        googleMapsMode = enabled
+        preferences.googleMapsMode = enabled
     }
 
     fun toggleLimitSearchDistance() {

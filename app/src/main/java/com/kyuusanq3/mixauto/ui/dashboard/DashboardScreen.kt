@@ -1,7 +1,9 @@
 package com.kyuusanq3.mixauto.ui.dashboard
 
 import android.content.res.Configuration
+import android.graphics.Rect
 import android.speech.SpeechRecognizer
+import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
@@ -41,7 +43,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.layout
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
@@ -52,6 +56,7 @@ import androidx.compose.ui.zIndex
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.kyuusanq3.mixauto.data.apps.LaunchableAppEntry
+import com.kyuusanq3.mixauto.data.map.FreeformMapManager
 import com.kyuusanq3.mixauto.domain.map.CarMapEngine
 import com.kyuusanq3.mixauto.domain.map.SearchResultPlace
 import com.kyuusanq3.mixauto.domain.media.MediaPlaybackState
@@ -188,6 +193,8 @@ fun DashboardScreen(
     onToggleShowStatusStrip: () -> Unit,
     onToggleShowSystemStatusBar: () -> Unit,
     onInstallApk: (File) -> Unit,
+    googleMapsMode: Boolean,
+    onSetGoogleMapsMode: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val launcherViewModel: LauncherViewModel = viewModel()
@@ -343,6 +350,63 @@ fun DashboardScreen(
     val voiceSearchAvailable = remember(context) {
         SpeechRecognizer.isRecognitionAvailable(context)
     }
+    var mapBounds by remember { mutableStateOf<Rect?>(null) }
+    var pendingGmapsNavUri by remember { mutableStateOf<String?>(null) }
+    val googleMapsInstalled = remember(context) {
+        FreeformMapManager.isGoogleMapsInstalled(context)
+    }
+    val onToggleGoogleMapsMode: () -> Unit = {
+        when {
+            !googleMapsInstalled -> {
+                Toast.makeText(context, "Google Maps not installed", Toast.LENGTH_SHORT).show()
+            }
+            googleMapsMode -> {
+                onSetGoogleMapsMode(false)
+                FreeformMapManager.clearLastLaunchBounds()
+                FreeformMapManager.dismissGoogleMaps(context)
+            }
+            else -> {
+                onSetGoogleMapsMode(true)
+                FreeformMapManager.clearLastLaunchBounds()
+                if (!FreeformMapManager.isFreeformSupported(context.packageManager)) {
+                    FreeformMapManager.launchGoogleMaps(
+                        context = context,
+                        bounds = Rect(),
+                        useFreeform = false,
+                    )
+                    Toast.makeText(
+                        context,
+                        "Freeform mode not supported on this device",
+                        Toast.LENGTH_SHORT,
+                    ).show()
+                }
+            }
+        }
+    }
+    LaunchedEffect(googleMapsMode, mapBounds, pendingGmapsNavUri) {
+        if (!googleMapsMode) return@LaunchedEffect
+        val bounds = mapBounds ?: return@LaunchedEffect
+        val navUri = pendingGmapsNavUri
+        if (FreeformMapManager.shouldRelaunch(bounds, navUri)) {
+            FreeformMapManager.launchGoogleMaps(context, bounds, navUri)
+            pendingGmapsNavUri = null
+        }
+    }
+    val onPoiNavigate: (SearchResultPlace, String) -> Unit = { poi, customName ->
+        onClearPoiReturnToSearch()
+        val namedPoi = poi.copy(name = customName)
+        onDestinationSelected(namedPoi)
+        if (googleMapsMode) {
+            pendingGmapsNavUri = "google.navigation:q=${poi.latitude},${poi.longitude}&mode=d"
+            mapEngine.dismissSelectedPoi()
+            launcherViewModel.setActivePanel(dismissToBasePanel(musicPaneEnabled))
+        } else {
+            if (savedPlaces.any { saved -> isSavedPlaceMatch(saved, poi) }) {
+                onUpdateSavedPlace(namedPoi)
+            }
+            mapEngine.navigateToCoordinates(poi.latitude, poi.longitude)
+        }
+    }
     val isPortrait = configuration.orientation == Configuration.ORIENTATION_PORTRAIT
     val isSplitLockedForOverlay =
         activePanel == ActivePanel.SEARCH ||
@@ -354,12 +418,6 @@ fun DashboardScreen(
         if (isSplitLockedForOverlay) OVERLAY_MAP_MEDIA_RATIO else mapMediaRatio
     val effectiveMediaWeight = 1f - effectiveMapMediaRatio
     val showMapMediaDivider = showSecondaryPane && !isSplitLockedForOverlay
-    var portraitMapMediaContainerPx by remember { mutableStateOf(0f) }
-    var landscapeMapMediaContainerPx by remember { mutableStateOf(0f) }
-    var verticalDockRowWidthPx by remember { mutableStateOf(0f) }
-    var verticalDockWidthPx by remember { mutableStateOf(0f) }
-    val verticalDockMapMediaContainerPx = (verticalDockRowWidthPx - verticalDockWidthPx)
-        .coerceAtLeast(0f)
 
     LaunchedEffect(savedPlaces) {
         mapEngine.setSavedPlaces(savedPlaces)
@@ -429,656 +487,151 @@ fun DashboardScreen(
                 .weight(1f)
                 .fillMaxWidth(),
         ) {
-        when {
-            isPortrait -> {
-                Column(modifier = Modifier.fillMaxSize()) {
-                    Box(
-                        modifier = Modifier
-                            .weight(1f)
-                            .fillMaxWidth(),
-                    ) {
-                        Column(
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .onSizeChanged { portraitMapMediaContainerPx = it.height.toFloat() },
-                        ) {
-                            CarMapViewContainer(
-                                engine = mapEngine,
-                                onToggleSearch = onToggleSearch,
-                                isDestinationPanelOpen = isDestinationPanelOpen,
-                                onToggleMapSettings = onToggleMapSettings,
-                                isMapSettingsPanelOpen = isMapSettingsPanelOpen,
-                                reduceTopInset = reduceTopInsetBelowStatusStrip,
-                                modifier = Modifier
-                                    .weight(if (showSecondaryPane) effectiveMapMediaRatio else 1f)
-                                    .fillMaxWidth(),
-                            )
-                            if (showSecondaryPane) {
-                                if (showMapMediaDivider) {
-                                    MapMediaDividerHandle(
-                                        isVertical = false,
-                                        containerSizePx = portraitMapMediaContainerPx,
-                                        mapMediaRatio = mapMediaRatio,
-                                        onMapMediaRatioChange = onMapMediaRatioChange,
-                                    )
-                                }
-                                DashboardSecondaryPane(
-                                    activePanel = activePanel,
-                                    mapEngine = mapEngine,
-                                    mapDataViewModel = mapDataViewModel,
-                                    onDismissPanel = onDismissPanel,
-                                    onOpenMapData = onOpenMapData,
-                                    onPreviewSearchPlace = onPreviewSearchPlace,
-                                    onOpenAddFromLink = onOpenAddFromLink,
-                                    onDismissAddPlacePanel = onDismissAddPlacePanel,
-                                    onConfirmAddPlaceFromLink = onConfirmAddPlaceFromLink,
-                                    recentDestinations = recentDestinations,
-                                    savedPlaces = savedPlaces,
-                                    onDestinationSelected = onDestinationSelected,
-                                    onToggleSavedPlace = onToggleSavedPlace,
-                                    onUpdateSavedPlace = onUpdateSavedPlace,
-                                    onDismissSelectedPoi = { mapEngine.dismissSelectedPoi() },
-                                    onClearPoiReturnToSearch = onClearPoiReturnToSearch,
-                                    mediaState = mediaState,
-                                    defaultAudioPackage = defaultAudioPackage,
-                                    onSetDefaultAudioPackage = onSetDefaultAudioPackage,
-                                    onMediaPlayPause = onMediaPlayPause,
-                                    onMediaSkipPrevious = onMediaSkipPrevious,
-                                    onMediaSkipNext = onMediaSkipNext,
-                                    onMediaToggleLike = onMediaToggleLike,
-                                    albumArtMode = albumArtMode,
-                                    onAlbumArtModeChange = onAlbumArtModeChange,
-                                    isLeftHandDrive = isLeftHandDrive,
-                                    isShortcutsHorizontal = isShortcutsHorizontal,
-                                    limitSearchDistance = limitSearchDistance,
-                                    useVectorTiles = useVectorTiles,
-                                    show3dBuildings = show3dBuildings,
-                                    showTraffic = showTraffic,
-                                    navigationVoiceEnabled = navigationVoiceEnabled,
-                                    navigationVoiceVolume = navigationVoiceVolume,
-                                    tomTomApiKey = tomTomApiKey,
-                                    isLauncherMode = isLauncherMode,
-                                    shortcutIconSize = shortcutIconSize,
-                                    drivingZoom = drivingZoom,
-                                    puckHorizontalOffset = puckHorizontalOffset,
-                                    puckVerticalOffset = puckVerticalOffset,
-                                    onToggleLhd = onToggleLhd,
-                                    onToggleShortcutsHorizontal = onToggleShortcutsHorizontal,
-                                    onToggleLimitSearchDistance = onToggleLimitSearchDistance,
-                                    onToggleVectorTiles = onToggleVectorTiles,
-                                    onToggleShow3dBuildings = onToggleShow3dBuildings,
-                                    onToggleTraffic = onToggleTraffic,
-                                    onToggleNavigationVoice = onToggleNavigationVoice,
-                                    onNavigationVoiceVolumeChange = onNavigationVoiceVolumeChange,
-                                    onTestNavigationVoice = onTestNavigationVoice,
-                                    onTomTomApiKeyChange = onTomTomApiKeyChange,
-                                    onToggleLauncherMode = onToggleLauncherMode,
-                                    onShortcutIconSizeChange = onShortcutIconSizeChange,
-                                    onDrivingZoomChange = onDrivingZoomChange,
-                                    onPuckHorizontalOffsetChange = onPuckHorizontalOffsetChange,
-                                    onPuckVerticalOffsetChange = onPuckVerticalOffsetChange,
-                                    puckScale = puckScale,
-                                    onPuckScaleChange = onPuckScaleChange,
-                                    showStatusStrip = showStatusStrip,
-                                    showSystemStatusBar = showSystemStatusBar,
-                                    onToggleShowStatusStrip = onToggleShowStatusStrip,
-                                    onToggleShowSystemStatusBar = onToggleShowSystemStatusBar,
-                                    reduceTopInset = reduceMediaTopInsetBelowStatusStrip,
-                                    appUpdateState = appUpdateState,
-                                    onCheckForUpdate = appUpdateViewModel::checkForUpdate,
-                                    onDownloadUpdate = appUpdateViewModel::downloadUpdate,
-                                    onInstallApk = onInstallApk,
-                                    modifier = Modifier
-                                        .weight(effectiveMediaWeight)
-                                        .fillMaxWidth(),
-                                )
-                            }
-                        }
-                        SplitScreenAppDrawerSlot(
-                            visible = activePanel == ActivePanel.APP_DRAWER,
-                            launchableApps = launchableApps,
-                            audioPlayerPackages = audioPlayerPackages,
-                            isAppDrawerLoading = isAppDrawerLoading,
-                            dockPinnedPackages = dockPinnedPackages,
-                            onToggleDockPin = onToggleDockPin,
-                            onSelectAudioSource = openAudioSource,
-                            onOpenLauncherSettings = onOpenLauncherSettingsFromDrawer,
-                            onDismiss = onDismissAppDrawer,
-                        )
-                    }
-                    ShortcutDock(
-                        isHorizontal = true,
-                        shortcutIconSize = shortcutIconSize,
-                        isLeftHandDrive = isLeftHandDrive,
-                        activePanel = activePanel,
-                        mediaState = mediaState,
-                        voiceSearchAvailable = voiceSearchAvailable,
-                        defaultAudioPackage = defaultAudioPackage,
-                        dockPinnedPackages = dockPinnedPackages,
-                        onToggleDockPin = onToggleDockPin,
-                        onSelectAudioSource = handleSelectAudioSource,
-                        onTogglePanel = onTogglePanel,
-                        onVoiceSearch = onVoiceSearch,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(bottom = CarDimensions.PaneGap)
-                            .wrapContentHeight(),
-                    )
-                }
-            }
-            isShortcutsHorizontal -> {
-                Column(
-                    modifier = Modifier.fillMaxSize(),
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .weight(1f)
-                            .fillMaxWidth(),
-                    ) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .onSizeChanged { landscapeMapMediaContainerPx = it.width.toFloat() },
-                        ) {
-                        if (isLeftHandDrive) {
-                            CarMapViewContainer(
-                                engine = mapEngine,
-                                onToggleSearch = onToggleSearch,
-                                isDestinationPanelOpen = isDestinationPanelOpen,
-                                onToggleMapSettings = onToggleMapSettings,
-                                isMapSettingsPanelOpen = isMapSettingsPanelOpen,
-                                reduceTopInset = reduceTopInsetBelowStatusStrip,
-                                modifier = Modifier
-                                    .weight(if (showSecondaryPane) effectiveMapMediaRatio else 1f)
-                                    .fillMaxSize(),
-                            )
-                            if (showSecondaryPane) {
-                                if (showMapMediaDivider) {
-                                    MapMediaDividerHandle(
-                                        isVertical = true,
-                                        containerSizePx = landscapeMapMediaContainerPx,
-                                        mapMediaRatio = mapMediaRatio,
-                                        onMapMediaRatioChange = onMapMediaRatioChange,
-                                    )
-                                }
-                                DashboardSecondaryPane(
-                                    activePanel = activePanel,
-                                    mapEngine = mapEngine,
-                                    mapDataViewModel = mapDataViewModel,
-                                    onDismissPanel = onDismissPanel,
-                                    onOpenMapData = onOpenMapData,
-                                    onPreviewSearchPlace = onPreviewSearchPlace,
-                                    onOpenAddFromLink = onOpenAddFromLink,
-                                    onDismissAddPlacePanel = onDismissAddPlacePanel,
-                                    onConfirmAddPlaceFromLink = onConfirmAddPlaceFromLink,
-                                    recentDestinations = recentDestinations,
-                                    savedPlaces = savedPlaces,
-                                    onDestinationSelected = onDestinationSelected,
-                                    onToggleSavedPlace = onToggleSavedPlace,
-                                onUpdateSavedPlace = onUpdateSavedPlace,
-                                    onDismissSelectedPoi = { mapEngine.dismissSelectedPoi() },
-                                    onClearPoiReturnToSearch = onClearPoiReturnToSearch,
-                                    mediaState = mediaState,
-                                    defaultAudioPackage = defaultAudioPackage,
-                                    onSetDefaultAudioPackage = onSetDefaultAudioPackage,
-                                    onMediaPlayPause = onMediaPlayPause,
-                                    onMediaSkipPrevious = onMediaSkipPrevious,
-                                    onMediaSkipNext = onMediaSkipNext,
-                                    onMediaToggleLike = onMediaToggleLike,
-                                    albumArtMode = albumArtMode,
-                                    onAlbumArtModeChange = onAlbumArtModeChange,
-                                    isLeftHandDrive = isLeftHandDrive,
-                                    isShortcutsHorizontal = isShortcutsHorizontal,
-                                    limitSearchDistance = limitSearchDistance,
-                                    useVectorTiles = useVectorTiles,
-                                    show3dBuildings = show3dBuildings,
-                                    showTraffic = showTraffic,
-                                    navigationVoiceEnabled = navigationVoiceEnabled,
-                                    navigationVoiceVolume = navigationVoiceVolume,
-                                    tomTomApiKey = tomTomApiKey,
-                                    isLauncherMode = isLauncherMode,
-                                    shortcutIconSize = shortcutIconSize,
-                                    drivingZoom = drivingZoom,
-                                    puckHorizontalOffset = puckHorizontalOffset,
-                                    puckVerticalOffset = puckVerticalOffset,
-                                    onToggleLhd = onToggleLhd,
-                                    onToggleShortcutsHorizontal = onToggleShortcutsHorizontal,
-                                    onToggleLimitSearchDistance = onToggleLimitSearchDistance,
-                                    onToggleVectorTiles = onToggleVectorTiles,
-                                    onToggleShow3dBuildings = onToggleShow3dBuildings,
-                                    onToggleTraffic = onToggleTraffic,
-                                    onToggleNavigationVoice = onToggleNavigationVoice,
-                                    onNavigationVoiceVolumeChange = onNavigationVoiceVolumeChange,
-                                    onTestNavigationVoice = onTestNavigationVoice,
-                                    onTomTomApiKeyChange = onTomTomApiKeyChange,
-                                    onToggleLauncherMode = onToggleLauncherMode,
-                                    onShortcutIconSizeChange = onShortcutIconSizeChange,
-                                    onDrivingZoomChange = onDrivingZoomChange,
-                                    onPuckHorizontalOffsetChange = onPuckHorizontalOffsetChange,
-                                    onPuckVerticalOffsetChange = onPuckVerticalOffsetChange,
-                                    puckScale = puckScale,
-                                    onPuckScaleChange = onPuckScaleChange,
-                                    showStatusStrip = showStatusStrip,
-                                    showSystemStatusBar = showSystemStatusBar,
-                                    onToggleShowStatusStrip = onToggleShowStatusStrip,
-                                    onToggleShowSystemStatusBar = onToggleShowSystemStatusBar,
-                                    reduceTopInset = reduceMediaTopInsetBelowStatusStrip,
-                                    appUpdateState = appUpdateState,
-                                    onCheckForUpdate = appUpdateViewModel::checkForUpdate,
-                                    onDownloadUpdate = appUpdateViewModel::downloadUpdate,
-                                    onInstallApk = onInstallApk,
-                                    modifier = Modifier
-                                        .weight(effectiveMediaWeight)
-                                        .fillMaxSize(),
-                                )
-                            }
-                        } else {
-                            if (showSecondaryPane) {
-                                DashboardSecondaryPane(
-                                    activePanel = activePanel,
-                                    mapEngine = mapEngine,
-                                    mapDataViewModel = mapDataViewModel,
-                                    onDismissPanel = onDismissPanel,
-                                    onOpenMapData = onOpenMapData,
-                                    onPreviewSearchPlace = onPreviewSearchPlace,
-                                    onOpenAddFromLink = onOpenAddFromLink,
-                                    onDismissAddPlacePanel = onDismissAddPlacePanel,
-                                    onConfirmAddPlaceFromLink = onConfirmAddPlaceFromLink,
-                                    recentDestinations = recentDestinations,
-                                    savedPlaces = savedPlaces,
-                                    onDestinationSelected = onDestinationSelected,
-                                    onToggleSavedPlace = onToggleSavedPlace,
-                                onUpdateSavedPlace = onUpdateSavedPlace,
-                                    onDismissSelectedPoi = { mapEngine.dismissSelectedPoi() },
-                                    onClearPoiReturnToSearch = onClearPoiReturnToSearch,
-                                    mediaState = mediaState,
-                                    defaultAudioPackage = defaultAudioPackage,
-                                    onSetDefaultAudioPackage = onSetDefaultAudioPackage,
-                                    onMediaPlayPause = onMediaPlayPause,
-                                    onMediaSkipPrevious = onMediaSkipPrevious,
-                                    onMediaSkipNext = onMediaSkipNext,
-                                    onMediaToggleLike = onMediaToggleLike,
-                                    albumArtMode = albumArtMode,
-                                    onAlbumArtModeChange = onAlbumArtModeChange,
-                                    isLeftHandDrive = isLeftHandDrive,
-                                    isShortcutsHorizontal = isShortcutsHorizontal,
-                                    limitSearchDistance = limitSearchDistance,
-                                    useVectorTiles = useVectorTiles,
-                                    show3dBuildings = show3dBuildings,
-                                    showTraffic = showTraffic,
-                                    navigationVoiceEnabled = navigationVoiceEnabled,
-                                    navigationVoiceVolume = navigationVoiceVolume,
-                                    tomTomApiKey = tomTomApiKey,
-                                    isLauncherMode = isLauncherMode,
-                                    shortcutIconSize = shortcutIconSize,
-                                    drivingZoom = drivingZoom,
-                                    puckHorizontalOffset = puckHorizontalOffset,
-                                    puckVerticalOffset = puckVerticalOffset,
-                                    onToggleLhd = onToggleLhd,
-                                    onToggleShortcutsHorizontal = onToggleShortcutsHorizontal,
-                                    onToggleLimitSearchDistance = onToggleLimitSearchDistance,
-                                    onToggleVectorTiles = onToggleVectorTiles,
-                                    onToggleShow3dBuildings = onToggleShow3dBuildings,
-                                    onToggleTraffic = onToggleTraffic,
-                                    onToggleNavigationVoice = onToggleNavigationVoice,
-                                    onNavigationVoiceVolumeChange = onNavigationVoiceVolumeChange,
-                                    onTestNavigationVoice = onTestNavigationVoice,
-                                    onTomTomApiKeyChange = onTomTomApiKeyChange,
-                                    onToggleLauncherMode = onToggleLauncherMode,
-                                    onShortcutIconSizeChange = onShortcutIconSizeChange,
-                                    onDrivingZoomChange = onDrivingZoomChange,
-                                    onPuckHorizontalOffsetChange = onPuckHorizontalOffsetChange,
-                                    onPuckVerticalOffsetChange = onPuckVerticalOffsetChange,
-                                    puckScale = puckScale,
-                                    onPuckScaleChange = onPuckScaleChange,
-                                    showStatusStrip = showStatusStrip,
-                                    showSystemStatusBar = showSystemStatusBar,
-                                    onToggleShowStatusStrip = onToggleShowStatusStrip,
-                                    onToggleShowSystemStatusBar = onToggleShowSystemStatusBar,
-                                    reduceTopInset = reduceMediaTopInsetBelowStatusStrip,
-                                    appUpdateState = appUpdateState,
-                                    onCheckForUpdate = appUpdateViewModel::checkForUpdate,
-                                    onDownloadUpdate = appUpdateViewModel::downloadUpdate,
-                                    onInstallApk = onInstallApk,
-                                    modifier = Modifier
-                                        .weight(effectiveMediaWeight)
-                                        .fillMaxSize(),
-                                )
-                                if (showMapMediaDivider) {
-                                    MapMediaDividerHandle(
-                                        isVertical = true,
-                                        containerSizePx = landscapeMapMediaContainerPx,
-                                        mapMediaRatio = mapMediaRatio,
-                                        onMapMediaRatioChange = onMapMediaRatioChange,
-                                        invertDrag = true,
-                                    )
-                                }
-                            }
-                            CarMapViewContainer(
-                                engine = mapEngine,
-                                onToggleSearch = onToggleSearch,
-                                isDestinationPanelOpen = isDestinationPanelOpen,
-                                onToggleMapSettings = onToggleMapSettings,
-                                isMapSettingsPanelOpen = isMapSettingsPanelOpen,
-                                reduceTopInset = reduceTopInsetBelowStatusStrip,
-                                modifier = Modifier
-                                    .weight(if (showSecondaryPane) effectiveMapMediaRatio else 1f)
-                                    .fillMaxSize(),
-                            )
-                        }
-                        }
-                        SplitScreenAppDrawerSlot(
-                            visible = activePanel == ActivePanel.APP_DRAWER,
-                            launchableApps = launchableApps,
-                            audioPlayerPackages = audioPlayerPackages,
-                            isAppDrawerLoading = isAppDrawerLoading,
-                            dockPinnedPackages = dockPinnedPackages,
-                            onToggleDockPin = onToggleDockPin,
-                            onSelectAudioSource = openAudioSource,
-                            onOpenLauncherSettings = onOpenLauncherSettingsFromDrawer,
-                            onDismiss = onDismissAppDrawer,
-                        )
-                    }
-                    ShortcutDock(
-                        isHorizontal = true,
-                        shortcutIconSize = shortcutIconSize,
-                        isLeftHandDrive = isLeftHandDrive,
-                        activePanel = activePanel,
-                        mediaState = mediaState,
-                        voiceSearchAvailable = voiceSearchAvailable,
-                        defaultAudioPackage = defaultAudioPackage,
-                        dockPinnedPackages = dockPinnedPackages,
-                        onToggleDockPin = onToggleDockPin,
-                        onSelectAudioSource = handleSelectAudioSource,
-                        onTogglePanel = onTogglePanel,
-                        onVoiceSearch = onVoiceSearch,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(bottom = CarDimensions.PaneGap)
-                            .wrapContentHeight(),
-                    )
-                }
-            }
-            else -> {
-                Row(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .onSizeChanged { verticalDockRowWidthPx = it.width.toFloat() },
-                ) {
-                    if (isLeftHandDrive) {
-                        Box(
-                            modifier = Modifier
-                                .weight(1f)
-                                .fillMaxHeight(),
-                        ) {
-                            Row(modifier = Modifier.fillMaxSize()) {
-                                CarMapViewContainer(
-                                    engine = mapEngine,
-                                    onToggleSearch = onToggleSearch,
-                                isDestinationPanelOpen = isDestinationPanelOpen,
-                                onToggleMapSettings = onToggleMapSettings,
-                                isMapSettingsPanelOpen = isMapSettingsPanelOpen,
-                                    reduceTopInset = reduceTopInsetBelowStatusStrip,
-                                    modifier = Modifier
-                                        .weight(
-                                            if (showSecondaryPane) {
-                                                effectiveMapMediaRatio
-                                            } else {
-                                                effectiveMapMediaRatio + effectiveMediaWeight
-                                            },
-                                        )
-                                        .fillMaxSize(),
-                                )
-                                if (showSecondaryPane) {
-                                    if (showMapMediaDivider) {
-                                        MapMediaDividerHandle(
-                                            isVertical = true,
-                                            containerSizePx = verticalDockMapMediaContainerPx,
-                                            mapMediaRatio = mapMediaRatio,
-                                            onMapMediaRatioChange = onMapMediaRatioChange,
-                                        )
-                                    }
-                                    DashboardSecondaryPane(
-                                        activePanel = activePanel,
-                                        mapEngine = mapEngine,
-                                        mapDataViewModel = mapDataViewModel,
-                                        onDismissPanel = onDismissPanel,
-                                        onOpenMapData = onOpenMapData,
-                                        onPreviewSearchPlace = onPreviewSearchPlace,
-                                        onOpenAddFromLink = onOpenAddFromLink,
-                                        onDismissAddPlacePanel = onDismissAddPlacePanel,
-                                        onConfirmAddPlaceFromLink = onConfirmAddPlaceFromLink,
-                                        recentDestinations = recentDestinations,
-                                        savedPlaces = savedPlaces,
-                                        onDestinationSelected = onDestinationSelected,
-                                        onToggleSavedPlace = onToggleSavedPlace,
-                                        onUpdateSavedPlace = onUpdateSavedPlace,
-                                        onDismissSelectedPoi = { mapEngine.dismissSelectedPoi() },
-                                        onClearPoiReturnToSearch = onClearPoiReturnToSearch,
-                                        mediaState = mediaState,
-                                        defaultAudioPackage = defaultAudioPackage,
-                                        onSetDefaultAudioPackage = onSetDefaultAudioPackage,
-                                        onMediaPlayPause = onMediaPlayPause,
-                                        onMediaSkipPrevious = onMediaSkipPrevious,
-                                        onMediaSkipNext = onMediaSkipNext,
-                                        onMediaToggleLike = onMediaToggleLike,
-                                        albumArtMode = albumArtMode,
-                                        onAlbumArtModeChange = onAlbumArtModeChange,
-                                        isLeftHandDrive = isLeftHandDrive,
-                                        isShortcutsHorizontal = isShortcutsHorizontal,
-                                        limitSearchDistance = limitSearchDistance,
-                                        useVectorTiles = useVectorTiles,
-                                        show3dBuildings = show3dBuildings,
-                                        showTraffic = showTraffic,
-                                        navigationVoiceEnabled = navigationVoiceEnabled,
-                                        navigationVoiceVolume = navigationVoiceVolume,
-                                        tomTomApiKey = tomTomApiKey,
-                                        isLauncherMode = isLauncherMode,
-                                        shortcutIconSize = shortcutIconSize,
-                                        drivingZoom = drivingZoom,
-                                        puckHorizontalOffset = puckHorizontalOffset,
-                                        puckVerticalOffset = puckVerticalOffset,
-                                        onToggleLhd = onToggleLhd,
-                                        onToggleShortcutsHorizontal = onToggleShortcutsHorizontal,
-                                        onToggleLimitSearchDistance = onToggleLimitSearchDistance,
-                                        onToggleVectorTiles = onToggleVectorTiles,
-                                        onToggleShow3dBuildings = onToggleShow3dBuildings,
-                                        onToggleTraffic = onToggleTraffic,
-                                        onToggleNavigationVoice = onToggleNavigationVoice,
-                                        onNavigationVoiceVolumeChange = onNavigationVoiceVolumeChange,
-                                        onTestNavigationVoice = onTestNavigationVoice,
-                                        onTomTomApiKeyChange = onTomTomApiKeyChange,
-                                        onToggleLauncherMode = onToggleLauncherMode,
-                                        onShortcutIconSizeChange = onShortcutIconSizeChange,
-                                        onDrivingZoomChange = onDrivingZoomChange,
-                                        onPuckHorizontalOffsetChange = onPuckHorizontalOffsetChange,
-                                        onPuckVerticalOffsetChange = onPuckVerticalOffsetChange,
-                                        puckScale = puckScale,
-                                        onPuckScaleChange = onPuckScaleChange,
-                                        showStatusStrip = showStatusStrip,
-                                        showSystemStatusBar = showSystemStatusBar,
-                                        onToggleShowStatusStrip = onToggleShowStatusStrip,
-                                        onToggleShowSystemStatusBar = onToggleShowSystemStatusBar,
-                                        reduceTopInset = reduceMediaTopInsetBelowStatusStrip,
-                                        appUpdateState = appUpdateState,
-                                        onCheckForUpdate = appUpdateViewModel::checkForUpdate,
-                                        onDownloadUpdate = appUpdateViewModel::downloadUpdate,
-                                        onInstallApk = onInstallApk,
-                                        modifier = Modifier
-                                            .weight(effectiveMediaWeight)
-                                            .fillMaxSize(),
-                                    )
-                                }
-                            }
-                            SplitScreenAppDrawerSlot(
-                                visible = activePanel == ActivePanel.APP_DRAWER,
-                                launchableApps = launchableApps,
-                                audioPlayerPackages = audioPlayerPackages,
-                                isAppDrawerLoading = isAppDrawerLoading,
-                                dockPinnedPackages = dockPinnedPackages,
-                                onToggleDockPin = onToggleDockPin,
-                                onSelectAudioSource = openAudioSource,
-                                onOpenLauncherSettings = onOpenLauncherSettingsFromDrawer,
-                                onDismiss = onDismissAppDrawer,
-                            )
-                        }
-                        ShortcutDock(
-                            isHorizontal = false,
-                            shortcutIconSize = shortcutIconSize,
-                            isLeftHandDrive = isLeftHandDrive,
-                            activePanel = activePanel,
-                            mediaState = mediaState,
-                            voiceSearchAvailable = voiceSearchAvailable,
-                            defaultAudioPackage = defaultAudioPackage,
-                            dockPinnedPackages = dockPinnedPackages,
-                            onToggleDockPin = onToggleDockPin,
-                            onSelectAudioSource = handleSelectAudioSource,
-                            onTogglePanel = onTogglePanel,
-                            onVoiceSearch = onVoiceSearch,
-                            modifier = Modifier
-                                .wrapContentWidth()
-                                .fillMaxHeight()
-                                .onSizeChanged { verticalDockWidthPx = it.width.toFloat() },
-                        )
-                    } else {
-                        ShortcutDock(
-                            isHorizontal = false,
-                            shortcutIconSize = shortcutIconSize,
-                            isLeftHandDrive = isLeftHandDrive,
-                            activePanel = activePanel,
-                            mediaState = mediaState,
-                            voiceSearchAvailable = voiceSearchAvailable,
-                            defaultAudioPackage = defaultAudioPackage,
-                            dockPinnedPackages = dockPinnedPackages,
-                            onToggleDockPin = onToggleDockPin,
-                            onSelectAudioSource = handleSelectAudioSource,
-                            onTogglePanel = onTogglePanel,
-                            onVoiceSearch = onVoiceSearch,
-                            modifier = Modifier
-                                .wrapContentWidth()
-                                .fillMaxHeight()
-                                .onSizeChanged { verticalDockWidthPx = it.width.toFloat() },
-                        )
-                        Box(
-                            modifier = Modifier
-                                .weight(1f)
-                                .fillMaxHeight(),
-                        ) {
-                            Row(modifier = Modifier.fillMaxSize()) {
-                                CarMapViewContainer(
-                                    engine = mapEngine,
-                                    onToggleSearch = onToggleSearch,
-                                isDestinationPanelOpen = isDestinationPanelOpen,
-                                onToggleMapSettings = onToggleMapSettings,
-                                isMapSettingsPanelOpen = isMapSettingsPanelOpen,
-                                    reduceTopInset = reduceTopInsetBelowStatusStrip,
-                                    modifier = Modifier
-                                        .weight(
-                                            if (showSecondaryPane) {
-                                                effectiveMapMediaRatio
-                                            } else {
-                                                effectiveMapMediaRatio + effectiveMediaWeight
-                                            },
-                                        )
-                                        .fillMaxSize(),
-                                )
-                                if (showSecondaryPane) {
-                                    if (showMapMediaDivider) {
-                                        MapMediaDividerHandle(
-                                            isVertical = true,
-                                            containerSizePx = verticalDockMapMediaContainerPx,
-                                            mapMediaRatio = mapMediaRatio,
-                                            onMapMediaRatioChange = onMapMediaRatioChange,
-                                        )
-                                    }
-                                    DashboardSecondaryPane(
-                                        activePanel = activePanel,
-                                        mapEngine = mapEngine,
-                                        mapDataViewModel = mapDataViewModel,
-                                        onDismissPanel = onDismissPanel,
-                                        onOpenMapData = onOpenMapData,
-                                        onPreviewSearchPlace = onPreviewSearchPlace,
-                                        onOpenAddFromLink = onOpenAddFromLink,
-                                        onDismissAddPlacePanel = onDismissAddPlacePanel,
-                                        onConfirmAddPlaceFromLink = onConfirmAddPlaceFromLink,
-                                        recentDestinations = recentDestinations,
-                                        savedPlaces = savedPlaces,
-                                        onDestinationSelected = onDestinationSelected,
-                                        onToggleSavedPlace = onToggleSavedPlace,
-                                        onUpdateSavedPlace = onUpdateSavedPlace,
-                                        onDismissSelectedPoi = { mapEngine.dismissSelectedPoi() },
-                                        onClearPoiReturnToSearch = onClearPoiReturnToSearch,
-                                        mediaState = mediaState,
-                                        defaultAudioPackage = defaultAudioPackage,
-                                        onSetDefaultAudioPackage = onSetDefaultAudioPackage,
-                                        onMediaPlayPause = onMediaPlayPause,
-                                        onMediaSkipPrevious = onMediaSkipPrevious,
-                                        onMediaSkipNext = onMediaSkipNext,
-                                        onMediaToggleLike = onMediaToggleLike,
-                                        albumArtMode = albumArtMode,
-                                        onAlbumArtModeChange = onAlbumArtModeChange,
-                                        isLeftHandDrive = isLeftHandDrive,
-                                        isShortcutsHorizontal = isShortcutsHorizontal,
-                                        limitSearchDistance = limitSearchDistance,
-                                        useVectorTiles = useVectorTiles,
-                                        show3dBuildings = show3dBuildings,
-                                        showTraffic = showTraffic,
-                                        navigationVoiceEnabled = navigationVoiceEnabled,
-                                        navigationVoiceVolume = navigationVoiceVolume,
-                                        tomTomApiKey = tomTomApiKey,
-                                        isLauncherMode = isLauncherMode,
-                                        shortcutIconSize = shortcutIconSize,
-                                        drivingZoom = drivingZoom,
-                                        puckHorizontalOffset = puckHorizontalOffset,
-                                        puckVerticalOffset = puckVerticalOffset,
-                                        onToggleLhd = onToggleLhd,
-                                        onToggleShortcutsHorizontal = onToggleShortcutsHorizontal,
-                                        onToggleLimitSearchDistance = onToggleLimitSearchDistance,
-                                        onToggleVectorTiles = onToggleVectorTiles,
-                                        onToggleShow3dBuildings = onToggleShow3dBuildings,
-                                        onToggleTraffic = onToggleTraffic,
-                                        onToggleNavigationVoice = onToggleNavigationVoice,
-                                        onNavigationVoiceVolumeChange = onNavigationVoiceVolumeChange,
-                                        onTestNavigationVoice = onTestNavigationVoice,
-                                        onTomTomApiKeyChange = onTomTomApiKeyChange,
-                                        onToggleLauncherMode = onToggleLauncherMode,
-                                        onShortcutIconSizeChange = onShortcutIconSizeChange,
-                                        onDrivingZoomChange = onDrivingZoomChange,
-                                        onPuckHorizontalOffsetChange = onPuckHorizontalOffsetChange,
-                                        onPuckVerticalOffsetChange = onPuckVerticalOffsetChange,
-                                        puckScale = puckScale,
-                                        onPuckScaleChange = onPuckScaleChange,
-                                        showStatusStrip = showStatusStrip,
-                                        showSystemStatusBar = showSystemStatusBar,
-                                        onToggleShowStatusStrip = onToggleShowStatusStrip,
-                                        onToggleShowSystemStatusBar = onToggleShowSystemStatusBar,
-                                        reduceTopInset = reduceMediaTopInsetBelowStatusStrip,
-                                        appUpdateState = appUpdateState,
-                                        onCheckForUpdate = appUpdateViewModel::checkForUpdate,
-                                        onDownloadUpdate = appUpdateViewModel::downloadUpdate,
-                                        onInstallApk = onInstallApk,
-                                        modifier = Modifier
-                                            .weight(effectiveMediaWeight)
-                                            .fillMaxSize(),
-                                    )
-                                }
-                            }
-                            SplitScreenAppDrawerSlot(
-                                visible = activePanel == ActivePanel.APP_DRAWER,
-                                launchableApps = launchableApps,
-                                audioPlayerPackages = audioPlayerPackages,
-                                isAppDrawerLoading = isAppDrawerLoading,
-                                dockPinnedPackages = dockPinnedPackages,
-                                onToggleDockPin = onToggleDockPin,
-                                onSelectAudioSource = openAudioSource,
-                                onOpenLauncherSettings = onOpenLauncherSettingsFromDrawer,
-                                onDismiss = onDismissAppDrawer,
-                            )
-                        }
-                    }
-                }
-            }
+        val secondaryPaneContent: @Composable (Modifier, Boolean) -> Unit = { paneModifier, reduceTop ->
+            DashboardSecondaryPane(
+                activePanel = activePanel,
+                mapEngine = mapEngine,
+                mapDataViewModel = mapDataViewModel,
+                onDismissPanel = onDismissPanel,
+                onOpenMapData = onOpenMapData,
+                onPreviewSearchPlace = onPreviewSearchPlace,
+                onOpenAddFromLink = onOpenAddFromLink,
+                onDismissAddPlacePanel = onDismissAddPlacePanel,
+                onConfirmAddPlaceFromLink = onConfirmAddPlaceFromLink,
+                recentDestinations = recentDestinations,
+                savedPlaces = savedPlaces,
+                onToggleSavedPlace = onToggleSavedPlace,
+                onDismissSelectedPoi = { mapEngine.dismissSelectedPoi() },
+                onPoiNavigate = onPoiNavigate,
+                mediaState = mediaState,
+                defaultAudioPackage = defaultAudioPackage,
+                onSetDefaultAudioPackage = onSetDefaultAudioPackage,
+                onMediaPlayPause = onMediaPlayPause,
+                onMediaSkipPrevious = onMediaSkipPrevious,
+                onMediaSkipNext = onMediaSkipNext,
+                onMediaToggleLike = onMediaToggleLike,
+                albumArtMode = albumArtMode,
+                onAlbumArtModeChange = onAlbumArtModeChange,
+                isLeftHandDrive = isLeftHandDrive,
+                isShortcutsHorizontal = isShortcutsHorizontal,
+                limitSearchDistance = limitSearchDistance,
+                useVectorTiles = useVectorTiles,
+                show3dBuildings = show3dBuildings,
+                showTraffic = showTraffic,
+                navigationVoiceEnabled = navigationVoiceEnabled,
+                navigationVoiceVolume = navigationVoiceVolume,
+                tomTomApiKey = tomTomApiKey,
+                isLauncherMode = isLauncherMode,
+                shortcutIconSize = shortcutIconSize,
+                drivingZoom = drivingZoom,
+                puckHorizontalOffset = puckHorizontalOffset,
+                puckVerticalOffset = puckVerticalOffset,
+                onToggleLhd = onToggleLhd,
+                onToggleShortcutsHorizontal = onToggleShortcutsHorizontal,
+                onToggleLimitSearchDistance = onToggleLimitSearchDistance,
+                onToggleVectorTiles = onToggleVectorTiles,
+                onToggleShow3dBuildings = onToggleShow3dBuildings,
+                onToggleTraffic = onToggleTraffic,
+                onToggleNavigationVoice = onToggleNavigationVoice,
+                onNavigationVoiceVolumeChange = onNavigationVoiceVolumeChange,
+                onTestNavigationVoice = onTestNavigationVoice,
+                onTomTomApiKeyChange = onTomTomApiKeyChange,
+                onToggleLauncherMode = onToggleLauncherMode,
+                onShortcutIconSizeChange = onShortcutIconSizeChange,
+                onDrivingZoomChange = onDrivingZoomChange,
+                onPuckHorizontalOffsetChange = onPuckHorizontalOffsetChange,
+                onPuckVerticalOffsetChange = onPuckVerticalOffsetChange,
+                puckScale = puckScale,
+                onPuckScaleChange = onPuckScaleChange,
+                showStatusStrip = showStatusStrip,
+                showSystemStatusBar = showSystemStatusBar,
+                onToggleShowStatusStrip = onToggleShowStatusStrip,
+                onToggleShowSystemStatusBar = onToggleShowSystemStatusBar,
+                reduceTopInset = reduceTop,
+                appUpdateState = appUpdateState,
+                onCheckForUpdate = appUpdateViewModel::checkForUpdate,
+                onDownloadUpdate = appUpdateViewModel::downloadUpdate,
+                onInstallApk = onInstallApk,
+                modifier = paneModifier,
+            )
         }
+        val appDrawerOverlay: @Composable BoxScope.() -> Unit = {
+            SplitScreenAppDrawerSlot(
+                visible = activePanel == ActivePanel.APP_DRAWER,
+                launchableApps = launchableApps,
+                audioPlayerPackages = audioPlayerPackages,
+                isAppDrawerLoading = isAppDrawerLoading,
+                dockPinnedPackages = dockPinnedPackages,
+                onToggleDockPin = onToggleDockPin,
+                onSelectAudioSource = openAudioSource,
+                onOpenLauncherSettings = onOpenLauncherSettingsFromDrawer,
+                onDismiss = onDismissAppDrawer,
+            )
+        }
+        val horizontalShortcutDock: @Composable (Modifier) -> Unit = { dockModifier ->
+            ShortcutDock(
+                isHorizontal = true,
+                shortcutIconSize = shortcutIconSize,
+                isLeftHandDrive = isLeftHandDrive,
+                activePanel = activePanel,
+                mediaState = mediaState,
+                voiceSearchAvailable = voiceSearchAvailable,
+                defaultAudioPackage = defaultAudioPackage,
+                dockPinnedPackages = dockPinnedPackages,
+                onToggleDockPin = onToggleDockPin,
+                onSelectAudioSource = handleSelectAudioSource,
+                googleMapsMode = googleMapsMode,
+                googleMapsInstalled = googleMapsInstalled,
+                onToggleGoogleMapsMode = onToggleGoogleMapsMode,
+                onTogglePanel = onTogglePanel,
+                onVoiceSearch = onVoiceSearch,
+                modifier = dockModifier,
+            )
+        }
+        val verticalShortcutDock: @Composable (Modifier) -> Unit = { dockModifier ->
+            ShortcutDock(
+                isHorizontal = false,
+                shortcutIconSize = shortcutIconSize,
+                isLeftHandDrive = isLeftHandDrive,
+                activePanel = activePanel,
+                mediaState = mediaState,
+                voiceSearchAvailable = voiceSearchAvailable,
+                defaultAudioPackage = defaultAudioPackage,
+                dockPinnedPackages = dockPinnedPackages,
+                onToggleDockPin = onToggleDockPin,
+                onSelectAudioSource = handleSelectAudioSource,
+                googleMapsMode = googleMapsMode,
+                googleMapsInstalled = googleMapsInstalled,
+                onToggleGoogleMapsMode = onToggleGoogleMapsMode,
+                onTogglePanel = onTogglePanel,
+                onVoiceSearch = onVoiceSearch,
+                modifier = dockModifier,
+            )
+        }
+        DashboardOrientationLayout(
+            isPortrait = isPortrait,
+            isShortcutsHorizontal = isShortcutsHorizontal,
+            isLeftHandDrive = isLeftHandDrive,
+            showSecondaryPane = showSecondaryPane,
+            effectiveMapMediaRatio = effectiveMapMediaRatio,
+            effectiveMediaWeight = effectiveMediaWeight,
+            showMapMediaDivider = showMapMediaDivider,
+            mapMediaRatio = mapMediaRatio,
+            onMapMediaRatioChange = onMapMediaRatioChange,
+            googleMapsMode = googleMapsMode,
+            onMapBoundsChanged = { mapBounds = it },
+            mapEngine = mapEngine,
+            onToggleSearch = onToggleSearch,
+            isDestinationPanelOpen = isDestinationPanelOpen,
+            onToggleMapSettings = onToggleMapSettings,
+            isMapSettingsPanelOpen = isMapSettingsPanelOpen,
+            reduceTopInsetBelowStatusStrip = reduceTopInsetBelowStatusStrip,
+            reduceMediaTopInsetBelowStatusStrip = reduceMediaTopInsetBelowStatusStrip,
+            secondaryPane = secondaryPaneContent,
+            appDrawerOverlay = appDrawerOverlay,
+            horizontalShortcutDock = horizontalShortcutDock,
+            verticalShortcutDock = verticalShortcutDock,
+        )
         AppUpdatePrompts(
             uiState = appUpdateState,
             showDownloadOffer = showDownloadOffer,
@@ -1106,11 +659,9 @@ private fun DashboardSecondaryPane(
     onConfirmAddPlaceFromLink: (SearchResultPlace) -> Unit,
     recentDestinations: List<SearchResultPlace>,
     savedPlaces: List<SearchResultPlace>,
-    onDestinationSelected: (SearchResultPlace) -> Unit,
     onToggleSavedPlace: (SearchResultPlace) -> Unit,
-    onUpdateSavedPlace: (SearchResultPlace) -> Unit,
     onDismissSelectedPoi: () -> Unit,
-    onClearPoiReturnToSearch: () -> Unit,
+    onPoiNavigate: (SearchResultPlace, String) -> Unit,
     mediaState: MediaPlaybackState,
     defaultAudioPackage: String,
     onSetDefaultAudioPackage: (String) -> Unit,
@@ -1174,11 +725,9 @@ private fun DashboardSecondaryPane(
         onConfirmAddPlaceFromLink = onConfirmAddPlaceFromLink,
         recentDestinations = recentDestinations,
         savedPlaces = savedPlaces,
-        onDestinationSelected = onDestinationSelected,
         onToggleSavedPlace = onToggleSavedPlace,
-        onUpdateSavedPlace = onUpdateSavedPlace,
         onDismissSelectedPoi = onDismissSelectedPoi,
-        onClearPoiReturnToSearch = onClearPoiReturnToSearch,
+        onPoiNavigate = onPoiNavigate,
         mediaState = mediaState,
         defaultAudioPackage = defaultAudioPackage,
         onSetDefaultAudioPackage = onSetDefaultAudioPackage,
@@ -1245,11 +794,9 @@ private fun MediaOrSettingsPane(
     onConfirmAddPlaceFromLink: (SearchResultPlace) -> Unit,
     recentDestinations: List<SearchResultPlace>,
     savedPlaces: List<SearchResultPlace>,
-    onDestinationSelected: (SearchResultPlace) -> Unit,
     onToggleSavedPlace: (SearchResultPlace) -> Unit,
-    onUpdateSavedPlace: (SearchResultPlace) -> Unit,
     onDismissSelectedPoi: () -> Unit,
-    onClearPoiReturnToSearch: () -> Unit,
+    onPoiNavigate: (SearchResultPlace, String) -> Unit,
     mediaState: MediaPlaybackState,
     defaultAudioPackage: String,
     onSetDefaultAudioPackage: (String) -> Unit,
@@ -1338,15 +885,7 @@ private fun MediaOrSettingsPane(
                             val namedPoi = poi.copy(name = customName)
                             onToggleSavedPlace(namedPoi)
                         },
-                        onNavigate = { customName ->
-                            onClearPoiReturnToSearch()
-                            val namedPoi = poi.copy(name = customName)
-                            onDestinationSelected(namedPoi)
-                            if (savedPlaces.any { saved -> isSavedPlaceMatch(saved, poi) }) {
-                                onUpdateSavedPlace(namedPoi)
-                            }
-                            mapEngine.navigateToCoordinates(poi.latitude, poi.longitude)
-                        },
+                        onNavigate = { customName -> onPoiNavigate(poi, customName) },
                         onSelectNearby = { mapEngine.focusOnPoi(it) },
                         onDismiss = onDismissSelectedPoi,
                         modifier = Modifier.fillMaxSize(),
@@ -1681,7 +1220,7 @@ private fun AppUpdateSection(
 private const val OVERLAY_MAP_MEDIA_RATIO = 0.4f
 
 @Composable
-private fun MapMediaDividerHandle(
+internal fun MapMediaDividerHandle(
     isVertical: Boolean,
     containerSizePx: Float,
     mapMediaRatio: Float,
