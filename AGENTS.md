@@ -2,6 +2,14 @@
 
 Custom Android **Car Launcher** for an **Eonon head unit**. This app replaces the default home screen with a dashboard that adapts to portrait (stacked) or landscape (split) orientation: map, media player, and system app shortcuts.
 
+
+# Local Agent Constraints
+- You are running inside OpenCode with absolute tool permissions enabled.
+- Never output regular conversational text or general explanations about fixing bugs.
+- When asked to perform a code change, you must immediately open and edit the target file using the system `edit` or `write` tool. 
+- If the system tools fail to output, write a direct terminal `bash` command using `cat << 'EOF'` to overwrite the required target file blocks.
+
+
 ## Quick facts
 
 | Field | Value |

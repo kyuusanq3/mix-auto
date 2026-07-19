@@ -35,3 +35,4 @@ google-services.json
 
 # Built Overture POI databases (copy to device via adb/USB)
 places-dist/
+.aider*
