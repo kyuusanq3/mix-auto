@@ -69,9 +69,6 @@ interface CarMapEngine {
     /** When set, a map tap invokes the handler and skips POI/pin selection. */
     fun setMapTapDismissHandler(handler: (() -> Unit)?) {}
 
-    /** Highlight a route during the selection phase; resets the overview timer. */
-    fun selectRouteOption(routeId: String) {}
-
-    /** Confirm the selected route and begin turn-by-turn navigation. */
-    fun confirmRouteSelection() {}
+    /** Switch active navigation onto the stashed TomTom lighter-traffic alternate. */
+    fun switchToLighterTrafficAlternate() {}
 }

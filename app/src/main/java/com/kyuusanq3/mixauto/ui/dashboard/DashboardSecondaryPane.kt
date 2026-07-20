@@ -14,7 +14,6 @@ import com.kyuusanq3.mixauto.ui.components.AudioSettingsPanelContent
 import com.kyuusanq3.mixauto.ui.components.MapSettingsPanelContent
 import com.kyuusanq3.mixauto.ui.components.NavigationSearchContent
 import com.kyuusanq3.mixauto.ui.components.PoiDetailPane
-import com.kyuusanq3.mixauto.ui.components.RoutePickerPane
 import com.kyuusanq3.mixauto.ui.settings.AppUpdateState
 import com.kyuusanq3.mixauto.ui.settings.MapDataViewModel
 import com.kyuusanq3.mixauto.ui.settings.SettingsContent
@@ -293,15 +292,6 @@ private fun MediaOrSettingsPane(
                         modifier = Modifier.fillMaxSize(),
                     )
                 }
-            }
-            ActivePanel.ROUTE_PICKER -> {
-                RoutePickerPane(
-                    routeOptions = mapUiState.routeOptions,
-                    selectedRouteId = mapUiState.selectedRouteId,
-                    engine = mapEngine,
-                    onDismiss = { mapEngine.startFreeDrive() },
-                    modifier = Modifier.fillMaxSize(),
-                )
             }
             ActivePanel.SETTINGS -> {
                 SettingsContent(

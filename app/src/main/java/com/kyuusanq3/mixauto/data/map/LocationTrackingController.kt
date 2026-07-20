@@ -109,6 +109,7 @@ internal class LocationTrackingController(
     private val activateFreeDriveTrackingMode: (MapLibreMap) -> Unit,
     private val ensureTopDownCameraDetached: (MapLibreMap) -> Unit,
     private val maybePrefetchDrivingTiles: (Location) -> Unit,
+    private val updateNavigationZoomForDistance: (Float) -> Unit,
 ) {
     private var locationEngine: LocationEngine? = null
     private var rawLocationEngine: LocationEngine? = null
@@ -309,7 +310,6 @@ internal class LocationTrackingController(
     fun shouldSmoothPuckMotion(): Boolean {
         if (uiState().isCameraDetached || uiState().isInTopDownView) return false
         if (isRouteOverviewActive() || navigationCameraTransitionActive()) return false
-        if (uiState().isRouteSelecting) return false
         val component = mapLibreMap()?.locationComponent ?: return false
         return component.isLocationComponentActivated &&
             component.isLocationComponentEnabled &&
@@ -526,6 +526,7 @@ internal class LocationTrackingController(
         updateUiState {
             it.copy(distanceToNextTurn = NavigationRouteFetcher.formatDistance(distToManeuver.toDouble()))
         }
+        updateNavigationZoomForDistance(distToManeuver)
 
         val speedMps = if (currentLocation.hasSpeed()) currentLocation.speed else 0f
         navigationVoice()?.onNavTick(
@@ -535,8 +536,7 @@ internal class LocationTrackingController(
                 distToNextManeuverM = distToManeuver,
                 speedMps = speedMps,
                 isRouteOverviewActive = isRouteOverviewActive() ||
-                    navigationCameraTransitionActive() ||
-                    uiState().isRouteSelecting,
+                    navigationCameraTransitionActive(),
                 isRerouteInProgress = offRouteDetector.isRerouteInProgress,
             ),
         )

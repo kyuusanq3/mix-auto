@@ -1,5 +1,6 @@
 package com.kyuusanq3.mixauto.ui.components
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -43,7 +44,6 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import com.kyuusanq3.mixauto.domain.map.CarMapEngine
-import com.kyuusanq3.mixauto.domain.map.RouteProvider
 import com.kyuusanq3.mixauto.ui.theme.CarBodyText
 import com.kyuusanq3.mixauto.ui.theme.CarDimensions
 import com.kyuusanq3.mixauto.ui.theme.CarLabelText
@@ -132,14 +132,11 @@ fun CarMapViewContainer(
                 ),
         )
 
-        RouteSelectionLegendOverlay(
+        LighterTrafficAlternateOverlay(
             engine = engine,
             modifier = Modifier
-                .align(Alignment.BottomStart)
-                .padding(
-                    start = CarDimensions.PaneGap,
-                    bottom = MapLibreAttributionReserveDp + CarDimensions.PanelHeaderTapTarget + CarDimensions.PaneGap,
-                ),
+                .align(Alignment.BottomCenter)
+                .padding(bottom = SpeedCircleBottomInset + SpeedCircleSize + CarDimensions.PaneGap),
         )
 
         RouteOverviewProgressOverlay(
@@ -205,14 +202,6 @@ private fun NavHudOverlay(
         .map { it.streetName }
         .distinctUntilChanged()
         .collectAsState(initial = "")
-    val isRouteSelecting by engine.uiState
-        .map { it.isRouteSelecting }
-        .distinctUntilChanged()
-        .collectAsState(initial = false)
-    val routeOverviewProgress by engine.uiState
-        .map { it.routeOverviewProgress }
-        .distinctUntilChanged()
-        .collectAsState(initial = 0f)
     val turnInstruction by engine.uiState
         .map { it.turnInstruction }
         .distinctUntilChanged()
@@ -227,36 +216,23 @@ private fun NavHudOverlay(
             .background(OledBlack.copy(alpha = 0.72f))
             .padding(CarDimensions.PaneGap),
     ) {
-        if (isRouteSelecting) {
-            CarBodyText(
-                text = "Choose a route",
-                style = MaterialTheme.typography.bodyLarge,
-            )
-            val remainingSec = ((1f - routeOverviewProgress) * 10f).toInt().coerceAtLeast(0)
+        CarBodyText(
+            text = streetName,
+            style = MaterialTheme.typography.bodyLarge,
+        )
+        turnInstruction?.let { instruction ->
             CarLabelText(
-                text = "Tap again on selected route to start · auto-start in ${remainingSec}s",
+                text = instruction,
                 modifier = Modifier.padding(top = CarDimensions.PaneGap / 2),
+                style = MaterialTheme.typography.labelLarge,
+            )
+        }
+        distanceToNextTurn?.let { distance ->
+            CarLabelText(
+                text = distance,
+                modifier = Modifier.padding(top = CarDimensions.PaneGap / 4),
                 style = MaterialTheme.typography.labelMedium,
             )
-        } else {
-            CarBodyText(
-                text = streetName,
-                style = MaterialTheme.typography.bodyLarge,
-            )
-            turnInstruction?.let { instruction ->
-                CarLabelText(
-                    text = instruction,
-                    modifier = Modifier.padding(top = CarDimensions.PaneGap / 2),
-                    style = MaterialTheme.typography.labelLarge,
-                )
-            }
-            distanceToNextTurn?.let { distance ->
-                CarLabelText(
-                    text = distance,
-                    modifier = Modifier.padding(top = CarDimensions.PaneGap / 4),
-                    style = MaterialTheme.typography.labelMedium,
-                )
-            }
         }
     }
 }
@@ -373,24 +349,24 @@ private fun MapToolbarOverlay(
 }
 
 @Composable
-private fun RouteSelectionLegendOverlay(
+private fun LighterTrafficAlternateOverlay(
     engine: CarMapEngine,
     modifier: Modifier = Modifier,
 ) {
-    val isRouteSelecting by engine.uiState
-        .map { it.isRouteSelecting }
+    val active by engine.uiState
+        .map { it.lighterTrafficAlternateActive }
         .distinctUntilChanged()
         .collectAsState(initial = false)
-    if (!isRouteSelecting) return
+    if (!active) return
 
-    val routeProviders by engine.uiState
-        .map { state -> state.routeOptions.map { it.provider }.distinct() }
-        .distinctUntilChanged()
-        .collectAsState(initial = emptyList())
-
-    RouteSelectionLegend(
-        routeProviders = routeProviders,
-        modifier = modifier,
+    CarLabelText(
+        text = "Lighter traffic",
+        modifier = modifier
+            .clip(MaterialTheme.shapes.small)
+            .background(OledBlack.copy(alpha = 0.85f))
+            .clickable(onClick = engine::switchToLighterTrafficAlternate)
+            .padding(horizontal = CarDimensions.PaneGap, vertical = CarDimensions.PaneGap / 2),
+        style = MaterialTheme.typography.labelLarge.copy(color = ElectricCyan),
     )
 }
 
@@ -399,15 +375,11 @@ private fun RouteOverviewProgressOverlay(
     engine: CarMapEngine,
     modifier: Modifier = Modifier,
 ) {
-    val isRouteSelecting by engine.uiState
-        .map { it.isRouteSelecting }
-        .distinctUntilChanged()
-        .collectAsState(initial = false)
     val routeOverviewProgress by engine.uiState
         .map { it.routeOverviewProgress }
         .distinctUntilChanged()
         .collectAsState(initial = 0f)
-    if (!isRouteSelecting && routeOverviewProgress <= 0f) return
+    if (routeOverviewProgress <= 0f) return
 
     LinearProgressIndicator(
         progress = { routeOverviewProgress },
@@ -513,50 +485,3 @@ private fun SpeedCircle(
 
 private val SpeedCircleSize = 54.dp
 private val SpeedCircleBottomInset = 4.dp
-
-private val RouteLegendFastestColor = Color(0xFF00CBD6)
-private val RouteLegendTomTomColor = Color(0xFFFFB300)
-private val RouteLegendAltColor = Color(0xFF6B7280)
-
-@Composable
-private fun RouteSelectionLegend(
-    routeProviders: List<RouteProvider>,
-    modifier: Modifier = Modifier,
-) {
-    Column(
-        modifier = modifier
-            .background(OledBlack.copy(alpha = 0.72f), MaterialTheme.shapes.small)
-            .padding(horizontal = CarDimensions.PaneGap / 2, vertical = CarDimensions.PaneGap / 4),
-        verticalArrangement = Arrangement.spacedBy(2.dp),
-    ) {
-        if (routeProviders.contains(RouteProvider.OSRM_FASTEST)) {
-            RouteLegendRow(color = RouteLegendFastestColor, label = "Fastest")
-        }
-        if (routeProviders.contains(RouteProvider.TOMTOM_TRAFFIC)) {
-            RouteLegendRow(color = RouteLegendTomTomColor, label = "Traffic")
-        }
-        if (routeProviders.contains(RouteProvider.OSRM_ALTERNATE)) {
-            RouteLegendRow(color = RouteLegendAltColor, label = "Alternate")
-        }
-    }
-}
-
-@Composable
-private fun RouteLegendRow(
-    color: Color,
-    label: String,
-) {
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        Box(
-            modifier = Modifier
-                .size(8.dp)
-                .clip(CircleShape)
-                .background(color),
-        )
-        CarLabelText(
-            text = label,
-            modifier = Modifier.padding(start = 6.dp),
-            style = MaterialTheme.typography.labelSmall,
-        )
-    }
-}

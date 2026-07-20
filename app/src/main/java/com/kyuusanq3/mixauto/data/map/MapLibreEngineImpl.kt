@@ -26,8 +26,6 @@ import com.kyuusanq3.mixauto.data.places.EncounteredPlacesRepository
 import com.kyuusanq3.mixauto.data.places.LocalPlacesRepository
 import com.kyuusanq3.mixauto.domain.map.CarMapEngine
 import com.kyuusanq3.mixauto.domain.map.MapUiState
-import com.kyuusanq3.mixauto.domain.map.RouteProvider
-import com.kyuusanq3.mixauto.domain.map.RouteOption
 import com.kyuusanq3.mixauto.domain.map.SearchResultPlace
 import java.net.HttpURLConnection
 import java.net.URL
@@ -172,24 +170,6 @@ internal data class RouteResult(
     val trafficDelaySeconds: Int = 0,
 )
 
-internal data class StoredRoute(
-    val id: String,
-    val provider: RouteProvider,
-    val label: String,
-    val subtitle: String,
-    val result: RouteResult,
-) {
-    fun toRouteOption(): RouteOption = RouteOption(
-        id = id,
-        provider = provider,
-        label = label,
-        etaMinutes = ceil(result.durationSeconds / 60.0).toInt().coerceAtLeast(1),
-        distanceMeters = result.distanceMeters,
-        subtitle = subtitle,
-        geometryPoints = result.geometryPoints.map { Pair(it.latitude, it.longitude) },
-    )
-}
-
 private data class ResolvedLocation(
     val latLng: LatLng,
     val zoom: Double,
@@ -325,12 +305,9 @@ class MapLibreEngineImpl(
     private var routeOverviewDestination: LatLng? = null
     private var lastRouteOverviewLayoutWidth = 0
     private var lastRouteOverviewLayoutHeight = 0
-    private val routeResultsById = mutableMapOf<String, StoredRoute>()
-    private var selectionOrigin: LatLng? = null
-    private var selectionDestination: LatLng? = null
-    private var selectionBoundsPoints: List<LatLng> = emptyList()
-    private var routeOverviewTimerStartMs = 0L
-    /** TomTom delay from parallel fetch when OSRM route is selected (nav-start TTS tier 2). */
+    /** TomTom route stashed as a tap-to-switch lighter-traffic alternate during navigation. */
+    private var stashedLighterTrafficRoute: RouteResult? = null
+    /** TomTom delay from parallel fetch when conventional OSRM route is active (nav-start TTS tier 2). */
     private var stashedParallelTomTomDelaySeconds = 0
     private var pendingNavTrafficPhrase: String? = null
     private var navTrafficPrefetchJob: Job? = null
@@ -438,6 +415,9 @@ class MapLibreEngineImpl(
             activateFreeDriveTrackingMode = { navRef!!.activateFreeDriveTrackingMode(it) },
             ensureTopDownCameraDetached = { navRef!!.ensureTopDownCameraDetached(it) },
             maybePrefetchDrivingTiles = ::maybePrefetchDrivingTiles,
+            updateNavigationZoomForDistance = { distanceM ->
+                navRef!!.updateNavigationZoomForDistance(distanceM)
+            },
         )
         navigationCamera = navRef!!
         locationTracking = locRef!!
@@ -544,11 +524,12 @@ class MapLibreEngineImpl(
     override fun setDrivingZoom(zoom: Double) {
         freeDriveZoom = zoom
         navZoom = zoom + 1.0
-        mapLibreMap?.animateCamera(
-            CameraUpdateFactory.zoomTo(
-                if (_uiState.value.isNavigating) navZoom else freeDriveZoom,
-            ),
-        )
+        val map = mapLibreMap ?: return
+        if (_uiState.value.isNavigating) {
+            navigationCamera.onNavZoomCeilingChanged()
+        } else {
+            map.animateCamera(CameraUpdateFactory.zoomTo(freeDriveZoom))
+        }
     }
 
     override fun setViewportPadding(horizontalFraction: Float, verticalFraction: Float) {
@@ -1063,10 +1044,7 @@ class MapLibreEngineImpl(
         resetRouteProgress()
         offRouteDetector.reset()
         hasSnappedCameraToGps = false
-        routeResultsById.clear()
-        selectionOrigin = null
-        selectionDestination = null
-        selectionBoundsPoints = emptyList()
+        clearLighterTrafficAlternate()
         clearNavTrafficPrefetchState()
 
         _uiState.value = MapUiState(
@@ -1092,6 +1070,7 @@ class MapLibreEngineImpl(
         updateLocationEngineInterval()
         locationTracking.resetSmoothingMotion()
         navigationCamera.resetLookaheadPaddingActive()
+        navigationCamera.resetDynamicNavigationZoom()
     }
 
     override fun dismissSelectedPoi() {
@@ -1217,13 +1196,6 @@ class MapLibreEngineImpl(
         map.getStyle { style -> routeRenderer.removeAlternateRouteLayers(style) }
     }
 
-    private fun updateSelectedRouteHighlight(selectedId: String) {
-        val map = mapLibreMap ?: return
-        map.getStyle { style ->
-            routeRenderer.updateSelectedRouteHighlight(style, selectedId, routeResultsById)
-        }
-    }
-
     private fun restackRouteLayersAbove(style: Style, anchorLayerId: String) {
         routeRenderer.restackRouteLayersAbove(style, anchorLayerId)
     }
@@ -1345,9 +1317,14 @@ class MapLibreEngineImpl(
         engineScope.launch {
             try {
                 if (isReroute) {
-                    val route = withContext(Dispatchers.IO) {
-                        fetchOsrmRoute(origin.longitude, origin.latitude, lng, lat)
+                    clearLighterTrafficAlternate()
+                    val osrmRoutes = withContext(Dispatchers.IO) {
+                        fetchOsrmRoutesWithAlternatives(origin.longitude, origin.latitude, lng, lat)
                     }
+                    val route = selectConventionalOsrmRoute(osrmRoutes)
+                        ?: withContext(Dispatchers.IO) {
+                            fetchOsrmRoute(origin.longitude, origin.latitude, lng, lat)
+                        }
                     if (route != null) {
                         applyActiveRoute(route)
                         destinationLatLng = LatLng(lat, lng)
@@ -1356,9 +1333,7 @@ class MapLibreEngineImpl(
                         _uiState.update {
                             it.copy(
                                 isNavigating = true,
-                                isRouteSelecting = false,
-                                routeOptions = emptyList(),
-                                selectedRouteId = null,
+                                lighterTrafficAlternateActive = false,
                                 streetName = route.streetName,
                                 turnInstruction = route.instruction,
                                 distanceToNextTurn = route.distance,
@@ -1392,41 +1367,31 @@ class MapLibreEngineImpl(
                 val osrmRoutes = osrmRoutesDeferred.await()
                 val tomtomRoute = tomtomDeferred.await()
 
-                if (osrmRoutes.isEmpty() && tomtomRoute == null) {
+                val conventional = selectConventionalOsrmRoute(osrmRoutes)
+                    ?: tomtomRoute?.let { tomTomToRouteResult(it) }
+
+                if (conventional == null) {
                     _uiState.update { it.copy(isNavigating = false, streetName = "Route not found") }
                     return@launch
                 }
 
-                val candidates = buildRouteCandidates(osrmRoutes, tomtomRoute)
                 destinationLatLng = LatLng(lat, lng)
                 navigationArrivalTriggered = false
                 offRouteDetector.offRouteCount = 0
                 stashedParallelTomTomDelaySeconds = tomtomRoute?.trafficDelaySeconds ?: 0
                 navStartTrafficEligible = true
 
-                if (candidates.size <= 1) {
-                    val stored = candidates.firstOrNull()
-                        ?: osrmRoutes.firstOrNull()?.let { osrmToStoredRoute(it, RouteProvider.OSRM_FASTEST, "osrm_fastest", "Fastest", "Shortest path") }
-                    if (stored == null) {
-                        _uiState.update { it.copy(isNavigating = false, streetName = "Route not found") }
-                        return@launch
-                    }
-                    applyActiveRoute(stored.result)
-                    _uiState.update {
-                        it.copy(
-                            isNavigating = true,
-                            isRouteSelecting = false,
-                            routeOptions = emptyList(),
-                            selectedRouteId = null,
-                            streetName = stored.result.streetName,
-                            turnInstruction = stored.result.instruction,
-                            distanceToNextTurn = stored.result.distance,
-                        )
-                    }
-                    showRouteThenDive(origin, LatLng(lat, lng))
-                } else {
-                    enterRouteSelection(origin, LatLng(lat, lng), candidates)
+                applyActiveRoute(conventional)
+                maybeOfferLighterTrafficAlternate(conventional, tomtomRoute)
+                _uiState.update {
+                    it.copy(
+                        isNavigating = true,
+                        streetName = conventional.streetName,
+                        turnInstruction = conventional.instruction,
+                        distanceToNextTurn = conventional.distance,
+                    )
                 }
+                showRouteThenDive(origin, LatLng(lat, lng))
             } catch (e: Exception) {
                 offRouteDetector.isRerouteInProgress = false
                 Log.w(TAG, "Route fetch failed: ${e.message}", e)
@@ -1435,63 +1400,63 @@ class MapLibreEngineImpl(
         }
     }
 
-    override fun selectRouteOption(routeId: String) {
-        if (!_uiState.value.isRouteSelecting) return
-        if (routeResultsById[routeId] == null) return
-        if (routeId == _uiState.value.selectedRouteId) {
-            confirmRouteSelection()
-            return
-        }
-        routeOverviewTimerStartMs = System.currentTimeMillis()
+    override fun switchToLighterTrafficAlternate() {
+        val alternate = stashedLighterTrafficRoute ?: return
+        applyActiveRoute(alternate)
+        clearLighterTrafficAlternate()
         _uiState.update {
             it.copy(
-                selectedRouteId = routeId,
-                routeOverviewProgress = 0f,
+                streetName = alternate.streetName,
+                turnInstruction = alternate.instruction,
+                distanceToNextTurn = alternate.distance,
             )
         }
-        updateSelectedRouteHighlight(routeId)
     }
 
-    override fun confirmRouteSelection() {
-        if (!_uiState.value.isRouteSelecting) return
-        val routeId = _uiState.value.selectedRouteId ?: return
-        val stored = routeResultsById[routeId] ?: return
+    private fun selectConventionalOsrmRoute(routes: List<RouteResult>): RouteResult? {
+        if (routes.isEmpty()) return null
+        if (routes.size == 1) return routes[0]
+        val candidates = routes.map { it.toConventionalCandidate() }
+        val index = ConventionalRouteSelector.selectConventionalRoute(candidates)
+        return routes[index.coerceIn(routes.indices)]
+    }
 
-        routeOverviewJob?.cancel()
-        routeOverviewJob = null
-        routeOverviewOrigin = null
-        routeOverviewDestination = null
-
-        applyActiveRoute(stored.result)
-        removeAlternateRouteLayers()
-        routeResultsById.clear()
-        selectionOrigin = null
-        selectionDestination = null
-        selectionBoundsPoints = emptyList()
-
-        _uiState.update {
-            it.copy(
-                isRouteSelecting = false,
-                routeOptions = emptyList(),
-                selectedRouteId = null,
-                routeOverviewProgress = 0f,
-                streetName = stored.result.streetName,
-                turnInstruction = stored.result.instruction,
-                distanceToNextTurn = stored.result.distance,
-            )
+    private fun maybeOfferLighterTrafficAlternate(
+        conventional: RouteResult,
+        tomtomRoute: TomTomRouteResult?,
+    ) {
+        clearLighterTrafficAlternate()
+        val tt = tomtomRoute ?: return
+        if (!isLighterTrafficAlternate(conventional, tt)) return
+        val alternate = tomTomToRouteResult(tt)
+        stashedLighterTrafficRoute = alternate
+        val map = mapLibreMap ?: return
+        map.getStyle { style ->
+            routeRenderer.showLighterTrafficAlternate(style, alternate.geometryPoints)
         }
-        beginNavigationAfterRouteSelection()
+        _uiState.update { it.copy(lighterTrafficAlternateActive = true) }
     }
 
-    /** Ends route selection and enters turn-by-turn camera â€” no second overview hold. */
-    private fun beginNavigationAfterRouteSelection() {
-        if (mapLibreMap == null) return
-        clearRoutePreviewState()
-        _uiState.update { it.copy(isCameraDetached = false, isInTopDownView = false) }
-        if (_uiState.value.isNavigating) {
-            navigationCamera.setNavigationCameraTransitionActive(true)
-            val dive = { enterNavigationCamera() }
-            mapView?.post(dive) ?: dive()
+    private fun isLighterTrafficAlternate(
+        conventional: RouteResult,
+        tomtom: TomTomRouteResult,
+    ): Boolean {
+        val ttResult = tomTomToRouteResult(tomtom)
+        if (routesAreSimilar(conventional.geometryPoints, ttResult.geometryPoints)) return false
+        val travelTimeFaster = conventional.durationSeconds - ttResult.durationSeconds >= 60
+        val lighterUnderTraffic = tomtom.trafficDelaySeconds <= 60 &&
+            ttResult.durationSeconds < conventional.durationSeconds
+        return travelTimeFaster || lighterUnderTraffic
+    }
+
+    private fun clearLighterTrafficAlternate() {
+        stashedLighterTrafficRoute = null
+        val map = mapLibreMap
+        if (map != null) {
+            map.getStyle { style -> routeRenderer.clearLighterTrafficAlternate(style) }
+        }
+        if (_uiState.value.lighterTrafficAlternateActive) {
+            _uiState.update { it.copy(lighterTrafficAlternateActive = false) }
         }
     }
 
@@ -1548,140 +1513,6 @@ class MapLibreEngineImpl(
         }
         return NavTtsPhrases.buildNavStartTrafficDelay(delaySec)
     }
-
-    private fun enterRouteSelection(origin: LatLng, destination: LatLng, candidates: List<StoredRoute>) {
-        resetSmoothingMotion()
-        drivingTilePrefetcher?.cancel()
-        routeResultsById.clear()
-        candidates.forEach { routeResultsById[it.id] = it }
-
-        val defaultId = candidates.first().id
-        selectionOrigin = origin
-        selectionDestination = destination
-        selectionBoundsPoints = candidates.flatMap { it.result.geometryPoints }.distinctBy {
-            "${it.latitude},${it.longitude}"
-        }
-
-        _uiState.update {
-            it.copy(
-                isNavigating = true,
-                isRouteSelecting = true,
-                routeOptions = candidates.map { stored -> stored.toRouteOption() },
-                selectedRouteId = defaultId,
-                streetName = "Choose a route",
-                turnInstruction = null,
-                distanceToNextTurn = null,
-                selectedPoi = null,
-                nearbyPois = emptyList(),
-                isInTopDownView = false,
-                routeOverviewProgress = 0f,
-            )
-        }
-
-        updateSelectedRouteHighlight(defaultId)
-        startSelectionOverviewTimer(origin, destination)
-    }
-
-    private fun startSelectionOverviewTimer(origin: LatLng, destination: LatLng) {
-        clearRoutePreviewState()
-        routeOverviewOrigin = origin
-        routeOverviewDestination = destination
-        resetRouteOverviewLayoutCache()
-        _uiState.update { it.copy(isCameraDetached = false, isInTopDownView = false) }
-
-        val animateToBounds = { fitRouteOverviewCamera(origin, destination, animate = true) }
-        mapView?.post { animateToBounds() } ?: animateToBounds()
-
-        routeOverviewTimerStartMs = System.currentTimeMillis()
-        routeOverviewJob?.cancel()
-        routeOverviewJob = engineScope.launch {
-            while (isActive) {
-                val elapsed = System.currentTimeMillis() - routeOverviewTimerStartMs
-                val progress = (elapsed / ROUTE_OVERVIEW_HOLD_MS.toFloat()).coerceIn(0f, 1f)
-                _uiState.update { it.copy(routeOverviewProgress = progress) }
-                if (elapsed >= ROUTE_OVERVIEW_HOLD_MS) break
-                delay(50)
-            }
-            if (_uiState.value.isRouteSelecting) {
-                confirmRouteSelection()
-            }
-        }
-    }
-
-    private fun buildRouteCandidates(
-        osrmRoutes: List<RouteResult>,
-        tomtomRoute: TomTomRouteResult?,
-    ): List<StoredRoute> {
-        val candidates = mutableListOf<StoredRoute>()
-        val fastest = osrmRoutes.firstOrNull()
-        if (fastest != null) {
-            candidates.add(
-                osrmToStoredRoute(
-                    fastest,
-                    RouteProvider.OSRM_FASTEST,
-                    ROUTE_ID_OSRM_FASTEST,
-                    "Fastest",
-                    fastest.steps.firstOrNull()?.streetName?.takeIf { it.isNotBlank() } ?: "Shortest path",
-                ),
-            )
-        }
-
-        val fastestDuration = fastest?.durationSeconds ?: 0.0
-        val fastestDistance = fastest?.distanceMeters ?: 0.0
-
-        tomtomRoute?.let { tt ->
-            val ttResult = tomTomToRouteResult(tt)
-            if (fastest == null || !routesAreSimilar(fastest.geometryPoints, ttResult.geometryPoints)) {
-                val deltaSec = tt.travelTimeSeconds - fastestDuration.toInt()
-                val subtitle = when {
-                    tt.trafficDelaySeconds > 60 -> "Live traffic Â· ${TomTomRoutingClient.formatEtaDeltaMinutes(deltaSec)}"
-                    deltaSec < 0 -> TomTomRoutingClient.formatEtaDeltaMinutes(deltaSec)
-                    deltaSec > 0 -> TomTomRoutingClient.formatEtaDeltaMinutes(deltaSec)
-                    else -> "Traffic-aware route"
-                }
-                candidates.add(
-                    StoredRoute(
-                        id = ROUTE_ID_TOMTOM,
-                        provider = RouteProvider.TOMTOM_TRAFFIC,
-                        label = "Traffic smart",
-                        subtitle = subtitle,
-                        result = ttResult,
-                    ),
-                )
-            }
-        }
-
-        if (osrmRoutes.size > 1) {
-            val alt = osrmRoutes[1]
-            if (fastest == null || !routesAreSimilar(fastest.geometryPoints, alt.geometryPoints)) {
-                val distDeltaKm = (alt.distanceMeters - fastestDistance) / 1000.0
-                val subtitle = when {
-                    distDeltaKm > 0.1 -> "+${"%.1f".format(distDeltaKm)} km vs fastest"
-                    distDeltaKm < -0.1 -> "${"%.1f".format(distDeltaKm)} km vs fastest"
-                    else -> "Different roads"
-                }
-                candidates.add(
-                    osrmToStoredRoute(
-                        alt,
-                        RouteProvider.OSRM_ALTERNATE,
-                        ROUTE_ID_OSRM_ALT,
-                        "Alternate",
-                        subtitle,
-                    ),
-                )
-            }
-        }
-
-        return candidates
-    }
-
-    private fun osrmToStoredRoute(
-        result: RouteResult,
-        provider: RouteProvider,
-        id: String,
-        label: String,
-        subtitle: String,
-    ) = StoredRoute(id = id, provider = provider, label = label, subtitle = subtitle, result = result)
 
     private fun tomTomToRouteResult(tt: TomTomRouteResult): RouteResult {
         val geometryPoints = tt.geometryPoints.map { LatLng(it.first, it.second) }
@@ -1861,7 +1692,7 @@ class MapLibreEngineImpl(
         return buildRouteOverviewBounds(
             origin,
             destination,
-            selectionBoundsPoints,
+            emptyList(),
             routeGeometryPoints,
             lastKnownLocation,
         )
@@ -1969,6 +1800,13 @@ class MapLibreEngineImpl(
 
     private fun handleMapPointSelection(map: MapLibreMap, latLng: LatLng): Boolean {
         val screenPoint = map.projection.toScreenLocation(latLng)
+
+        if (_uiState.value.isNavigating && _uiState.value.lighterTrafficAlternateActive) {
+            if (map.queryRenderedFeatures(screenPoint, ROUTE_TOMTOM_LAYER_ID).isNotEmpty()) {
+                switchToLighterTrafficAlternate()
+                return true
+            }
+        }
 
         run {
             val feature = map.queryRenderedFeatures(screenPoint, SAVED_PLACES_LAYER_ID).firstOrNull()
@@ -2712,7 +2550,6 @@ class MapLibreEngineImpl(
                 !_uiState.value.isCameraDetached &&
                 !_uiState.value.isInTopDownView &&
                 !isRouteOverviewActive() &&
-                !_uiState.value.isRouteSelecting &&
                 isNetworkAvailable(context),
         )
     }
@@ -2901,9 +2738,6 @@ class MapLibreEngineImpl(
         private const val LOCATION_POLL_ATTEMPTS = 15
         private const val LOCATION_ACQUIRE_TIMEOUT_MS = 8000L
         private val LOCATION_RETRY_DELAYS_MS = longArrayOf(1_000L, 3_000L, 8_000L)
-        private const val ROUTE_ID_OSRM_FASTEST = "osrm_fastest"
-        private const val ROUTE_ID_TOMTOM = "tomtom_traffic"
-        private const val ROUTE_ID_OSRM_ALT = "osrm_alt"
         private val VECTOR_POI_LAYER_IDS = arrayOf("poi_r1", "poi_r7", "poi_r20", "poi_transit")
         private const val POI_SOURCE_ID = "mix-poi-source"
         private const val POI_LAYER_ID = "mix-poi-layer"

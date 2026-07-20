@@ -480,6 +480,10 @@ data class DestinationSearchUiState(
     val snapshotOriginReliable: Boolean = false,
     val hasSearched: Boolean = false,
     val savedFilterActive: Boolean = false,
+    /** Debounce + local/cache phase before or while Photon runs. */
+    val isSearching: Boolean = false,
+    /** Photon geocoder still in flight. */
+    val isLoadingRemote: Boolean = false,
 )
 
 /** Survives rotation while add-from-link panel is open; cleared when panel dismisses. */

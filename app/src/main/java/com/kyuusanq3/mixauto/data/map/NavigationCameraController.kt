@@ -86,9 +86,65 @@ internal class NavigationCameraController(
     private var lastPaddingMapWidth: Int = 0
     private var lastPaddingMapHeight: Int = 0
     private var lookaheadPaddingActive: Boolean = false
+    private var lastAppliedDynamicNavZoom: Double? = null
+    private var lastDistToManeuverM: Float? = null
 
     fun resetLookaheadPaddingActive() {
         lookaheadPaddingActive = false
+    }
+
+    fun resetDynamicNavigationZoom() {
+        lastAppliedDynamicNavZoom = null
+        lastDistToManeuverM = null
+    }
+
+    fun onNavZoomCeilingChanged() {
+        val distance = lastDistToManeuverM
+        if (distance != null) {
+            lastAppliedDynamicNavZoom = null
+            updateNavigationZoomForDistance(distance)
+        } else {
+            applyNavigationZoomCeiling()
+        }
+    }
+
+    fun updateNavigationZoomForDistance(distanceM: Float) {
+        lastDistToManeuverM = distanceM
+        if (!canApplyDynamicNavigationZoom()) return
+
+        val target = NavigationZoom.targetZoomForManeuverDistance(distanceM, navZoom())
+        if (!NavigationZoom.shouldApplyZoomChange(lastAppliedDynamicNavZoom, target)) return
+
+        val map = mapLibreMap() ?: return
+        val component = map.locationComponent
+        if (!component.isLocationComponentActivated || !component.isLocationComponentEnabled) return
+        if (component.cameraMode != CameraMode.TRACKING_GPS) return
+
+        component.zoomWhileTracking(target)
+        lastAppliedDynamicNavZoom = target
+    }
+
+    private fun canApplyDynamicNavigationZoom(): Boolean {
+        val state = uiState()
+        return state.isNavigating &&
+            !state.isCameraDetached &&
+            !isRouteOverviewActive() &&
+            !navigationCameraTransitionActive
+    }
+
+    private fun resolveNavigationZoomTarget(): Double =
+        lastAppliedDynamicNavZoom ?: navZoom()
+
+    private fun applyNavigationZoomCeiling() {
+        if (!canApplyDynamicNavigationZoom()) return
+        val map = mapLibreMap() ?: return
+        val component = map.locationComponent
+        if (!component.isLocationComponentActivated || !component.isLocationComponentEnabled) return
+        if (component.cameraMode != CameraMode.TRACKING_GPS) return
+        val target = navZoom()
+        if (!NavigationZoom.shouldApplyZoomChange(lastAppliedDynamicNavZoom, target)) return
+        component.zoomWhileTracking(target)
+        lastAppliedDynamicNavZoom = target
     }
 
     fun resetTopDownExploreUserAdjusted() {
@@ -567,23 +623,26 @@ internal class NavigationCameraController(
                 val bearing = component.lastKnownLocation?.bearing?.toDouble()
                     ?: map.cameraPosition.bearing
                 val current = map.cameraPosition
-                if (current.tilt < NAV_TILT - 5.0 || abs(current.zoom - navZoom()) > 0.5) {
+                val zoomTarget = resolveNavigationZoomTarget()
+                if (current.tilt < NAV_TILT - 5.0 || abs(current.zoom - zoomTarget) > 0.5) {
                     map.moveCamera(
                         CameraUpdateFactory.newCameraPosition(
                             CameraPosition.Builder()
                                 .target(target)
-                                .zoom(navZoom())
+                                .zoom(zoomTarget)
                                 .tilt(NAV_TILT)
                                 .bearing(bearing)
                                 .build(),
                         ),
                     )
+                    lastAppliedDynamicNavZoom = zoomTarget
                 }
             }
             component.renderMode = RenderMode.GPS
             component.cameraMode = CameraMode.TRACKING_GPS
             component.setMaxAnimationFps(DRIVING_ANIMATION_FPS)
             applyDrivingTrackingPadding(map)
+            lastDistToManeuverM?.let { updateNavigationZoomForDistance(it) }
         }
         onNavigationTrackingEngaged()
     }

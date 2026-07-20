@@ -49,7 +49,9 @@ app/src/main/java/com/kyuusanq3/mixauto/
 │   ├── MapUiState.kt            # Speed, street, navigation HUD state
 │   └── SearchResultPlace.kt     # Destination search result
 ├── data/map/
-│   └── MapLibreEngineImpl.kt    # MapLibre + OSRM + Photon adapter
+│   ├── MapLibreEngineImpl.kt    # CarMapEngine facade; delegates to controllers below
+│   ├── LocationTrackingController.kt / NavigationCameraController.kt
+│   ├── MapStyleController.kt / RouteRenderer.kt / PoiOverlayRenderer.kt / …
 ├── data/places/
 │   ├── LocalPlacesRepository.kt # Offline Overture POI SQLite search + HTTP download
 │   └── LocalDbMeta.kt           # Installed database metadata
@@ -116,3 +118,13 @@ This guide stays high-level on purpose — implementation lessons, gotchas, and 
 ## Related agent resources
 
 - Session archive: `C:/dev/skills/session-history/mix-auto/`
+
+## Lessons learned
+
+- **Audio Settings drawer:** `ActivePanel.AUDIO_SETTINGS` — overflow ⋮ in `MediaPlayerPane`; 60% pane / 40% map split (`isSplitLockedForOverlay`); map tap dismiss via `setMapTapDismissHandler(onDismissPanel)` in `DashboardScreen.kt`; panel in `ui/components/AudioSettingsPanel.kt`
+- **Startup / manual audio resume:** `MediaSessionRepository.ensureDefaultPlayerIfNeeded()` runs once per process at boot; `attemptResumeNow()` runs when Audio Settings closes (`DisposableEffect` in `AudioSettingsPanelContent`) — not gated by `hasAttemptedBootLaunch`; fallback link via `BackgroundAudioLauncher.launchFallbackResumeLink()` (`ACTION_VIEW`); plain web share URLs may open the app without autoplay
+- **Album art gestures:** When `showAlbumArtControls` is off (default), Info button in media header shows gesture help dialog; any value read inside `pointerInput` that is not a key must use `rememberUpdatedState` — `albumArtMode` in long-press had stale-closure bug
+- **LLM-friendly map layout (2026-07):** `MapLibreEngineImpl` is a facade (~2.7k lines) — add map/GPS/camera logic in `data/map/` collaborators (`LocationTrackingController`, `NavigationCameraController`, `MapStyleController`, `RouteRenderer`, `PoiOverlayRenderer`, `OffRouteDetector`, `BearingEnricher`, etc.) via callback injection; do not grow the engine class again. Cross-cutting flags (`isCameraDetached`, `hasSnappedCameraToGps`, nav state) stay on the engine and pass through getters/setters.
+- **LLM-friendly rules (2026-07):** Tribal knowledge lives in topic-scoped `.cursor/rules/mix-auto-*.mdc` with `globs:` — only `mix-auto-core.mdc` and `mix-auto-build-release.mdc` are always applied. Edit the scoped rule for the subsystem you touch; keep `AGENTS.md` as layout + architecture + pointers.
+- **Detekt size guardrails:** `config/detekt/detekt.yml` enforces `LargeClass` / `TooManyFunctions` / `LongMethod` on new code; existing debt in `config/detekt/baseline.xml` — regenerate baseline only when intentionally accepting new size debt.
+- **Dashboard UI decomposition:** Portrait/landscape dock layouts in `DashboardLayouts.kt`; secondary pane in `DashboardSecondaryPane.kt`; shared props holders avoid repeating huge argument lists across three layout branches.

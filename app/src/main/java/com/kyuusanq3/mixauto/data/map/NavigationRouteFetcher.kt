@@ -28,7 +28,7 @@ internal object NavigationRouteFetcher {
     ): List<RouteResult> {
         val url = URL(
             "https://routing.openstreetmap.de/routed-car/route/v1/driving/" +
-                "$lngA,$latA;$lngB,$latB?alternatives=1&geometries=geojson&steps=true&overview=full",
+                "$lngA,$latA;$lngB,$latB?alternatives=3&geometries=geojson&steps=true&overview=full",
         )
         val connection = url.openConnection() as HttpURLConnection
         connection.setRequestProperty("User-Agent", "MixAutoCarLauncher/1.0")

@@ -75,14 +75,6 @@ private fun DashboardScreenEffects(
         }
     }
 
-    LaunchedEffect(mapUiState.isRouteSelecting) {
-        if (mapUiState.isRouteSelecting) {
-            launcherViewModel.setActivePanel(ActivePanel.ROUTE_PICKER)
-        } else if (activePanel == ActivePanel.ROUTE_PICKER) {
-            launcherViewModel.setActivePanel(dismissToBasePanel(musicPaneEnabled))
-        }
-    }
-
     LaunchedEffect(mapUiState.selectedPoi) {
         if (mapUiState.selectedPoi != null) {
             launcherViewModel.setActivePanel(ActivePanel.POI_DETAIL)
@@ -200,7 +192,6 @@ fun DashboardScreen(
             ActivePanel.ADD_PLACE,
             ActivePanel.POI_DETAIL,
             ActivePanel.MAP_DATA,
-            ActivePanel.ROUTE_PICKER,
             ActivePanel.AUDIO_SETTINGS,
             -> Unit
             ActivePanel.HIDDEN -> {
@@ -320,7 +311,6 @@ fun DashboardScreen(
             activePanel == ActivePanel.ADD_PLACE ||
             activePanel == ActivePanel.POI_DETAIL ||
             activePanel == ActivePanel.MAP_DATA ||
-            activePanel == ActivePanel.ROUTE_PICKER ||
             activePanel == ActivePanel.AUDIO_SETTINGS
     val effectiveMapMediaRatio =
         if (isSplitLockedForOverlay) OVERLAY_MAP_MEDIA_RATIO else mapMediaRatio

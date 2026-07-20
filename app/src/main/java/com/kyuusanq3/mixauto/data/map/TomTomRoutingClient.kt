@@ -218,9 +218,9 @@ object TomTomRoutingClient {
     fun formatEtaDeltaMinutes(deltaSeconds: Int): String {
         val deltaMin = ceil(kotlin.math.abs(deltaSeconds) / 60.0).toInt()
         return when {
-            deltaSeconds > 0 -> "+$deltaMin min vs fastest"
-            deltaSeconds < 0 -> "−$deltaMin min vs fastest"
-            else -> "Same time as fastest"
+            deltaSeconds > 0 -> "+$deltaMin min vs conventional"
+            deltaSeconds < 0 -> "−$deltaMin min vs conventional"
+            else -> "Same time as conventional"
         }
     }
 }

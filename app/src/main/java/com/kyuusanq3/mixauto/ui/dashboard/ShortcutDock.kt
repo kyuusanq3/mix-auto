@@ -70,7 +70,6 @@ enum class ActivePanel {
     SEARCH,
     ADD_PLACE,
     POI_DETAIL,
-    ROUTE_PICKER,
     AUDIO_SETTINGS,
     HIDDEN,
 }

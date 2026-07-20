@@ -13,9 +13,8 @@ data class MapUiState(
     val routeOverviewProgress: Float = 0f,
     val selectedPoi: SearchResultPlace? = null,
     val nearbyPois: List<SearchResultPlace> = emptyList(),
-    val routeOptions: List<RouteOption> = emptyList(),
-    val selectedRouteId: String? = null,
-    val isRouteSelecting: Boolean = false,
+    /** TomTom alternate with lighter traffic is available during navigation. */
+    val lighterTrafficAlternateActive: Boolean = false,
     /** Non-null when device is offline and cached map tiles cover current GPS. */
     val mapConnectivityLabel: String? = null,
 )

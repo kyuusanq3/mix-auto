@@ -1,9 +1,8 @@
 package com.kyuusanq3.mixauto.domain.map
 
 enum class RouteProvider {
-    OSRM_FASTEST,
+    OSRM_CONVENTIONAL,
     TOMTOM_TRAFFIC,
-    OSRM_ALTERNATE,
 }
 
 data class RouteOption(

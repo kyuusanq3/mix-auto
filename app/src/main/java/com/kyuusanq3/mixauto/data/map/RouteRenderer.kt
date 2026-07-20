@@ -1,7 +1,6 @@
 package com.kyuusanq3.mixauto.data.map
 
 import android.location.Location
-import com.kyuusanq3.mixauto.domain.map.RouteProvider
 import org.maplibre.android.geometry.LatLng
 import org.maplibre.android.maps.MapLibreMap
 import org.maplibre.android.maps.Style
@@ -9,6 +8,11 @@ import org.maplibre.android.style.layers.LineLayer
 import org.maplibre.android.style.layers.Property
 import org.maplibre.android.style.layers.PropertyFactory
 import org.maplibre.android.style.sources.GeoJsonSource
+
+/** Grey dashed alternate shown during navigation when TomTom offers lighter traffic. */
+internal const val ROUTE_LIGHTER_TRAFFIC_COLOR = "#6B7280"
+internal const val ROUTE_LIGHTER_TRAFFIC_WIDTH = 8f
+internal const val ROUTE_LIGHTER_TRAFFIC_OPACITY = 0.55f
 
 internal fun buildLineStringFeatureJson(points: List<LatLng>): String {
     if (points.size < 2) {
@@ -21,9 +25,7 @@ internal fun buildLineStringFeatureJson(points: List<LatLng>): String {
 }
 
 internal enum class AltRouteStyle {
-    TOMTOM,
-    OSRM_ALT,
-    OSRM_PRIMARY_PREVIEW,
+    LIGHTER_TRAFFIC,
 }
 
 /**
@@ -69,11 +71,25 @@ internal class RouteRenderer(
 
     fun removeAlternateRouteLayers(style: Style) {
         runCatching { style.removeLayer(ROUTE_TOMTOM_LAYER_ID) }
-        runCatching { style.removeLayer(ROUTE_OSRM_ALT_LAYER_ID) }
-        runCatching { style.removeLayer(ROUTE_OSRM_PRIMARY_PREVIEW_LAYER_ID) }
         runCatching { style.removeSource(ROUTE_TOMTOM_SOURCE_ID) }
         runCatching { style.removeSource(ROUTE_OSRM_ALT_SOURCE_ID) }
         runCatching { style.removeSource(ROUTE_OSRM_PRIMARY_PREVIEW_SOURCE_ID) }
+    }
+
+    fun showLighterTrafficAlternate(style: Style, points: List<LatLng>) {
+        ensureRouteLayers(style)
+        setAltRouteGeoJson(
+            style,
+            ROUTE_TOMTOM_SOURCE_ID,
+            ROUTE_TOMTOM_LAYER_ID,
+            points,
+            AltRouteStyle.LIGHTER_TRAFFIC,
+        )
+        ensurePuckAboveOverlays()
+    }
+
+    fun clearLighterTrafficAlternate(style: Style) {
+        clearAltLayer(style, ROUTE_TOMTOM_SOURCE_ID)
     }
 
     fun restackRouteLayersAbove(style: Style, anchorLayerId: String) {
@@ -252,49 +268,6 @@ internal class RouteRenderer(
         applyRouteProgressToMap(activeMap, routeGeometryPoints)
     }
 
-    fun updateSelectedRouteHighlight(style: Style, selectedId: String, routeResultsById: Map<String, StoredRoute>) {
-        ensureRouteLayers(style)
-        routeResultsById.forEach { (id, stored) ->
-            val points = stored.result.geometryPoints
-            when {
-                id == selectedId -> {
-                    val remainingJson = buildLineStringFeatureJson(points)
-                    val emptyJson = buildLineStringFeatureJson(emptyList())
-                    (style.getSource(ROUTE_TRAVELED_SOURCE_ID) as? GeoJsonSource)?.setGeoJson(emptyJson)
-                    (style.getSource(ROUTE_REMAINING_SOURCE_ID) as? GeoJsonSource)?.setGeoJson(remainingJson)
-                    clearAltLayerForProvider(style, stored.provider)
-                }
-                stored.provider == RouteProvider.TOMTOM_TRAFFIC -> {
-                    setAltRouteGeoJson(style, ROUTE_TOMTOM_SOURCE_ID, ROUTE_TOMTOM_LAYER_ID, points, AltRouteStyle.TOMTOM)
-                }
-                stored.provider == RouteProvider.OSRM_ALTERNATE -> {
-                    setAltRouteGeoJson(style, ROUTE_OSRM_ALT_SOURCE_ID, ROUTE_OSRM_ALT_LAYER_ID, points, AltRouteStyle.OSRM_ALT)
-                }
-                stored.provider == RouteProvider.OSRM_FASTEST -> {
-                    setAltRouteGeoJson(
-                        style,
-                        ROUTE_OSRM_PRIMARY_PREVIEW_SOURCE_ID,
-                        ROUTE_OSRM_PRIMARY_PREVIEW_LAYER_ID,
-                        points,
-                        AltRouteStyle.OSRM_PRIMARY_PREVIEW,
-                    )
-                }
-            }
-        }
-        ensurePuckAboveOverlays()
-    }
-
-    private fun clearAltLayerForProvider(style: Style, provider: RouteProvider) {
-        when (provider) {
-            RouteProvider.TOMTOM_TRAFFIC -> clearAltLayer(style, ROUTE_TOMTOM_SOURCE_ID)
-            RouteProvider.OSRM_ALTERNATE -> clearAltLayer(style, ROUTE_OSRM_ALT_SOURCE_ID)
-            RouteProvider.OSRM_FASTEST -> clearAltLayer(
-                style,
-                ROUTE_OSRM_PRIMARY_PREVIEW_SOURCE_ID,
-            )
-        }
-    }
-
     private fun clearAltLayer(style: Style, sourceId: String) {
         (style.getSource(sourceId) as? GeoJsonSource)
             ?.setGeoJson(buildLineStringFeatureJson(emptyList()))
@@ -312,25 +285,10 @@ internal class RouteRenderer(
         }
         if (style.getLayer(layerId) == null) {
             val layer = when (altStyle) {
-                AltRouteStyle.TOMTOM -> LineLayer(layerId, sourceId).withProperties(
-                    PropertyFactory.lineColor(ROUTE_TOMTOM_COLOR),
-                    PropertyFactory.lineWidth(ROUTE_TOMTOM_WIDTH),
-                    PropertyFactory.lineOpacity(ROUTE_TOMTOM_OPACITY),
-                    PropertyFactory.lineCap(Property.LINE_CAP_ROUND),
-                    PropertyFactory.lineJoin(Property.LINE_JOIN_ROUND),
-                )
-                AltRouteStyle.OSRM_ALT -> LineLayer(layerId, sourceId).withProperties(
-                    PropertyFactory.lineColor(ROUTE_OSRM_ALT_COLOR),
-                    PropertyFactory.lineWidth(ROUTE_OSRM_ALT_WIDTH),
-                    PropertyFactory.lineOpacity(ROUTE_OSRM_ALT_OPACITY),
-                    PropertyFactory.lineDasharray(arrayOf(4f, 3f)),
-                    PropertyFactory.lineCap(Property.LINE_CAP_ROUND),
-                    PropertyFactory.lineJoin(Property.LINE_JOIN_ROUND),
-                )
-                AltRouteStyle.OSRM_PRIMARY_PREVIEW -> LineLayer(layerId, sourceId).withProperties(
-                    PropertyFactory.lineColor(ROUTE_COLOR),
-                    PropertyFactory.lineWidth(ROUTE_OSRM_ALT_WIDTH),
-                    PropertyFactory.lineOpacity(ROUTE_OSRM_ALT_OPACITY),
+                AltRouteStyle.LIGHTER_TRAFFIC -> LineLayer(layerId, sourceId).withProperties(
+                    PropertyFactory.lineColor(ROUTE_LIGHTER_TRAFFIC_COLOR),
+                    PropertyFactory.lineWidth(ROUTE_LIGHTER_TRAFFIC_WIDTH),
+                    PropertyFactory.lineOpacity(ROUTE_LIGHTER_TRAFFIC_OPACITY),
                     PropertyFactory.lineCap(Property.LINE_CAP_ROUND),
                     PropertyFactory.lineJoin(Property.LINE_JOIN_ROUND),
                 )

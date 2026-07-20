@@ -73,6 +73,7 @@ import com.kyuusanq3.mixauto.ui.theme.ElectricCyan
 import com.kyuusanq3.mixauto.ui.theme.OledBlack
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withContext
 import kotlin.math.roundToInt
 
@@ -198,8 +199,8 @@ fun NavigationSearchContent(
     val nearbyPois = searchState.nearbyPois
     val hasSearched = searchState.hasSearched
     val savedFilterActive = searchState.savedFilterActive
-    var isLoading by remember { mutableStateOf(false) }
-    var isLoadingRemote by remember { mutableStateOf(false) }
+    val isSearching = searchState.isSearching
+    val isLoadingRemote = searchState.isLoadingRemote
     var isListening by remember { mutableStateOf(false) }
     var pendingVoiceStart by remember { mutableStateOf(false) }
     var pendingVoiceRestart by remember { mutableStateOf(false) }
@@ -377,19 +378,24 @@ fun NavigationSearchContent(
     ) {
         if (savedFilterActive || query.length < 2) {
             launcherViewModel.updateDestinationSearch { state ->
-                state.copy(results = emptyList(), hasSearched = false)
+                state.copy(
+                    results = emptyList(),
+                    hasSearched = false,
+                    isSearching = false,
+                    isLoadingRemote = false,
+                )
             }
-            isLoading = false
-            isLoadingRemote = false
             return@LaunchedEffect
         }
         val origin = snapshotOrigin ?: return@LaunchedEffect
-        delay(300)
         launcherViewModel.updateDestinationSearch { state ->
-            state.copy(results = emptyList(), hasSearched = true)
+            state.copy(
+                hasSearched = true,
+                isSearching = true,
+                isLoadingRemote = true,
+            )
         }
-        isLoading = true
-        isLoadingRemote = true
+        delay(300)
         try {
             val fetched = engine.searchDestination(
                 query = query,
@@ -398,17 +404,19 @@ fun NavigationSearchContent(
                 limitDistance = limitSearchDistance,
                 onLocalResults = { local ->
                     launcherViewModel.updateDestinationSearch { state ->
-                        state.copy(results = local)
+                        state.copy(results = local, isSearching = false)
                     }
-                    isLoading = false
                 },
             )
             launcherViewModel.updateDestinationSearch { state ->
                 state.copy(results = fetched)
             }
         } finally {
-            isLoading = false
-            isLoadingRemote = false
+            if (coroutineContext.isActive) {
+                launcherViewModel.updateDestinationSearch { state ->
+                    state.copy(isSearching = false, isLoadingRemote = false)
+                }
+            }
         }
     }
 
@@ -565,7 +573,7 @@ fun NavigationSearchContent(
                     )
                 }
 
-                if (!savedFilterActive && (isLoading || isLoadingRemote)) {
+                if (!savedFilterActive && (isSearching || isLoadingRemote)) {
                     LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
                 }
 
@@ -596,7 +604,7 @@ fun NavigationSearchContent(
                             listModifier = Modifier.weight(1f),
                         )
                     }
-                    hasSearched && !isLoading && !isLoadingRemote && results.isEmpty() -> {
+                    hasSearched && !isSearching && !isLoadingRemote && results.isEmpty() -> {
                         CarBodyText(
                             text = if (snapshotOriginReliable) {
                                 "No results found"
