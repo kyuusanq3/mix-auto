@@ -1,0 +1,32 @@
+---
+description: MixAuto turn-by-turn navigation — TTS, reroute, multi-route selection/picker
+globs: app/src/main/java/**/data/navigation/**,app/src/main/java/**/ui/components/RoutePickerPane.kt
+alwaysApply: false
+---
+
+# MixAuto turn-by-turn navigation
+
+## Routing / off-route / reroute
+
+- `router.project-osrm.org` returns 403 for third-party apps — use `routing.openstreetmap.de/routed-car` in `fetchOsrmRoute()`; set `User-Agent: MixAutoCarLauncher/1.0` on OSRM requests (same as Nominatim)
+- Turn-by-turn navigation: `fullRouteSteps` / `currentStepIndex` in `MapLibreEngineImpl`; `evaluateStepAdvancement()` runs on GPS fixes when `isNavigating` — do not overwrite `streetName` with "Current location" during navigation
+- Step advance threshold 25 m; arrival at 15 m from destination or when step index exhausts; `navigationArrivalTriggered` prevents duplicate arrival coroutines
+- Off-route reroute: `routeGeometryPoints` + `checkOffRoute()` in `evaluateStepAdvancement()` — 75 m threshold, **3** consecutive off-route fixes (`REROUTE_CONFIRM_COUNT = 3`), **20 s** cooldown, **8 s** post-maneuver grace (`offRouteGraceUntilMs`); reroute TTS deduped to once per **30 s** in `NavigationVoiceController`; `startNavigation(..., isReroute=true)` skips `showRouteThenDive()` and calls `enterNavigationCamera()` directly
+- Reroute (`isReroute=true`) stays single OSRM fetch, no route picker
+
+## Voice guidance (TTS)
+
+- Navigation TTS: `NavigationVoiceController` in `data/navigation/` — owned by **`MapHostViewModel`**, passed to `MapLibreEngineImpl`; hooks from `activateNavigationTracking()` (`onNavigationDrivingStarted`), `evaluateStepAdvancement()` (`onNavTick`/`onStepAdvanced`), reroute/arrival/`startFreeDrive`; silent during route overview, route selection, and `navigationCameraTransitionActive`
+- Nav voice phrases (Option A street-first): per maneuver — **early** at `timeToTurn ≤ 35 s` (`buildAheadCue`: *"Ahead, turn left onto {street}."*), **prepare** at `timeToTurn ≤ 12 s` or `dist ≤ 200 m` (`buildPrepareCue`), **turn** at `timeToTurn ≤ 3 s` or `dist ≤ 40 m` (`buildTurnCue`); one cue per GPS tick via threshold crossing + catch-up (turn > prepare > ahead); continue-on-segment after step advance (distance kept); phrase text in `NavTtsPhrases.kt`
+- Nav-start traffic TTS: after *"Starting navigation."* only on first `activateNavigationTracking()` — Tier 1 `TomTomTrafficClient.findJamOnRoute()` (120 m corridor, 10 km look-ahead, MODERATE+); Tier 2 `trafficDelaySeconds ≥ 120` from TomTom route or parallel TomTom fetch on OSRM pick; prefetched IO in `applyActiveRoute()` during route overview; skip if key blank, fetch fails, or prefetch not done; **not** spoken on reroute (`navStartTrafficEligible` gate)
+- Voice navigation toggle: Map Settings **Voice navigation** (`LauncherPreferences.navigationVoiceEnabled`, key `navigation_voice_enabled`, default **true**); `CarMapEngine.setNavigationVoiceEnabled()`; TTS uses `USAGE_ASSISTANCE_NAVIGATION_GUIDANCE` + `AUDIOFOCUS_GAIN_TRANSIENT` — no bundled voice model
+- Nav TTS volume: `LauncherPreferences.navigationVoiceVolume` (key `navigation_voice_volume`, default **1.0**, range **0.5–2.0**) → `NavigationVoiceController.volume` via `KEY_PARAM_VOLUME`; optional **Boost guidance volume** boosts `STREAM_ACCESSIBILITY` + `STREAM_NOTIFICATION` to max while speaking; arrival TTS defers `startFreeDrive()` until utterance `onDone`; segment-aware maneuver phrases (`SEGMENT_TURN_ONLY_M` 60 m); reroute TTS min **30 s** apart; suppress maneuver cues when `isRerouteInProgress`
+
+## Multi-route selection / picker
+
+- **Multi-route selection:** initial navigate (not reroute) fetches OSRM `alternatives=1` + `TomTomRoutingClient.fetchRoute()` when `tomTomApiKey` set; ≥2 distinct routes → `enterRouteSelection()` + `ActivePanel.ROUTE_PICKER` via `MapUiState.isRouteSelecting`; single route skips picker → `showRouteThenDive()` only
+- Route picker UI: `RoutePickerPane.kt` in media pane — compact header, route cards only (no Start button); timer + re-tap selected route to confirm; close → `startFreeDrive()`
+- Route picker map lines during selection: selected = cyan `ROUTE_REMAINING_*`; TomTom unselected = amber `#FFB300`; OSRM alt = grey dashed; unselected fastest = dim cyan preview layer — `updateSelectedRouteHighlight()` in `MapLibreEngineImpl`
+- Route selection timer: **one** 10s hold in `startSelectionOverviewTimer()`; resets when user picks a different route; expiry or re-tap same route → `confirmRouteSelection()` → `beginNavigationAfterRouteSelection()` → `enterNavigationCamera()` — **do NOT** call `showRouteThenDive()` after picker confirm (causes second timer + drawer flash)
+- `selectRouteOption(id)`: different id resets timer; **same id** calls `confirmRouteSelection()` immediately
+- TomTom routing: `TomTomRoutingClient.kt` uses Calculate Route API (`traffic=true`) — requires Routing API on key, not just Traffic Flow; failures omit TomTom card non-fatally

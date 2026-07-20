@@ -500,49 +500,15 @@ fun NavigationSearchContent(
                     closeContentDescription = "Close search",
                     compact = true,
                     trailingContent = {
-                        Row(
-                            horizontalArrangement = Arrangement.spacedBy(CarDimensions.PaneGap / 4),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            IconButton(
-                                onClick = onOpenAddFromLink,
-                                modifier = Modifier.size(CarDimensions.PanelCompactHeaderTapTarget),
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Filled.Add,
-                                    contentDescription = "Add place from Google Maps link",
-                                    modifier = Modifier.size(CarDimensions.PanelCompactHeaderIconSize),
-                                    tint = MaterialTheme.colorScheme.primary,
-                                )
-                            }
-                            IconButton(
-                                onClick = {
-                                    launcherViewModel.updateDestinationSearch { state ->
-                                        state.copy(savedFilterActive = !state.savedFilterActive)
-                                    }
-                                },
-                                modifier = Modifier.size(CarDimensions.PanelCompactHeaderTapTarget),
-                            ) {
-                                Icon(
-                                    imageVector = if (savedFilterActive) {
-                                        Icons.Filled.Star
-                                    } else {
-                                        Icons.Outlined.Star
-                                    },
-                                    contentDescription = if (savedFilterActive) {
-                                        "Show all suggestions"
-                                    } else {
-                                        "Show saved places only"
-                                    },
-                                    modifier = Modifier.size(CarDimensions.PanelCompactHeaderIconSize),
-                                    tint = if (savedFilterActive) {
-                                        Color(0xFFFFD700)
-                                    } else {
-                                        MaterialTheme.colorScheme.primary
-                                    },
-                                )
-                            }
-                        }
+                        NavigationSearchHeaderActions(
+                            savedFilterActive = savedFilterActive,
+                            onOpenAddFromLink = onOpenAddFromLink,
+                            onToggleSavedFilter = {
+                                launcherViewModel.updateDestinationSearch { state ->
+                                    state.copy(savedFilterActive = !state.savedFilterActive)
+                                }
+                            },
+                        )
                     },
                 )
 
@@ -605,145 +571,30 @@ fun NavigationSearchContent(
 
                 when {
                     savedFilterActive -> {
-                        when {
-                            query.length >= 2 && filteredSaved.isEmpty() -> {
-                                CarBodyText(
-                                    text = "No saved places match your search",
-                                    style = MaterialTheme.typography.bodyLarge,
-                                )
-                            }
-                            query.length < 2 && displayedSaved.isEmpty() -> {
-                                CarBodyText(
-                                    text = "No saved places — star a POI on the map",
-                                    style = MaterialTheme.typography.bodyLarge,
-                                )
-                            }
-                            else -> {
-                                val savedPlacesToShow = if (query.length >= 2) {
-                                    filteredSaved
-                                } else {
-                                    displayedSaved
-                                }
-                                Box(
-                                    modifier = Modifier
-                                        .weight(1f)
-                                        .carLazyScrollbar(listState),
-                                ) {
-                                    LazyColumn(
-                                        state = listState,
-                                        modifier = Modifier.fillMaxSize(),
-                                        verticalArrangement = Arrangement.spacedBy(CarDimensions.PaneGap / 2),
-                                    ) {
-                                        items(
-                                            savedPlacesToShow,
-                                            key = { "saved-${it.latitude},${it.longitude},${it.name}" },
-                                        ) { place ->
-                                            SearchResultRow(
-                                                place = place,
-                                                isStarred = isPlaceSaved(place),
-                                                onClick = { previewPlace(place) },
-                                                onToggleStar = { onToggleSavedPlace(place) },
-                                            )
-                                        }
-                                    }
-                                }
-                            }
-                        }
+                        SavedPlacesResultsSection(
+                            query = query,
+                            filteredSaved = filteredSaved,
+                            displayedSaved = displayedSaved,
+                            listState = listState,
+                            isPlaceSaved = isPlaceSaved,
+                            onPreviewPlace = previewPlace,
+                            onToggleSavedPlace = onToggleSavedPlace,
+                            listModifier = Modifier.weight(1f),
+                        )
                     }
                     query.length < 2 -> {
-                        val suggestionsEmpty = displayedRecents.isEmpty() &&
-                            displayedSuggestionsNearby.isEmpty()
-
-                        if (suggestionsEmpty) {
-                            Column(
-                                verticalArrangement = Arrangement.spacedBy(CarDimensions.PaneGap / 2),
-                            ) {
-                                CarBodyText(
-                                    text = when {
-                                        !snapshotOriginReliable ->
-                                            "Waiting for GPS — nearby suggestions appear once location is available"
-                                        engine.hasOfflinePlacesDatabase() ->
-                                            "No recent destinations — drive to build nearby suggestions from places you pass"
-                                        else ->
-                                            "No recent destinations — install a country pack in Map Data for offline nearby search and richer suggestions while driving"
-                                    },
-                                    style = MaterialTheme.typography.bodyLarge,
-                                )
-                                if (snapshotOriginReliable && !engine.hasOfflinePlacesDatabase()) {
-                                    TextButton(onClick = onOpenMapData) {
-                                        CarLabelText(
-                                            text = "Open Map Data",
-                                            style = MaterialTheme.typography.labelLarge.copy(
-                                                color = ElectricCyan,
-                                            ),
-                                        )
-                                    }
-                                }
-                            }
-                        } else {
-                            Box(
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .carLazyScrollbar(listState),
-                            ) {
-                                LazyColumn(
-                                    state = listState,
-                                    modifier = Modifier.fillMaxSize(),
-                                    verticalArrangement = Arrangement.spacedBy(CarDimensions.PaneGap / 2),
-                                ) {
-                                    if (displayedRecents.isNotEmpty()) {
-                                        item(key = "header-recent") {
-                                            CarLabelText(
-                                                text = "Recent",
-                                                style = MaterialTheme.typography.labelLarge.copy(
-                                                    color = ElectricCyan,
-                                                ),
-                                                modifier = Modifier.padding(
-                                                    horizontal = CarDimensions.PaneGap,
-                                                    vertical = CarDimensions.PaneGap / 4,
-                                                ),
-                                            )
-                                        }
-                                        items(
-                                            displayedRecents,
-                                            key = { "recent-${it.latitude},${it.longitude},${it.name}" },
-                                        ) { place ->
-                                            SearchResultRow(
-                                                place = place,
-                                                isStarred = isPlaceSaved(place),
-                                                onClick = { previewPlace(place) },
-                                                onToggleStar = { onToggleSavedPlace(place) },
-                                            )
-                                        }
-                                    }
-                                    if (displayedSuggestionsNearby.isNotEmpty()) {
-                                        item(key = "header-nearby") {
-                                            CarLabelText(
-                                                text = "Nearby",
-                                                style = MaterialTheme.typography.labelLarge.copy(
-                                                    color = ElectricCyan,
-                                                ),
-                                                modifier = Modifier.padding(
-                                                    horizontal = CarDimensions.PaneGap,
-                                                    vertical = CarDimensions.PaneGap / 4,
-                                                ),
-                                            )
-                                        }
-                                        items(
-                                            displayedSuggestionsNearby,
-                                            key = { "nearby-${it.latitude},${it.longitude},${it.name}" },
-                                        ) { place ->
-                                            SearchResultRow(
-                                                place = place,
-                                                isStarred = isPlaceSaved(place),
-                                                onClick = { previewPlace(place) },
-                                                onToggleStar = { onToggleSavedPlace(place) },
-                                            )
-                                        }
-                                    }
-                                }
-                            }
-                        }
+                        DestinationSuggestionsSection(
+                            displayedRecents = displayedRecents,
+                            displayedSuggestionsNearby = displayedSuggestionsNearby,
+                            snapshotOriginReliable = snapshotOriginReliable,
+                            hasOfflinePlacesDatabase = engine.hasOfflinePlacesDatabase(),
+                            listState = listState,
+                            isPlaceSaved = isPlaceSaved,
+                            onPreviewPlace = previewPlace,
+                            onToggleSavedPlace = onToggleSavedPlace,
+                            onOpenMapData = onOpenMapData,
+                            listModifier = Modifier.weight(1f),
+                        )
                     }
                     hasSearched && !isLoading && !isLoadingRemote && results.isEmpty() -> {
                         CarBodyText(
@@ -756,29 +607,14 @@ fun NavigationSearchContent(
                         )
                     }
                     else -> {
-                        Box(
-                            modifier = Modifier
-                                .weight(1f)
-                                .carLazyScrollbar(listState),
-                        ) {
-                            LazyColumn(
-                                state = listState,
-                                modifier = Modifier.fillMaxSize(),
-                                verticalArrangement = Arrangement.spacedBy(CarDimensions.PaneGap / 2),
-                            ) {
-                                items(
-                                    results,
-                                    key = { "${it.latitude},${it.longitude},${it.name}" },
-                                ) { place ->
-                                    SearchResultRow(
-                                        place = place,
-                                        isStarred = isPlaceSaved(place),
-                                        onClick = { previewPlace(place) },
-                                        onToggleStar = { onToggleSavedPlace(place) },
-                                    )
-                                }
-                            }
-                        }
+                        TypedSearchResultsList(
+                            results = results,
+                            listState = listState,
+                            isPlaceSaved = isPlaceSaved,
+                            onPreviewPlace = previewPlace,
+                            onToggleSavedPlace = onToggleSavedPlace,
+                            modifier = Modifier.weight(1f),
+                        )
                     }
                 }
         }
@@ -786,7 +622,7 @@ fun NavigationSearchContent(
 }
 
 @Composable
-private fun SearchResultRow(
+internal fun SearchResultRow(
     place: SearchResultPlace,
     onClick: () -> Unit,
     isStarred: Boolean = false,

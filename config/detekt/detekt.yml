@@ -1,0 +1,80 @@
+# MixAuto Detekt config — LLM/agent-friendly structure guardrails.
+#
+# Goal: stop the codebase from regressing back into god-classes/files like the pre-refactor
+# MapLibreEngineImpl.kt (6,100+ lines) or DashboardScreen.kt (1,800+ lines). Existing oversized
+# files/classes are grandfathered via config/detekt/baseline.xml (regenerate with
+# `./gradlew detektBaseline` only when intentionally accepting new debt, e.g. mid-refactor) — new
+# files/classes are held to these thresholds from the start.
+#
+# Intentionally scoped to structural-size rules only (LargeClass / TooManyFunctions / LongMethod /
+# LongParameterList) — this is a size guardrail, not a general style/lint pass. All other rulesets
+# are disabled so this stays cheap to keep green and doesn't turn into an unrelated lint cleanup.
+
+comments:
+  active: false
+
+complexity:
+  active: true
+  ComplexCondition:
+    active: false
+  ComplexInterface:
+    active: false
+  CyclomaticComplexMethod:
+    active: false
+  LabeledExpression:
+    active: false
+  LargeClass:
+    active: true
+    threshold: 600
+  LongMethod:
+    active: true
+    threshold: 90
+  LongParameterList:
+    active: true
+    functionThreshold: 8
+    constructorThreshold: 10
+    ignoreDefaultParameters: true
+    ignoreDataClasses: true
+  MethodOverloading:
+    active: false
+  NamedArguments:
+    active: false
+  NestedBlockDepth:
+    active: false
+  NestedScopeFunctions:
+    active: false
+  ReplaceSafeCallChainWithRun:
+    active: false
+  StringLiteralDuplication:
+    active: false
+  TooManyFunctions:
+    active: true
+    thresholdInFiles: 25
+    thresholdInClasses: 25
+    thresholdInInterfaces: 15
+    thresholdInObjects: 25
+    thresholdInEnums: 15
+    ignoreDeprecated: true
+    ignorePrivate: false
+    ignoreOverridden: false
+
+coroutines:
+  active: false
+
+empty-blocks:
+  active: false
+
+exceptions:
+  active: false
+
+naming:
+  active: false
+
+performance:
+  active: false
+
+potential-bugs:
+  active: false
+
+style:
+  active: false

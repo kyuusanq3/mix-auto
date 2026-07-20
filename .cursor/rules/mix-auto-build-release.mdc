@@ -1,0 +1,25 @@
+---
+description: MixAuto build, signing, release, and emulator GPS tooling
+alwaysApply: true
+---
+
+# Build, signing, release, and emulator GPS
+
+## Build (Windows CLI)
+
+Set `JAVA_HOME` to Android Studio `jbr` before `.\gradlew.bat assembleDebug`. Gradle in Cursor terminal may fail without `JAVA_HOME`; Android Studio build works with embedded JDK.
+
+## Release
+
+- Current release: `versionCode = 6`, `versionName = "0.0.6"`; signed release APK at `mix-auto.apk` (project root, gitignored); upload manually to GitHub release
+- Release signing: keystore at `app/mixauto-release.jks` (alias `mixauto`, RSA 2048, 10 000-day validity); `signingConfigs { create("release") }` in `app/build.gradle.kts`; credentials stored in plaintext (personal sideload only — move to `keystore.properties` before Play Store)
+- Release APK workflow: `.\gradlew.bat assembleRelease` → copy to `mix-auto.apk` at repo root; use `/local-apk` (build + release notes) or `/local-apk publish` (also commit, push `dev`, GitHub release + APK upload); publish script at `~/.cursor/skills/local-apk/scripts/publish-release.ps1` — needs `gh auth login` or `$env:GITHUB_TOKEN` (repo scope); install gh on Windows: `winget install --id GitHub.cli -e`, open new terminal for PATH
+- `/local-apk` skill commit message is derived from **local uncommitted changes on dev** (`git diff --stat` + `git diff --stat --cached` + `git log --oneline -10`) — NOT from `main..dev` diff; the `main..dev` range covers the full branch history and produces an overly broad commit message
+- `mix-auto.apk` and `app/mixauto-release.jks` should be in `.gitignore`
+
+## Emulator GPS (Android Studio AVD)
+
+- Android Studio AVD x86_64 GPS (all API levels, Google Play and AOSP images): `adb emu geo fix` returns `OK` but `Number of location reports: 0` — GNSS HAL is broken; workaround is `avd-gps.ps1` at repo root which uses `cmd location providers add-test-provider gps` after `adb root`
+- Android 12+ (API 31) `cmd location providers` mock GPS: `LocationManagerService.addTestProvider` calls `noteOp(OP_MOCK_LOCATION, callingUid, "android")` — default mode is `MODE_ERRORED`; `appops set shell android:mock_location allow` does NOT work (wrong package/uid binding); must grant by uid number: `cmd appops set 0 MOCK_LOCATION allow` and `cmd appops set 2000 MOCK_LOCATION allow` (as root) before calling `cmd location providers`
+- `avd-gps.ps1`: run once per emulator boot; `.\avd-gps.ps1` for single fix at Gov Center, `.\avd-gps.ps1 -Drive` for 39 road-snapped fixes Gov Center → SM City Bacolod via OSRM, `.\avd-gps.ps1 LAT LNG` for custom fix
+- PowerShell URL construction with doubles: always use `InvariantCulture` formatting and concatenate query string separately — PowerShell 7 null-conditional `?.` parses `$varS?query` as null-conditional in double-quoted strings, silently dropping the variable value

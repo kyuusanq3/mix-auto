@@ -1,0 +1,348 @@
+package com.kyuusanq3.mixauto.data.map
+
+import android.location.Location
+import com.kyuusanq3.mixauto.domain.map.RouteProvider
+import org.maplibre.android.geometry.LatLng
+import org.maplibre.android.maps.MapLibreMap
+import org.maplibre.android.maps.Style
+import org.maplibre.android.style.layers.LineLayer
+import org.maplibre.android.style.layers.Property
+import org.maplibre.android.style.layers.PropertyFactory
+import org.maplibre.android.style.sources.GeoJsonSource
+
+internal fun buildLineStringFeatureJson(points: List<LatLng>): String {
+    if (points.size < 2) {
+        return """{"type":"FeatureCollection","features":[]}"""
+    }
+    val coords = points.joinToString(",") { point ->
+        "[${point.longitude},${point.latitude}]"
+    }
+    return """{"type":"Feature","geometry":{"type":"LineString","coordinates":[$coords]},"properties":{}}"""
+}
+
+internal enum class AltRouteStyle {
+    TOMTOM,
+    OSRM_ALT,
+    OSRM_PRIMARY_PREVIEW,
+}
+
+/**
+ * Renders the active route line (traveled/remaining split), the multi-route-picker alternate
+ * lines, and tracks how far along the route the driver has progressed.
+ *
+ * Extracted from [MapLibreEngineImpl]. Owns the route-progress tracking fields (segment index,
+ * split point, distance-along-route, last-map-update distance, and the per-tick projection
+ * cache) since they are only ever read/written by the methods below. `routeGeometryPoints`
+ * itself stays on the engine (also read by route-overview bounds and off-route detection, not
+ * yet extracted) and is passed in on every call. Layer anchoring against traffic/base layers is
+ * injected as a constructor callback since it is shared with other overlays.
+ */
+internal class RouteRenderer(
+    private val resolveAnchorLayerId: (Style) -> String?,
+    private val ensurePuckAboveOverlays: () -> Unit,
+) {
+    private var routeProgressSegmentIndex = 0
+    private var routeProgressSplitLat = 0.0
+    private var routeProgressSplitLng = 0.0
+    private var routeProgressDistanceM = 0f
+    private var lastRouteProgressMapUpdateM = 0f
+    private var cachedTickProjection: RouteProjection? = null
+    private var cachedTickProjectionKey: Long = Long.MIN_VALUE
+
+    fun removeRouteLayers(style: Style) {
+        runCatching { style.removeLayer(ROUTE_TRAVELED_LAYER_ID) }
+        runCatching { style.removeLayer(ROUTE_TRAVELED_CASING_LAYER_ID) }
+        runCatching { style.removeLayer(ROUTE_REMAINING_LAYER_ID) }
+        runCatching { style.removeLayer(ROUTE_REMAINING_CASING_LAYER_ID) }
+        runCatching { style.removeLayer(ROUTE_LAYER_ID) }
+        runCatching { style.removeLayer(ROUTE_CASING_LAYER_ID) }
+        runCatching { style.removeLayer(ROUTE_TOMTOM_LAYER_ID) }
+        runCatching { style.removeLayer(ROUTE_OSRM_ALT_LAYER_ID) }
+        runCatching { style.removeLayer(ROUTE_OSRM_PRIMARY_PREVIEW_LAYER_ID) }
+        runCatching { style.removeSource(ROUTE_TRAVELED_SOURCE_ID) }
+        runCatching { style.removeSource(ROUTE_REMAINING_SOURCE_ID) }
+        runCatching { style.removeSource(ROUTE_SOURCE_ID) }
+        runCatching { style.removeSource(ROUTE_TOMTOM_SOURCE_ID) }
+        runCatching { style.removeSource(ROUTE_OSRM_ALT_SOURCE_ID) }
+        runCatching { style.removeSource(ROUTE_OSRM_PRIMARY_PREVIEW_SOURCE_ID) }
+    }
+
+    fun removeAlternateRouteLayers(style: Style) {
+        runCatching { style.removeLayer(ROUTE_TOMTOM_LAYER_ID) }
+        runCatching { style.removeLayer(ROUTE_OSRM_ALT_LAYER_ID) }
+        runCatching { style.removeLayer(ROUTE_OSRM_PRIMARY_PREVIEW_LAYER_ID) }
+        runCatching { style.removeSource(ROUTE_TOMTOM_SOURCE_ID) }
+        runCatching { style.removeSource(ROUTE_OSRM_ALT_SOURCE_ID) }
+        runCatching { style.removeSource(ROUTE_OSRM_PRIMARY_PREVIEW_SOURCE_ID) }
+    }
+
+    fun restackRouteLayersAbove(style: Style, anchorLayerId: String) {
+        val layerIds = listOf(
+            ROUTE_TRAVELED_CASING_LAYER_ID,
+            ROUTE_TRAVELED_LAYER_ID,
+            ROUTE_REMAINING_CASING_LAYER_ID,
+            ROUTE_REMAINING_LAYER_ID,
+        )
+        if (layerIds.none { style.getLayer(it) != null }) return
+        val layers = layerIds.mapNotNull { style.getLayer(it) }
+        layers.forEach { style.removeLayer(it) }
+        var aboveId = anchorLayerId
+        for (layer in layers) {
+            style.addLayerAbove(layer, aboveId)
+            aboveId = layer.id
+        }
+    }
+
+    fun ensureRouteLayers(style: Style) {
+        val emptyJson = buildLineStringFeatureJson(emptyList())
+        if (style.getSource(ROUTE_TRAVELED_SOURCE_ID) == null) {
+            style.addSource(GeoJsonSource(ROUTE_TRAVELED_SOURCE_ID, emptyJson))
+        }
+        if (style.getSource(ROUTE_REMAINING_SOURCE_ID) == null) {
+            style.addSource(GeoJsonSource(ROUTE_REMAINING_SOURCE_ID, emptyJson))
+        }
+        if (style.getLayer(ROUTE_TRAVELED_CASING_LAYER_ID) != null) return
+
+        val traveledCasing = LineLayer(ROUTE_TRAVELED_CASING_LAYER_ID, ROUTE_TRAVELED_SOURCE_ID).withProperties(
+            PropertyFactory.lineColor(ROUTE_CASING_COLOR),
+            PropertyFactory.lineWidth(ROUTE_CASING_WIDTH),
+            PropertyFactory.lineCap(Property.LINE_CAP_ROUND),
+            PropertyFactory.lineJoin(Property.LINE_JOIN_ROUND),
+            PropertyFactory.lineOpacity(1f),
+        )
+        val traveledLine = LineLayer(ROUTE_TRAVELED_LAYER_ID, ROUTE_TRAVELED_SOURCE_ID).withProperties(
+            PropertyFactory.lineColor(ROUTE_TRAVELED_COLOR),
+            PropertyFactory.lineWidth(ROUTE_WIDTH),
+            PropertyFactory.lineCap(Property.LINE_CAP_ROUND),
+            PropertyFactory.lineJoin(Property.LINE_JOIN_ROUND),
+            PropertyFactory.lineOpacity(ROUTE_TRAVELED_OPACITY),
+        )
+        val remainingCasing = LineLayer(ROUTE_REMAINING_CASING_LAYER_ID, ROUTE_REMAINING_SOURCE_ID).withProperties(
+            PropertyFactory.lineColor(ROUTE_CASING_COLOR),
+            PropertyFactory.lineWidth(ROUTE_CASING_WIDTH),
+            PropertyFactory.lineCap(Property.LINE_CAP_ROUND),
+            PropertyFactory.lineJoin(Property.LINE_JOIN_ROUND),
+            PropertyFactory.lineOpacity(1f),
+        )
+        val remainingLine = LineLayer(ROUTE_REMAINING_LAYER_ID, ROUTE_REMAINING_SOURCE_ID).withProperties(
+            PropertyFactory.lineColor(ROUTE_COLOR),
+            PropertyFactory.lineWidth(ROUTE_WIDTH),
+            PropertyFactory.lineCap(Property.LINE_CAP_ROUND),
+            PropertyFactory.lineJoin(Property.LINE_JOIN_ROUND),
+            PropertyFactory.lineOpacity(0.9f),
+        )
+        val anchor = resolveAnchorLayerId(style)
+        if (anchor != null) {
+            style.addLayerAbove(traveledCasing, anchor)
+            style.addLayerAbove(traveledLine, ROUTE_TRAVELED_CASING_LAYER_ID)
+            style.addLayerAbove(remainingCasing, ROUTE_TRAVELED_LAYER_ID)
+            style.addLayerAbove(remainingLine, ROUTE_REMAINING_CASING_LAYER_ID)
+        } else {
+            style.addLayer(traveledCasing)
+            style.addLayer(traveledLine)
+            style.addLayer(remainingCasing)
+            style.addLayer(remainingLine)
+        }
+    }
+
+    fun drawRoute(map: MapLibreMap, routeGeometryPoints: List<LatLng>) {
+        resetRouteProgress(routeGeometryPoints)
+        map.getStyle { style ->
+            ensureRouteLayers(style)
+            val remainingJson = buildLineStringFeatureJson(routeGeometryPoints)
+            val emptyJson = buildLineStringFeatureJson(emptyList())
+            (style.getSource(ROUTE_TRAVELED_SOURCE_ID) as? GeoJsonSource)?.setGeoJson(emptyJson)
+            (style.getSource(ROUTE_REMAINING_SOURCE_ID) as? GeoJsonSource)?.setGeoJson(remainingJson)
+            ensurePuckAboveOverlays()
+        }
+    }
+
+    fun resetRouteProgress(routeGeometryPoints: List<LatLng>) {
+        routeProgressSegmentIndex = 0
+        routeProgressDistanceM = 0f
+        lastRouteProgressMapUpdateM = 0f
+        if (routeGeometryPoints.isNotEmpty()) {
+            routeProgressSplitLat = routeGeometryPoints[0].latitude
+            routeProgressSplitLng = routeGeometryPoints[0].longitude
+        } else {
+            routeProgressSplitLat = 0.0
+            routeProgressSplitLng = 0.0
+        }
+    }
+
+    fun clearTickProjectionCache() {
+        cachedTickProjection = null
+        cachedTickProjectionKey = Long.MIN_VALUE
+    }
+
+    private fun applyRouteProgressToMap(map: MapLibreMap, routeGeometryPoints: List<LatLng>) {
+        val points = routeGeometryPoints
+        if (points.size < 2) return
+        val traveled = buildTraveledRoutePoints(
+            routeProgressDistanceM,
+            points,
+            routeProgressSegmentIndex,
+            routeProgressSplitLat,
+            routeProgressSplitLng,
+        )
+        val remaining = buildRemainingRoutePoints(
+            points,
+            routeProgressSegmentIndex,
+            routeProgressSplitLat,
+            routeProgressSplitLng,
+        )
+        map.getStyle { style ->
+            (style.getSource(ROUTE_TRAVELED_SOURCE_ID) as? GeoJsonSource)
+                ?.setGeoJson(buildLineStringFeatureJson(traveled))
+            (style.getSource(ROUTE_REMAINING_SOURCE_ID) as? GeoJsonSource)
+                ?.setGeoJson(buildLineStringFeatureJson(remaining))
+        }
+    }
+
+    fun projectOntoRoute(location: Location, routeGeometryPoints: List<LatLng>): RouteProjection? {
+        val points = routeGeometryPoints
+        if (points.size < 2) return null
+
+        val localStart = (routeProgressSegmentIndex - ROUTE_PROJECTION_SEARCH_RADIUS).coerceAtLeast(0)
+        val localEnd = (routeProgressSegmentIndex + ROUTE_PROJECTION_SEARCH_RADIUS)
+            .coerceAtMost(points.size - 2)
+        var projection = scanRouteSegments(location, points, localStart, localEnd)
+        if (projection.distToRouteM > REROUTE_THRESHOLD_M / 2f) {
+            projection = scanRouteSegments(location, points, 0, points.size - 2)
+        }
+        return projection
+    }
+
+    fun projectionForLocation(location: Location, routeGeometryPoints: List<LatLng>): RouteProjection? {
+        if (cachedTickProjectionKey == location.time && cachedTickProjection != null) {
+            return cachedTickProjection
+        }
+        val projection = projectOntoRoute(location, routeGeometryPoints) ?: return null
+        cachedTickProjection = projection
+        cachedTickProjectionKey = location.time
+        return projection
+    }
+
+    private fun routeProgressMapMinAdvanceM(speedMps: Float): Float {
+        return if (speedMps >= ROUTE_PROGRESS_HIGHWAY_SPEED_MPS) {
+            ROUTE_PROGRESS_MAP_MIN_ADVANCE_HIGHWAY_M
+        } else {
+            ROUTE_PROGRESS_MAP_MIN_ADVANCE_M
+        }
+    }
+
+    fun updateRouteProgress(location: Location, routeGeometryPoints: List<LatLng>, map: MapLibreMap?) {
+        val projection = projectionForLocation(location, routeGeometryPoints) ?: return
+        if (projection.distanceFromStartM + ROUTE_PROGRESS_BACKTRACK_TOLERANCE_M < routeProgressDistanceM) {
+            return
+        }
+        if (projection.distanceFromStartM <= routeProgressDistanceM) return
+
+        routeProgressSegmentIndex = projection.segmentIndex
+        routeProgressSplitLat = projection.splitLat
+        routeProgressSplitLng = projection.splitLng
+        routeProgressDistanceM = projection.distanceFromStartM
+        val speedMps = if (location.hasSpeed()) location.speed else 0f
+        val minAdvance = routeProgressMapMinAdvanceM(speedMps)
+        if (routeProgressDistanceM - lastRouteProgressMapUpdateM < minAdvance) {
+            return
+        }
+        lastRouteProgressMapUpdateM = routeProgressDistanceM
+        val activeMap = map ?: return
+        applyRouteProgressToMap(activeMap, routeGeometryPoints)
+    }
+
+    fun updateSelectedRouteHighlight(style: Style, selectedId: String, routeResultsById: Map<String, StoredRoute>) {
+        ensureRouteLayers(style)
+        routeResultsById.forEach { (id, stored) ->
+            val points = stored.result.geometryPoints
+            when {
+                id == selectedId -> {
+                    val remainingJson = buildLineStringFeatureJson(points)
+                    val emptyJson = buildLineStringFeatureJson(emptyList())
+                    (style.getSource(ROUTE_TRAVELED_SOURCE_ID) as? GeoJsonSource)?.setGeoJson(emptyJson)
+                    (style.getSource(ROUTE_REMAINING_SOURCE_ID) as? GeoJsonSource)?.setGeoJson(remainingJson)
+                    clearAltLayerForProvider(style, stored.provider)
+                }
+                stored.provider == RouteProvider.TOMTOM_TRAFFIC -> {
+                    setAltRouteGeoJson(style, ROUTE_TOMTOM_SOURCE_ID, ROUTE_TOMTOM_LAYER_ID, points, AltRouteStyle.TOMTOM)
+                }
+                stored.provider == RouteProvider.OSRM_ALTERNATE -> {
+                    setAltRouteGeoJson(style, ROUTE_OSRM_ALT_SOURCE_ID, ROUTE_OSRM_ALT_LAYER_ID, points, AltRouteStyle.OSRM_ALT)
+                }
+                stored.provider == RouteProvider.OSRM_FASTEST -> {
+                    setAltRouteGeoJson(
+                        style,
+                        ROUTE_OSRM_PRIMARY_PREVIEW_SOURCE_ID,
+                        ROUTE_OSRM_PRIMARY_PREVIEW_LAYER_ID,
+                        points,
+                        AltRouteStyle.OSRM_PRIMARY_PREVIEW,
+                    )
+                }
+            }
+        }
+        ensurePuckAboveOverlays()
+    }
+
+    private fun clearAltLayerForProvider(style: Style, provider: RouteProvider) {
+        when (provider) {
+            RouteProvider.TOMTOM_TRAFFIC -> clearAltLayer(style, ROUTE_TOMTOM_SOURCE_ID)
+            RouteProvider.OSRM_ALTERNATE -> clearAltLayer(style, ROUTE_OSRM_ALT_SOURCE_ID)
+            RouteProvider.OSRM_FASTEST -> clearAltLayer(
+                style,
+                ROUTE_OSRM_PRIMARY_PREVIEW_SOURCE_ID,
+            )
+        }
+    }
+
+    private fun clearAltLayer(style: Style, sourceId: String) {
+        (style.getSource(sourceId) as? GeoJsonSource)
+            ?.setGeoJson(buildLineStringFeatureJson(emptyList()))
+    }
+
+    private fun setAltRouteGeoJson(
+        style: Style,
+        sourceId: String,
+        layerId: String,
+        points: List<LatLng>,
+        altStyle: AltRouteStyle,
+    ) {
+        if (style.getSource(sourceId) == null) {
+            style.addSource(GeoJsonSource(sourceId, buildLineStringFeatureJson(emptyList())))
+        }
+        if (style.getLayer(layerId) == null) {
+            val layer = when (altStyle) {
+                AltRouteStyle.TOMTOM -> LineLayer(layerId, sourceId).withProperties(
+                    PropertyFactory.lineColor(ROUTE_TOMTOM_COLOR),
+                    PropertyFactory.lineWidth(ROUTE_TOMTOM_WIDTH),
+                    PropertyFactory.lineOpacity(ROUTE_TOMTOM_OPACITY),
+                    PropertyFactory.lineCap(Property.LINE_CAP_ROUND),
+                    PropertyFactory.lineJoin(Property.LINE_JOIN_ROUND),
+                )
+                AltRouteStyle.OSRM_ALT -> LineLayer(layerId, sourceId).withProperties(
+                    PropertyFactory.lineColor(ROUTE_OSRM_ALT_COLOR),
+                    PropertyFactory.lineWidth(ROUTE_OSRM_ALT_WIDTH),
+                    PropertyFactory.lineOpacity(ROUTE_OSRM_ALT_OPACITY),
+                    PropertyFactory.lineDasharray(arrayOf(4f, 3f)),
+                    PropertyFactory.lineCap(Property.LINE_CAP_ROUND),
+                    PropertyFactory.lineJoin(Property.LINE_JOIN_ROUND),
+                )
+                AltRouteStyle.OSRM_PRIMARY_PREVIEW -> LineLayer(layerId, sourceId).withProperties(
+                    PropertyFactory.lineColor(ROUTE_COLOR),
+                    PropertyFactory.lineWidth(ROUTE_OSRM_ALT_WIDTH),
+                    PropertyFactory.lineOpacity(ROUTE_OSRM_ALT_OPACITY),
+                    PropertyFactory.lineCap(Property.LINE_CAP_ROUND),
+                    PropertyFactory.lineJoin(Property.LINE_JOIN_ROUND),
+                )
+            }
+            val anchor = resolveAnchorLayerId(style)
+            if (anchor != null && style.getLayer(anchor) != null) {
+                style.addLayerAbove(layer, anchor)
+            } else {
+                style.addLayer(layer)
+            }
+        }
+        (style.getSource(sourceId) as? GeoJsonSource)
+            ?.setGeoJson(buildLineStringFeatureJson(points))
+    }
+}

@@ -1,0 +1,43 @@
+---
+description: MixAuto offline Overture POI database and offline map tile regions
+globs: app/src/main/java/**/data/places/**,app/src/main/java/**/ui/components/MapDataOverlay.kt,app/src/main/java/**/ui/settings/MapDataViewModel.kt,app/src/main/java/**/ui/settings/MapDataViewModelFactory.kt,app/src/main/java/**/data/map/OfflineMapRepository.kt,app/src/main/java/**/data/map/OfflineMapRepositoryHolder.kt,app/src/main/java/**/data/map/MapStyleAssetResolver.kt,app/src/main/java/**/data/map/OfflineStyleLocalServer.kt,app/src/main/java/**/data/map/DrivingTilePrefetcher.kt,app/src/main/java/**/data/map/MapLibreAppBootstrap.kt,app/src/main/java/**/data/map/TomTomTrafficClient.kt,app/src/main/java/**/service/OfflineMapDownloadService.kt
+alwaysApply: false
+---
+
+# MixAuto offline data: Overture POI database + offline map tiles
+
+Two distinct offline systems share the same "Map Data" UI (`MapDataOverlay.kt` / `MapDataViewModel`): the Overture **POI SQLite database** (`data/places/`) and the MapLibre **offline map tile regions** (`data/map/OfflineMapRepository.kt` + friends).
+
+## Overture POI database
+
+- Offline Overture POI build/publish tools live in sibling repo **`mix-auto-overture-maps/tools/`** — not `mix-auto/tools/`; `mix-auto/tools/README.md` is a pointer only
+- App catalog: `MapDataViewModel` fetches `countries.json` from `kyuusanq3/mix-auto-overture-maps/releases/latest/download/`; per-country URL is `{RELEASE_BASE}/{asset}` from manifest — no app update needed when publishing new release tags marked Latest
+- GitHub release must **attach** `countries.json` + `{iso}_places.db.gz` as release assets; a release with zero assets returns 404 on `/latest/download/` even if the tag exists
+- Philippines pack sizes: ~137 MB compressed (`ph_places.db.gz`), ~263 MB installed SQLite; manifest `size_compressed_mb` / `size_db_mb` drives UI labels
+- `LocalPlacesRepository.downloadDatabaseFromUrl()` decompresses `.gz`; manual `importDatabaseFromUri()` does NOT — sideload uncompressed `.db` only
+- On-device schema (`filesDir/places/{iso}.db`): `places` table (id, name, category, address, city, lat, lng, confidence); `places_fts` FTS5 virtual table (external content) for fast text search; `meta` table (country_iso, country_name, record_count, generated_date)
+- `MapDataOverlay` header copy still says "~50 MB compressed" — per-row sizes from catalog are correct (~137 MB for PH)
+- Map Data panel (`MapDataPanelContent`) lists catalog countries only — no Import/Sample Philippines fallback rows; install via per-country Download from GitHub `countries.json`
+- Map Data scroll: `CountryCatalogList` wraps scrollable `Column` in `Box(modifier.carScrollbar(scrollState))`; external `modifier` (e.g. `.weight(1f)`) stays on `Box`
+- Offline DB after app update: `LocalPlacesRepository` init auto-discovers largest `files/places/*.db` when `active_iso` pref missing; `hasInstalledDatabase` checks any installed file (not pref-only); open failure retries after deleting `-wal`/`-shm`/`-journal` sidecars; **`ensureDatabaseOpen()`** before `searchPlaces()` / `getPlacesInBounds()` — file can show Installed while connection is closed
+- Google Places POI caching prohibited by Google Maps Platform ToS even when device has Play Services; TomTom Places or Overture offline DB are cache-friendly alternatives
+
+## TomTom API key (shared UI in Map Data panel)
+
+- TomTom key check: `TomTomTrafficClient.verifyApiKey()` + inline **`NetworkCheck` trailing icon** on TomTom key `OutlinedTextField` (`TomTomApiKeySection` in `MapDataOverlay.kt`); spinner in trailing slot while checking — no full-width Test button; `LauncherViewModel.updateTomTomApiKey()` not `setTomTomApiKey()` (JVM signature clash with property setter)
+- TomTom + traffic UI: **Traffic Overlay** toggle grouped under TomTom API key in `TomTomApiKeySection` — not a separate row in `MapSettingsPanelContent`; `MapDataSectionContent` takes `showTraffic` + `onToggleTraffic` (optional, null hides toggle in unused `MapDataOverlay` dialog path)
+
+## Offline map tile regions
+
+- **Offline regional maps:** `OfflineMapRepository` + `OfflineManager` (not MBTiles in app); catalog `app/src/main/assets/map/offline_regions.json`; regional packs **z10–17** (overview z12); `needsDetailUpgrade` + Map Data **Update** for stale z14 installs; `hasCompleteRegionCovering()` requires current-detail pack; POI packs unchanged (mix-auto-overture-maps); vector-only gate when raster mode
+- **Offline detail upgrade banner:** `LauncherPreferences.offlineDetailUpgradeBannerDismissed` — Map Data shows dismissible banner when `anyRegionNeedsDetailUpgrade()`; user must tap **Update** per region (z14 packs not auto-deleted on app update)
+- **MapLibre init order:** call `MapLibreAppBootstrap.ensureInitialized(context)` before `OfflineManager.getInstance()` — constructing repo in `MapHostViewModel` init runs before `createMapView()` otherwise crashes with `MapLibreConfigurationException`
+- **Offline region style URL:** `OfflineTilePyramidRegionDefinition` does **not** support `asset://` or `file://` (stalls at 0% — MapLibre #5271); use `MapStyleAssetResolver.prepareOfflineRegionStyleUri()` → loopback HTTP via `OfflineStyleLocalServer` (`http://127.0.0.1:28777/...`); region metadata must include `styleTransport: loopback-v1`
+- **Offline pack vs display style:** download uses `mix-auto-offline-pack.json` (vector roads + glyphs/sprites + highway label layer); online map uses `asset://map/mix-auto-driving.json`; full Liberty fork enumerates thousands of font resources and hangs on "Preparing…"
+- **Offline download UX:** `requiredResourceCount == 0` → UI "Preparing…" with **indeterminate** `LinearProgressIndicator` (not frozen 0% bar); set observer **before** `STATE_ACTIVE` or progress stalls at 0% on device; replace incomplete/legacy SDK region on retry; ✕ cancel calls `deleteRegion`; `PREPARE_TIMEOUT_MS` **120s**; download callbacks on `Dispatchers.Main`
+- **Offline download progress display:** MapLibre `downloadProgress` is resource-count only — UI uses `displayProgress` = max(resource%, byte%) via `computeOfflineDisplayProgress()` + catalog `sizeEstimateMb` upper bound (`parseSizeEstimateUpperMb`); primary label `formatOfflineMbProgressLabel()` → `~X MB of ~Y MB`; bar + `MapDataViewModel` + notification use `displayProgress`, not raw resource %
+- **Offline download completion UX:** `MapDataUiState.DownloadingOfflineMap.isFinishing` — on download end set `progress=1f`, show "Finishing installation…" **800 ms** (`FINISHING_TRANSITION_MS`) before `refreshCatalogAfterChange()` — avoids jump from low % to Installed
+- **Offline download failures:** `OfflineMapDownloadService.handleDownloadFailure()` must call `reportRegionDownloadError()` + `pauseDownload()` — do not only log and `stopForeground` (silent idle UX)
+- **Legacy offline region resume:** `isResumable(region, status)` rejects missing/non-`loopback-v1` `styleTransport` metadata and `file://`/`asset://` baked style URLs — forces delete+recreate on next Download/Update; boot `resumeIfNeeded()` skips these
+- **Planet TileJSON cache:** `MapStyleAssetResolver` caches to `filesDir/map/planet-tilejson.json` (24h TTL); stale cache used as fallback when `tiles.openfreemap.org/planet` fetch fails
+- **Offline download hints:** `OfflineDownloadStatusHints` in `MapDataOverlay.kt` — after 30s preparing show OpenFreeMap queue message; stall hint after **2 min** when **both** `completedResourceCount` and `completedResourceSize` unchanged; low resource % + bytes moving → "Downloading map tiles — progress may look slow at first"; repo stall kick also resets on byte changes

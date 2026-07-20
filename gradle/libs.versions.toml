@@ -16,6 +16,7 @@ lifecycleViewModel = "2.8.3"
 maplibre = "11.5.1"
 coroutines = "1.8.0"
 media = "1.7.0"
+detekt = "1.23.6"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -42,4 +43,5 @@ androidx-media = { group = "androidx.media", name = "media", version.ref = "medi
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
 kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
+detekt = { id = "io.gitlab.arturbosch.detekt", version.ref = "detekt" }
 

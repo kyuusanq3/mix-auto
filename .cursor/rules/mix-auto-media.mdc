@@ -1,0 +1,32 @@
+---
+description: MixAuto media session, album art, and audio source picker
+globs: app/src/main/java/**/ui/dashboard/MediaPlayerPane.kt,app/src/main/java/**/ui/dashboard/AlbumArtDisplay.kt,app/src/main/java/**/data/media/**,app/src/main/java/**/ui/media/**,app/src/main/java/**/ui/components/AudioPlayerPickerOverlay.kt,app/src/main/java/**/ui/components/AudioPlayerUtils.kt,app/src/main/java/**/ui/components/AppIconUtils.kt,app/src/main/java/**/service/MixAutoNotificationListenerService.kt
+alwaysApply: false
+---
+
+# MixAuto media session, album art, audio source
+
+## Media session / now playing
+
+- Media controls in `MediaPlayerPane.kt`: each button in `Row` needs `Modifier.weight(1f)` + `requiredSize(MinTapTarget)` or last button shrinks when pane is narrow
+- Now playing: `MediaSessionRepository` + `MixAutoNotificationListenerService`; user must enable Notification access — `MediaSessionManager.getActiveSessions()` requires enabled listener component
+- `MainActivity.onResume()` calls `MediaSessionRepository.refreshSessions()` after returning from notification-access settings or media apps
+- Media auto-play on boot: `MediaSessionRepository.maybeAutoPlay()` once per process (`hasAutoPlayed`) when session has metadata but is not `STATE_PLAYING`; call from `attachController()` **and** retry in `onMetadataChanged()` (late metadata on head unit boot) and same-token re-attach branch; requires notification access enabled; **`ensureDefaultPlayerIfNeeded()`** in `MainActivity.refreshMediaSessionsAndBootAudio()` wakes `LauncherPreferences.defaultAudioPackage` once per process via `BackgroundAudioLauncher.wakeWithForegroundFallback()` (MediaBrowser bind + play, not `launchAppByPackage`; fallback launch+refocus Mix Auto), then retries `refreshSessions()` at 2s/5s/10s; user taps still use `launchAppByPackage()`; register `OnActiveSessionsChangedListener` on first successful refresh
+- Default audio source: `LauncherPreferences.defaultAudioPackage` (key `default_audio_package`, empty = unset) → `LauncherViewModel.updateDefaultAudioPackage()`; clear on init if `canLaunchApp()` fails; no default + no session → inline `AudioPlayerListContent` in `MediaPlayerPane` ("Choose the default audio source", tap sets default + launches); default set + idle → normal player + boot launch fallback; active session always wins in `selectController()`
+- Audio player picker: shared `AudioPlayerListContent` in `AudioPlayerPickerOverlay.kt` — overlay tap launches app only; long-press → confirm dialog → set default; row suffix `(Default)`; overlay bottom hint **Long press to set as default** (`showLongPressHint` false in setup mode)
+- Audio player picker (no active session): `MediaPlayerPane` local `showAudioPicker` state + `Box` overlay — NOT `ActivePanel`; `AudioPlayerUtils.loadAudioPlayerApps()` merges `CATEGORY_APP_MUSIC` activities + `MediaBrowserService` services (dedupe, exclude own package, require launch intent); manifest `<queries>` needs both intents for API 30+ visibility; `AudioPlayerPickerOverlay.kt` uses `carLazyScrollbar` + `launchAppByPackage()` on row tap; long-press row to change default
+- Source app icon helpers: `ui/components/AppIconUtils.kt` — `rememberAppIcon()`, `canLaunchApp()`, `launchAppByPackage()`; drawable→bitmap via private `Drawable.toImageBitmap()` (no Accompanist)
+- `MediaSessionRepository.setPreferredAudioSource(packageName)`: in-memory `preferredPackage`; `selectController()` attaches preferred only — returns null (idle UI) when preferred has no session, does not fall back to another playing app
+- `loadAudioPlayerPackageNames()` in `AudioPlayerUtils.kt` — lightweight set for drawer/dock detection without loading icons
+- Transport controls row order: `[Source app] [Prev] [Play/Pause] [Next] [Like]` — first slot is `SourceAppButton`: **tap** = launch `sourcePackage` when session active, else open `AudioPlayerPickerOverlay` (shows default app icon when default set, cyan `MusicNote` when not); **long-press** always opens picker (required after default+boot — active session tap alone only launches app); Like is 5th button with `active = mediaState.isLiked == true`
+- Media like: `MediaSessionRepository.toggleLike()` via `RATING_HEART` / custom actions; never send dislike/thumb_down (YT Music skips on unlike); `likedTrackCache` keyed by media ID
+- Media shuffle (repo only): `MediaSessionRepository.toggleShuffle()` + `readShuffleState()` — YT Music returns `SHUFFLE_MODE_INVALID`; use `ACTION_SET_SHUFFLE_MODE` actions-bit for `supportsShuffle` and `cachedShuffleOn` when toggling if mode stays invalid; third-party shuffle UI removed as unreliable
+
+## Album art
+
+- Album art gestures in `MediaPlayerPane.kt`: double-tap play/pause; swipe L/R prev/next; swipe up like; long-press opens `AlbumArtModePicker` — disable normal `pointerInput` while `isPickerOpen`; swipe down does nothing (shuffle removed)
+- Album art modes in `AlbumArtDisplay.kt`: `PLAIN`, `VINYL` (spinning record), `VISUALIZER` (animated bars); `AlbumArtModeContent()` helper; picker tap or second long-press confirms selection; **`AlbumArtMode.VISUALIZER` choice persisted** via `LauncherPreferences.albumArtMode` / `LauncherViewModel.updateAlbumArtMode()` — do NOT store in `remember` inside `MediaPlayerPane`
+- Spectrum visualizer (`AnimatedSpectrumVisualizer` in `AlbumArtDisplay.kt`): shared animation by album-art **VISUALIZER** and **`DockMiniVisualizer`**; **album** = thin bars (`VisualizerBarLayout.THIN`, 24 bars, 42% slot width); **dock icon** = thick bars (`VisualizerBarLayout.DOCK`, 6 bars, legacy left-cluster width formula); **horizontal collapsed title strip** = `DockMiniVisualizer(wide = true, barCount = 32)` → `VisualizerBarLayout.DOCK_WIDE` (even slots across full 280dp); do NOT use DOCK_WIDE/slot formula on icon-sized dock visualizers — thins bars; bottom-aligned; bass→treble band blend + frame smoothing; beat-ish motion from `playbackPositionMs`
+- Visualizer not reacting to real bass/treble: MediaSession provides `playbackPositionMs` only — no FFT/Visualizer API for YT Music on AOSP; motion is position-anchored simulation, not audio analysis
+- Vinyl circular clip: apply `clip(CircleShape)` then `graphicsLayer { rotationZ }` on the Box — do not use `Modifier.rotate` before clip (produces rectangular artifact)
+- Album art sizing: `BoxWithConstraints` → `(if (maxWidth < maxHeight) maxWidth else maxHeight) * 0.92f` — do not use `kotlin.math.min` on Dp values

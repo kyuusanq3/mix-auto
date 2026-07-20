@@ -1,0 +1,66 @@
+---
+description: MixAuto Android car launcher — always-applied core stack, theme, and architecture conventions
+alwaysApply: true
+---
+
+# MixAuto Android Car Launcher
+
+Custom HOME launcher for Eonon head units. Jetpack Compose + Material 3, sensor orientation (portrait + landscape), automotive-grade dark UI.
+
+## Stack
+
+- Package: `com.kyuusanq3.mixauto`
+- Compose BOM `2024.06.00`, Kotlin `1.9.24`, Compose Compiler `1.5.14`
+- Entry: `MainActivity` → `MixAutoTheme` → `DashboardScreen`
+- See `AGENTS.md` at repo root for full layout and build instructions
+- Kotlin and Compose Compiler versions must stay paired in `gradle/libs.versions.toml`
+- Dashboard is 100% Compose — do not recreate an XML main layout (`activity_main.xml` was removed)
+- Do NOT add `play-services-location` or any `com.google.android.gms` dependency — app targets AOSP head units with no Google Play Services
+- App display name **Mix Auto** (`strings.xml`); theme style `Theme.MixAuto`
+- Launcher icon: `ic_launcher_background.xml` solid `#000000`, `ic_launcher_foreground.xml` cyan pin `#00E5FF` with white center dot
+
+## UI rules
+
+- Use `MixAutoTheme`; never light mode — head unit is always dark
+- Colors: `OledBlack`, `DeepCharcoal`, `DarkSurface`, `ElectricCyan` from `ui/theme/Color.kt`
+- Sizes: `CarDimensions` object — min tap target 64dp, primary 84dp
+- Text: prefer `CarHeadlineText`, `CarBodyText`, `CarLabelText` from `ui/theme/Type.kt` (ellipsis + maxLines enforced)
+- Import theme text composables explicitly when used in dashboard files — a missing `CarLabelText` import in `DashboardScreen.kt` has caused compile failures before
+
+## High-level architecture
+
+```
+MainActivity (MapHostViewModel — mapEngine, navigationVoice, localPlaces)
+  └── MixAutoTheme
+        └── DashboardScreen(mapEngine, mapDataViewModel)
+              ├── CarMapViewContainer — map pane
+              ├── MediaPlayerPane + ShortcutDock
+              ├── PoiDetailDrawer — full-screen overlay when map POI/pin selected
+              ├── RoutePickerPane — media pane when ≥2 routes
+              └── MapDataOverlay — offline POI / offline map tile downloads
+```
+
+- Map: `CarMapEngine` interface in `domain/map/`; swap `MapLibreEngineImpl()` in `MainActivity`/`MapHostViewModel` only
+- `LauncherViewModel` — activePanel, poiReturnToSearch, destinationSearchState (rotation-safe UI state)
+
+## Shortcut packages (Eonon / AOSP)
+
+- Settings: `com.android.settings`
+- Radio: try `com.android.fmradio`, `com.caf.fmradio`, `com.eonon.radio`
+- Bluetooth: settings package or `Settings.ACTION_BLUETOOTH_SETTINGS` fallback
+
+## Manifest
+
+- HOME + DEFAULT + LAUNCHER intent-filters on `MainActivity` (Launcher Mode is opt-in via `LauncherModeAlias`)
+- `launchMode="singleTask"`, `screenOrientation="sensor"`
+
+## Detailed topic rules
+
+Deep implementation notes are split by subsystem so only the relevant rules load for the file you're editing:
+
+- `.cursor/rules/mix-auto-map-engine.mdc` — camera, GPS/puck, route rendering, style/traffic overlay, custom pins, search origin
+- `.cursor/rules/mix-auto-navigation.mdc` — turn-by-turn TTS, reroute, multi-route selection/picker
+- `.cursor/rules/mix-auto-media.mdc` — media session, album art, audio source picker
+- `.cursor/rules/mix-auto-dashboard-ui.mdc` — dashboard layout, shortcut dock, panels, status bar, onboarding, app drawer
+- `.cursor/rules/mix-auto-places.mdc` — offline Overture POI database + offline map tile regions
+- `.cursor/rules/mix-auto-build-release.mdc` — build, signing, release, emulator GPS tooling
