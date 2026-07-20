@@ -61,6 +61,7 @@ import org.maplibre.android.geometry.LatLng
 import org.maplibre.android.geometry.LatLngBounds
 import org.maplibre.android.location.LocationComponent
 import org.maplibre.android.location.LocationComponentActivationOptions
+import org.maplibre.android.location.LocationComponentConstants
 import org.maplibre.android.location.LocationComponentOptions
 import org.maplibre.android.location.engine.LocationEngine
 import org.maplibre.android.location.engine.LocationEngineCallback
@@ -76,6 +77,7 @@ import org.maplibre.android.maps.Style
 import org.maplibre.android.offline.OfflineManager
 import org.maplibre.android.style.expressions.Expression
 import org.maplibre.android.style.layers.FillExtrusionLayer
+import org.maplibre.android.style.layers.Layer
 import org.maplibre.android.style.layers.LineLayer
 import org.maplibre.android.style.layers.Property
 import org.maplibre.android.style.layers.PropertyFactory
@@ -466,6 +468,34 @@ class MapLibreEngineImpl(
         }
     }
 
+    /**
+     * Bottom-most LocationComponent layer currently in the style (style.layers is ordered
+     * bottom-to-top), or null if the puck hasn't been activated yet. `layerAbove` on
+     * LocationComponentOptions only takes effect at activation time — calling applyStyle()
+     * afterwards does NOT retroactively move the puck's layers, so any overlay added later
+     * (e.g. traffic toggled on mid-session) must be inserted below this anchor instead of
+     * trying to push the puck above the overlay.
+     */
+    private fun findPuckAnchorLayerId(style: Style): String? {
+        return style.layers.firstOrNull { it.id in PUCK_LAYER_IDS }?.id
+    }
+
+    /**
+     * Add [layer] just below the location puck when it's active, so it can never cover the
+     * puck regardless of style type (vector Liberty style has no RASTER_BASE_LAYER_ID, so a
+     * plain style.addLayer() call appends on top of everything — including the puck). Falls
+     * back to [fallbackAboveId] (or the very top) when the puck isn't active yet.
+     */
+    private fun addLayerBelowPuckOrAbove(style: Style, layer: Layer, fallbackAboveId: String?) {
+        val puckAnchor = findPuckAnchorLayerId(style)
+        when {
+            puckAnchor != null -> style.addLayerBelow(layer, puckAnchor)
+            fallbackAboveId != null && style.getLayer(fallbackAboveId) != null ->
+                style.addLayerAbove(layer, fallbackAboveId)
+            else -> style.addLayer(layer)
+        }
+    }
+
     override fun setMapTapDismissHandler(handler: (() -> Unit)?) {
         mapTapDismissHandler = handler
     }
@@ -666,11 +696,9 @@ class MapLibreEngineImpl(
         val trafficLayer = RasterLayer(TRAFFIC_LAYER_ID, TRAFFIC_SOURCE_ID).withProperties(
             PropertyFactory.rasterOpacity(0.7f),
         )
-        if (style.getLayer(RASTER_BASE_LAYER_ID) != null) {
-            style.addLayerAbove(trafficLayer, RASTER_BASE_LAYER_ID)
-        } else {
-            style.addLayer(trafficLayer)
-        }
+        // Vector (Liberty) style has no RASTER_BASE_LAYER_ID, so a plain addLayer() call would
+        // append on top of the entire stack — including the puck. Always stay below the puck.
+        addLayerBelowPuckOrAbove(style, trafficLayer, RASTER_BASE_LAYER_ID)
         val existingCasing = style.getLayer(ROUTE_TRAVELED_CASING_LAYER_ID)
         if (existingCasing != null) {
             restackRouteLayersAbove(style, TRAFFIC_LAYER_ID)
@@ -1559,10 +1587,7 @@ class MapLibreEngineImpl(
      * is safe — [moveCamera] viewport padding drops follow mode.
      */
     private fun applyPuckPaddingUpdate(map: MapLibreMap, bypassRenderThrottle: Boolean = false) {
-        lastAppliedTrackingPadding = null
-        lastEngagedTrackingPadding = null
-        lastPaddingMapWidth = 0
-        lastPaddingMapHeight = 0
+        invalidateDrivingPaddingCache()
         val component = map.locationComponent
         val componentReady = component.isLocationComponentActivated &&
             component.isLocationComponentEnabled
@@ -1617,10 +1642,7 @@ class MapLibreEngineImpl(
     }
 
     private fun clearViewportPaddingForPreview(map: MapLibreMap) {
-        lastAppliedTrackingPadding = null
-        lastEngagedTrackingPadding = null
-        lastPaddingMapWidth = 0
-        lastPaddingMapHeight = 0
+        invalidateDrivingPaddingCache()
         applyMapPaddingImmediate(map, ViewportPadding(0, 0, 0, 0))
         applyPaddingWhileTrackingIfEngaged(map.locationComponent, ViewportPadding(0, 0, 0, 0))
     }
@@ -2957,8 +2979,7 @@ class MapLibreEngineImpl(
         if (component.isLocationComponentActivated && component.isLocationComponentEnabled) {
             component.cameraMode = CameraMode.NONE
         }
-        lastAppliedTrackingPadding = null
-        lastEngagedTrackingPadding = null
+        invalidateDrivingPaddingCache()
         map.cancelTransitions()
         applyMapPaddingImmediate(map, ViewportPadding(0, 0, 0, 0))
 
@@ -3231,6 +3252,18 @@ class MapLibreEngineImpl(
     private fun applyDrivingViewportPadding(map: MapLibreMap) {
         if (_uiState.value.isInTopDownView) return
         applyMapPaddingImmediate(map, computeDrivingViewportPadding(map))
+    }
+
+    /**
+     * Clears the padding dedup cache so the next [applyDrivingTrackingPadding] call re-pushes the
+     * puck offset instead of treating it as unchanged. Needed after anything that may have reset
+     * MapLibre's native `paddingWhileTracking` state without our knowledge (e.g. app resume).
+     */
+    private fun invalidateDrivingPaddingCache() {
+        lastAppliedTrackingPadding = null
+        lastEngagedTrackingPadding = null
+        lastPaddingMapWidth = 0
+        lastPaddingMapHeight = 0
     }
 
     /** Map padding alone does not offset the puck during TRACKING_GPS — use paddingWhileTracking too. */
@@ -4267,17 +4300,25 @@ class MapLibreEngineImpl(
         }
 
         runCatching {
-            val locationEngine = createLocationEngine(ctx)
-            this.locationEngine = locationEngine
             val locationComponent = map.locationComponent
+            val alreadyActivated = locationComponent.isLocationComponentActivated
+            // Reuse the existing engine chain on repeat activation (e.g. app resume after
+            // minimizing) — recreating it here discards bearing/smoothing state and is never
+            // actually wired into the component, which stays on the engine from first activation.
+            val locationEngine = if (alreadyActivated) {
+                this.locationEngine ?: createLocationEngine(ctx)
+            } else {
+                createLocationEngine(ctx)
+            }
+            this.locationEngine = locationEngine
             val componentOptions = buildLocationComponentOptions(ctx, style)
             val engineRequest = buildDrivingLocationEngineRequest()
-            val options = LocationComponentActivationOptions.builder(ctx, style)
-                .locationEngine(locationEngine)
-                .locationComponentOptions(componentOptions)
-                .locationEngineRequest(engineRequest)
-                .build()
-            if (!locationComponent.isLocationComponentActivated) {
+            if (!alreadyActivated) {
+                val options = LocationComponentActivationOptions.builder(ctx, style)
+                    .locationEngine(locationEngine)
+                    .locationComponentOptions(componentOptions)
+                    .locationEngineRequest(engineRequest)
+                    .build()
                 locationComponent.activateLocationComponent(options)
             } else {
                 locationComponent.applyStyle(componentOptions)
@@ -4286,6 +4327,10 @@ class MapLibreEngineImpl(
             locationComponent.renderMode = RenderMode.GPS
             locationComponent.locationEngineRequest = engineRequest
             locationComponent.setMaxAnimationFps(DRIVING_ANIMATION_FPS)
+            // Backgrounding/resuming (minimize, switch apps) can silently drop the native
+            // paddingWhileTracking offset — invalidate the cache so the puck offset from Map
+            // Settings is force-reapplied instead of staying screen-centered.
+            invalidateDrivingPaddingCache()
             applyDrivingTrackingPadding(map)
 
             flushPendingLocationFix()
@@ -5412,6 +5457,15 @@ class MapLibreEngineImpl(
 
     companion object {
         private const val TAG = "MapLibreEngineImpl"
+        /** Every layer id the LocationComponent (puck) can render, used to keep overlays below it. */
+        private val PUCK_LAYER_IDS = setOf(
+            LocationComponentConstants.SHADOW_LAYER,
+            LocationComponentConstants.BACKGROUND_LAYER,
+            LocationComponentConstants.FOREGROUND_LAYER,
+            LocationComponentConstants.BEARING_LAYER,
+            LocationComponentConstants.ACCURACY_LAYER,
+            LocationComponentConstants.PULSING_CIRCLE_LAYER,
+        )
         private const val MAP_UI_MARGIN_DP = 8f
         /** MapLibre logo width (~92 dp) plus a small gap before the ℹ button. */
         private const val ATTRIBUTION_LEFT_MARGIN_DP = 98f

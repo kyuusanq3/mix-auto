@@ -163,6 +163,27 @@ class LauncherPreferences(context: Context) {
             prefs.edit().putString(KEY_DEFAULT_AUDIO_PACKAGE, value).apply()
         }
 
+    /** Playlist/station URL or app deep link opened when nothing resumes on startup. */
+    var audioFallbackResumeLink: String
+        get() = prefs.getString(KEY_AUDIO_FALLBACK_RESUME_LINK, "") ?: ""
+        set(value) {
+            prefs.edit().putString(KEY_AUDIO_FALLBACK_RESUME_LINK, value).apply()
+        }
+
+    /** Off by default — gestures (double-tap, swipe) already cover play/pause/skip/like. */
+    var showAlbumArtControls: Boolean
+        get() = prefs.getBoolean(KEY_SHOW_ALBUM_ART_CONTROLS, false)
+        set(value) {
+            prefs.edit().putBoolean(KEY_SHOW_ALBUM_ART_CONTROLS, value).apply()
+        }
+
+    /** Master switch for boot-wake + fallback-link behavior; does not affect resuming an already-detected session. */
+    var resumeAudioOnStartup: Boolean
+        get() = prefs.getBoolean(KEY_RESUME_AUDIO_ON_STARTUP, true)
+        set(value) {
+            prefs.edit().putBoolean(KEY_RESUME_AUDIO_ON_STARTUP, value).apply()
+        }
+
     var dockPinnedPackages: List<String>
         get() {
             val json = prefs.getString(KEY_DOCK_PINNED_PACKAGES, null) ?: return emptyList()
@@ -243,6 +264,9 @@ class LauncherPreferences(context: Context) {
         private const val KEY_SAVED_PLACES = "saved_places"
         private const val KEY_ONBOARDING_VERSION = "onboarding_version"
         private const val KEY_DEFAULT_AUDIO_PACKAGE = "default_audio_package"
+        private const val KEY_AUDIO_FALLBACK_RESUME_LINK = "audio_fallback_resume_link"
+        private const val KEY_SHOW_ALBUM_ART_CONTROLS = "show_album_art_controls"
+        private const val KEY_RESUME_AUDIO_ON_STARTUP = "resume_audio_on_startup"
         private const val KEY_DOCK_PINNED_PACKAGES = "dock_pinned_packages"
         private const val KEY_ALBUM_ART_MODE = "album_art_mode"
         private const val KEY_SHOW_STATUS_STRIP = "show_status_strip"

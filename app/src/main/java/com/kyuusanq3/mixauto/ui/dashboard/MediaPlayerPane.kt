@@ -25,17 +25,21 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Favorite
+import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.material.icons.outlined.FavoriteBorder
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -53,18 +57,21 @@ import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.viewmodel.compose.viewModel
 import com.kyuusanq3.mixauto.domain.media.MediaPlaybackState
 import com.kyuusanq3.mixauto.ui.components.AudioPlayerListContent
-import com.kyuusanq3.mixauto.ui.components.AudioPlayerPickerOverlay
+import com.kyuusanq3.mixauto.ui.components.PanelHeaderIconButton
 import com.kyuusanq3.mixauto.ui.components.canLaunchApp
 import com.kyuusanq3.mixauto.ui.components.launchAppByPackage
 import com.kyuusanq3.mixauto.ui.components.rememberAppIcon
+import com.kyuusanq3.mixauto.ui.settings.LauncherViewModel
 import com.kyuusanq3.mixauto.ui.theme.CarBodyText
 import com.kyuusanq3.mixauto.ui.theme.CarDimensions
 import com.kyuusanq3.mixauto.ui.theme.CarHeadlineText
 import com.kyuusanq3.mixauto.ui.theme.CarLabelText
 import com.kyuusanq3.mixauto.ui.theme.DarkSurface
 import com.kyuusanq3.mixauto.ui.theme.ElectricCyan
+import com.kyuusanq3.mixauto.ui.theme.OledBlack
 import kotlin.math.abs
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
@@ -86,12 +93,14 @@ fun MediaPlayerPane(
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
+    val launcherViewModel: LauncherViewModel = viewModel()
+    val onOpenAudioSettings = { launcherViewModel.setActivePanel(ActivePanel.AUDIO_SETTINGS) }
     val needsDefaultSetup = defaultAudioPackage.isBlank() &&
         !mediaState.hasActiveSession &&
         !mediaState.needsNotificationAccess
     var isPickerOpen by remember { mutableStateOf(false) }
-    var showAudioPicker by remember { mutableStateOf(false) }
     var pickerIndex by remember { mutableIntStateOf(0) }
+    var showGestureHint by remember { mutableStateOf(false) }
     val swipeThresholdPx = with(LocalDensity.current) { AlbumArtSwipeThreshold.toPx() }
     val onPlayPauseState = rememberUpdatedState(onPlayPause)
     val onSkipPreviousState = rememberUpdatedState(onSkipPrevious)
@@ -99,6 +108,10 @@ fun MediaPlayerPane(
     val onToggleLikeState = rememberUpdatedState(onToggleLike)
     val supportsLikeState = rememberUpdatedState(mediaState.supportsLike)
     val hasActiveSessionState = rememberUpdatedState(mediaState.hasActiveSession)
+    // pointerInput below is keyed on (hasActiveSession, supportsLike, swipeThresholdPx) only —
+    // albumArtMode must go through rememberUpdatedState too, or a long-press after switching
+    // modes reopens the picker pre-selecting the stale mode from when the gesture was last set up.
+    val albumArtModeState = rememberUpdatedState(albumArtMode)
 
     ElevatedCard(
         modifier = modifier.padding(
@@ -194,7 +207,7 @@ fun MediaPlayerPane(
                                                     }
                                                 },
                                                 onLongPress = {
-                                                    pickerIndex = albumArtMode.ordinal
+                                                    pickerIndex = albumArtModeState.value.ordinal
                                                     isPickerOpen = true
                                                 },
                                             )
@@ -298,7 +311,7 @@ fun MediaPlayerPane(
                 }
             }
 
-            if (!mediaState.needsNotificationAccess) {
+            if (!mediaState.needsNotificationAccess && launcherViewModel.showAlbumArtControls) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -309,7 +322,7 @@ fun MediaPlayerPane(
                         sourcePackage = mediaState.sourcePackage,
                         defaultAudioPackage = defaultAudioPackage,
                         hasActiveSession = mediaState.hasActiveSession,
-                        onOpenPicker = { showAudioPicker = true },
+                        onOpenPicker = onOpenAudioSettings,
                         modifier = Modifier.weight(1f),
                     )
                     MediaControlButton(
@@ -346,17 +359,67 @@ fun MediaPlayerPane(
             }
         }
 
-            if (showAudioPicker) {
-                AudioPlayerPickerOverlay(
-                    defaultAudioPackage = defaultAudioPackage,
-                    onSetDefaultAudioPackage = onSetDefaultAudioPackage,
-                    onDismiss = { showAudioPicker = false },
-                    modifier = Modifier.fillMaxSize(),
+            Row(modifier = Modifier.align(Alignment.TopEnd)) {
+                if (!mediaState.needsNotificationAccess && !launcherViewModel.showAlbumArtControls) {
+                    PanelHeaderIconButton(
+                        onClick = { showGestureHint = true },
+                        contentDescription = "Playback gesture help",
+                        icon = Icons.Filled.Info,
+                    )
+                }
+                PanelHeaderIconButton(
+                    onClick = onOpenAudioSettings,
+                    contentDescription = "Audio settings",
+                    icon = Icons.Filled.MoreVert,
+                )
+            }
+
+            if (showGestureHint) {
+                GestureHintDialog(
+                    supportsLike = mediaState.supportsLike,
+                    onDismiss = { showGestureHint = false },
                 )
             }
         }
         }
     }
+}
+
+@Composable
+private fun GestureHintDialog(
+    supportsLike: Boolean,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = OledBlack,
+        title = {
+            CarHeadlineText(
+                text = "Playback gestures",
+                style = MaterialTheme.typography.headlineSmall,
+            )
+        },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                CarBodyText(text = "Double-tap album art \u2192 Play / Pause", style = MaterialTheme.typography.bodyMedium)
+                CarBodyText(text = "Swipe left \u2192 Previous track", style = MaterialTheme.typography.bodyMedium)
+                CarBodyText(text = "Swipe right \u2192 Next track", style = MaterialTheme.typography.bodyMedium)
+                if (supportsLike) {
+                    CarBodyText(text = "Swipe up \u2192 Like", style = MaterialTheme.typography.bodyMedium)
+                }
+                CarBodyText(text = "Long-press \u2192 Change album art style", style = MaterialTheme.typography.bodyMedium)
+                CarBodyText(
+                    text = "Turn these back into on-screen buttons anytime from Audio Settings (\u22ee).",
+                    style = MaterialTheme.typography.labelMedium,
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) {
+                CarLabelText(text = "Got it", style = MaterialTheme.typography.labelLarge)
+            }
+        },
+    )
 }
 
 @OptIn(ExperimentalFoundationApi::class)

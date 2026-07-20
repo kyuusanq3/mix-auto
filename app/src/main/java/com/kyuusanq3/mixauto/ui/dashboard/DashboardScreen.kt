@@ -57,6 +57,7 @@ import com.kyuusanq3.mixauto.domain.map.SearchResultPlace
 import com.kyuusanq3.mixauto.domain.media.MediaPlaybackState
 import com.kyuusanq3.mixauto.ui.components.AddPlaceFromLinkContent
 import com.kyuusanq3.mixauto.ui.components.AppUpdatePrompts
+import com.kyuusanq3.mixauto.ui.components.AudioSettingsPanelContent
 import com.kyuusanq3.mixauto.ui.components.CarMapViewContainer
 import com.kyuusanq3.mixauto.ui.components.DashboardStatusBar
 import com.kyuusanq3.mixauto.ui.components.carScrollbar
@@ -225,6 +226,7 @@ fun DashboardScreen(
             ActivePanel.POI_DETAIL,
             ActivePanel.MAP_DATA,
             ActivePanel.ROUTE_PICKER,
+            ActivePanel.AUDIO_SETTINGS,
             -> Unit
             ActivePanel.HIDDEN -> {
                 launcherViewModel.updateMusicPaneEnabled(true)
@@ -349,7 +351,8 @@ fun DashboardScreen(
             activePanel == ActivePanel.ADD_PLACE ||
             activePanel == ActivePanel.POI_DETAIL ||
             activePanel == ActivePanel.MAP_DATA ||
-            activePanel == ActivePanel.ROUTE_PICKER
+            activePanel == ActivePanel.ROUTE_PICKER ||
+            activePanel == ActivePanel.AUDIO_SETTINGS
     val effectiveMapMediaRatio =
         if (isSplitLockedForOverlay) OVERLAY_MAP_MEDIA_RATIO else mapMediaRatio
     val effectiveMediaWeight = 1f - effectiveMapMediaRatio
@@ -372,6 +375,7 @@ fun DashboardScreen(
             ActivePanel.POI_DETAIL -> mapEngine.setMapTapDismissHandler(onDismissSelectedPoi)
             ActivePanel.SEARCH,
             ActivePanel.MAP_DATA,
+            ActivePanel.AUDIO_SETTINGS,
             -> mapEngine.setMapTapDismissHandler(onDismissPanel)
             else -> mapEngine.setMapTapDismissHandler(null)
         }
@@ -1411,6 +1415,12 @@ private fun MediaOrSettingsPane(
                     onPuckVerticalOffsetChange = onPuckVerticalOffsetChange,
                     onPuckScaleChange = onPuckScaleChange,
                     onTomTomApiKeyChange = onTomTomApiKeyChange,
+                    onDismiss = onDismissPanel,
+                    modifier = Modifier.fillMaxSize(),
+                )
+            }
+            ActivePanel.AUDIO_SETTINGS -> {
+                AudioSettingsPanelContent(
                     onDismiss = onDismissPanel,
                     modifier = Modifier.fillMaxSize(),
                 )

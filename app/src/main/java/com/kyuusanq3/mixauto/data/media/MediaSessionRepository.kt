@@ -90,18 +90,75 @@ class MediaSessionRepository(context: Context) {
         }
     }
 
-    fun ensureDefaultPlayerIfNeeded(defaultPackage: String?) {
-        if (defaultPackage.isNullOrBlank()) return
+    fun ensureDefaultPlayerIfNeeded(
+        defaultPackage: String?,
+        fallbackResumeLink: String? = null,
+        resumeOnStartupEnabled: Boolean = true,
+    ) {
+        if (!resumeOnStartupEnabled) return
         if (hasAttemptedBootLaunch) return
         if (_state.value.hasActiveSession) return
+
+        val trimmedDefault = defaultPackage?.takeIf { it.isNotBlank() }
+        val trimmedFallback = fallbackResumeLink?.takeIf { it.isNotBlank() }
+        if (trimmedDefault == null && trimmedFallback == null) return
         hasAttemptedBootLaunch = true
-        Log.i(TAG, "Waking default audio app on boot: $defaultPackage")
-        BackgroundAudioLauncher.wakeWithForegroundFallback(appContext, defaultPackage)
+
+        trimmedDefault?.let { packageName ->
+            Log.i(TAG, "Waking default audio app on boot: $packageName")
+            BackgroundAudioLauncher.wakeWithForegroundFallback(appContext, packageName)
+        }
         for (delayMs in BOOT_REFRESH_DELAYS_MS) {
             scope.launch {
                 delay(delayMs)
                 if (!_state.value.hasActiveSession) {
                     refreshSessions()
+                }
+            }
+        }
+
+        trimmedFallback?.let { link ->
+            scope.launch {
+                delay(FALLBACK_LAUNCH_DELAY_MS)
+                if (!_state.value.hasActiveSession || _state.value.title.isBlank()) {
+                    BackgroundAudioLauncher.launchFallbackResumeLink(appContext, link, trimmedDefault)
+                }
+            }
+        }
+    }
+
+    /**
+     * User-initiated resume attempt (e.g. right after editing Audio Settings) — unlike
+     * [ensureDefaultPlayerIfNeeded] this is not gated by [hasAttemptedBootLaunch] and uses
+     * shorter delays since the app is already running in the foreground.
+     */
+    fun attemptResumeNow(defaultPackage: String?, fallbackResumeLink: String?) {
+        if (_state.value.hasActiveSession) return
+        val trimmedDefault = defaultPackage?.takeIf { it.isNotBlank() }
+        val trimmedFallback = fallbackResumeLink?.takeIf { it.isNotBlank() }
+        if (trimmedDefault == null && trimmedFallback == null) return
+
+        if (trimmedDefault == null) {
+            Log.i(TAG, "Manual resume attempt: no default source set, launching fallback link")
+            trimmedFallback?.let { BackgroundAudioLauncher.launchFallbackResumeLink(appContext, it, null) }
+            return
+        }
+
+        Log.i(TAG, "Manual resume attempt: waking $trimmedDefault")
+        BackgroundAudioLauncher.wakeWithForegroundFallback(appContext, trimmedDefault)
+        for (delayMs in MANUAL_RESUME_REFRESH_DELAYS_MS) {
+            scope.launch {
+                delay(delayMs)
+                if (!_state.value.hasActiveSession) {
+                    refreshSessions()
+                }
+            }
+        }
+        trimmedFallback?.let { link ->
+            scope.launch {
+                delay(MANUAL_FALLBACK_LAUNCH_DELAY_MS)
+                if (!_state.value.hasActiveSession || _state.value.title.isBlank()) {
+                    BackgroundAudioLauncher.launchFallbackResumeLink(appContext, link, trimmedDefault)
                 }
             }
         }
@@ -466,6 +523,9 @@ class MediaSessionRepository(context: Context) {
     companion object {
         private const val TAG = "MediaSessionRepository"
         private val BOOT_REFRESH_DELAYS_MS = listOf(2_000L, 5_000L, 10_000L)
+        private const val FALLBACK_LAUNCH_DELAY_MS = 12_000L
+        private val MANUAL_RESUME_REFRESH_DELAYS_MS = listOf(1_500L, 3_500L)
+        private const val MANUAL_FALLBACK_LAUNCH_DELAY_MS = 5_000L
 
         @Volatile
         private var instance: MediaSessionRepository? = null

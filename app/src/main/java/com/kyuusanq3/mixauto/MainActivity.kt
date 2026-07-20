@@ -265,6 +265,8 @@ class MainActivity : ComponentActivity() {
         if (::launcherViewModel.isInitialized) {
             repository.ensureDefaultPlayerIfNeeded(
                 launcherViewModel.defaultAudioPackage.takeIf { it.isNotBlank() },
+                launcherViewModel.audioFallbackResumeLink.takeIf { it.isNotBlank() },
+                launcherViewModel.resumeAudioOnStartup,
             )
         }
     }

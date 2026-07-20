@@ -37,6 +37,15 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     var defaultAudioPackage by mutableStateOf(loadValidatedDefaultAudioPackage())
         private set
 
+    var audioFallbackResumeLink by mutableStateOf(preferences.audioFallbackResumeLink)
+        private set
+
+    var showAlbumArtControls by mutableStateOf(preferences.showAlbumArtControls)
+        private set
+
+    var resumeAudioOnStartup by mutableStateOf(preferences.resumeAudioOnStartup)
+        private set
+
     var dockPinnedPackages by mutableStateOf(loadValidatedDockPinnedPackages())
         private set
 
@@ -342,6 +351,21 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     fun updateDefaultAudioPackage(packageName: String) {
         defaultAudioPackage = packageName
         preferences.defaultAudioPackage = packageName
+    }
+
+    fun updateAudioFallbackResumeLink(link: String) {
+        audioFallbackResumeLink = link
+        preferences.audioFallbackResumeLink = link
+    }
+
+    fun updateShowAlbumArtControls(enabled: Boolean) {
+        showAlbumArtControls = enabled
+        preferences.showAlbumArtControls = enabled
+    }
+
+    fun updateResumeAudioOnStartup(enabled: Boolean) {
+        resumeAudioOnStartup = enabled
+        preferences.resumeAudioOnStartup = enabled
     }
 
     fun isDockPinned(packageName: String): Boolean {

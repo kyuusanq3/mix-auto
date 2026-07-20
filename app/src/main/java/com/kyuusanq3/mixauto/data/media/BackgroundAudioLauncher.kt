@@ -4,6 +4,7 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.support.v4.media.MediaBrowserCompat
 import android.support.v4.media.session.MediaControllerCompat
 import android.util.Log
@@ -111,6 +112,50 @@ object BackgroundAudioLauncher {
                 delay(REFOCUS_DELAY_MS)
                 refocusOwnApp(appContext)
             }
+        }
+    }
+
+    /**
+     * Last-resort startup path: no active session was found after waking the default app,
+     * so open a user-configured playlist/station link (or app deep link) directly.
+     */
+    fun launchFallbackResumeLink(context: Context, resumeLink: String, preferredPackage: String?) {
+        val appContext = context.applicationContext
+        val uri = runCatching { Uri.parse(resumeLink) }.getOrNull()
+        if (uri == null) {
+            Log.w(TAG, "Invalid fallback resume link: $resumeLink")
+            return
+        }
+        Log.i(TAG, "No resumable session found on boot — launching fallback resume link")
+
+        val targeted = Intent(Intent.ACTION_VIEW, uri).apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_NO_ANIMATION)
+            if (!preferredPackage.isNullOrBlank()) {
+                setPackage(preferredPackage)
+            }
+        }
+        val canResolveTargeted = runCatching {
+            appContext.packageManager.resolveActivity(targeted, PackageManager.MATCH_DEFAULT_ONLY)
+        }.getOrNull() != null
+        val intent = if (canResolveTargeted) {
+            targeted
+        } else {
+            Intent(Intent.ACTION_VIEW, uri).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_NO_ANIMATION)
+            }
+        }
+
+        runCatching {
+            appContext.startActivity(intent)
+            Log.i(TAG, "Launched fallback resume link: $resumeLink")
+        }.onFailure { error ->
+            Log.w(TAG, "Failed to launch fallback resume link", error)
+            return
+        }
+
+        scope.launch {
+            delay(REFOCUS_DELAY_MS)
+            refocusOwnApp(appContext)
         }
     }
 

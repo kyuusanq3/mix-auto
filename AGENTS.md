@@ -359,6 +359,7 @@ After enabling Launcher Mode, press Home and select **Mix Auto** as the default 
 | Nav camera stops following after puck slider in Map Settings | Same — `setViewportPadding` → `applyPuckPaddingUpdate`; restore via `activateNavigationTracking()` if mode drops |
 | Map POI visible but missing in search | Call `seedSearchFromMapViewport()` on search open; nearby merges viewport `poiCache`; typed search uses broad `searchPoiCache` (name/subtitle/category) |
 | Nav TTS quiet at 100% slider | Enable **Boost guidance volume** in Map Settings; also raise head-unit Navigation/Guidance system volume; slider now goes to 150% relative |
+| Puck centers on screen after minimizing/reopening during free-drive or nav | `MainActivity.onResume()` → `retryLocationActivation()` re-runs `activateLocationTracking()` on **every** resume; `applyDrivingTrackingPadding()`'s own dedup cache (`lastAppliedTrackingPadding`/`lastEngagedTrackingPadding`) sees no key change and skips re-pushing `paddingWhileTracking`, so a native-side padding reset across pause/resume sticks. Fix: `activateLocationTracking()` now calls `invalidateDrivingPaddingCache()` (new helper) before `applyDrivingTrackingPadding(map)` so the Map Settings puck offset is force-reapplied on every resume; also only calls `createLocationEngine(ctx)` on first activation (reuses `this.locationEngine` on repeat activation) so bearing/smoothing state isn't discarded each resume |
 
 ## Related agent resources
 

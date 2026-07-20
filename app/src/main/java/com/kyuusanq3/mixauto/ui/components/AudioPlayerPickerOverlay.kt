@@ -198,7 +198,7 @@ fun AudioPlayerListContent(
 }
 
 @Composable
-private fun SetDefaultAudioConfirmDialog(
+internal fun SetDefaultAudioConfirmDialog(
     app: AudioPlayerApp,
     onConfirm: () -> Unit,
     onDismiss: () -> Unit,
