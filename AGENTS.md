@@ -51,7 +51,7 @@ app/src/main/java/com/kyuusanq3/mixauto/
 ├── data/map/
 │   ├── MapLibreEngineImpl.kt    # CarMapEngine facade; delegates to controllers below
 │   ├── LocationTrackingController.kt / NavigationCameraController.kt
-│   ├── MapStyleController.kt / RouteRenderer.kt / PoiOverlayRenderer.kt / …
+│   ├── MapStyleController.kt / RouteRenderer.kt / ConventionalRouteSelector.kt / …
 ├── data/places/
 │   ├── LocalPlacesRepository.kt # Offline Overture POI SQLite search + HTTP download
 │   └── LocalDbMeta.kt           # Installed database metadata
@@ -60,7 +60,6 @@ app/src/main/java/com/kyuusanq3/mixauto/
     │   ├── CarMapViewContainer.kt       # AndroidView bridge + HUD + search button
     │   ├── NavigationSearchOverlay.kt   # Destination search dialog (Recent/Saved/Nearby tabs)
     │   ├── PoiDetailDrawer.kt           # Full-screen POI/dropped-pin details + star + navigate
-    │   ├── RoutePickerPane.kt           # Multi-route selection in media pane (OSRM + TomTom alternates)
     │   └── MapDataOverlay.kt            # Offline Overture POI download UI
     ├── theme/                   # Color, CarDimensions, Type, Theme
     ├── onboarding/
@@ -81,7 +80,7 @@ MainActivity (MapHostViewModel — mapEngine, navigationVoice, localPlaces)
               ├── CarMapViewContainer — map pane (60% or CarDimensions.MapWeight)
               ├── MediaPlayerPane + ShortcutDock (Map Data on map toolbar; Launcher settings in app drawer)
               ├── PoiDetailDrawer — full-screen overlay when map POI/pin selected
-              ├── RoutePickerPane — media pane when ≥2 routes (`ActivePanel.ROUTE_PICKER`)
+              ├── Lighter-traffic chip in CarMapViewContainer when TomTom alternate qualifies
               └── MapDataOverlay — offline POI country download
 
 LauncherViewModel — activePanel, poiReturnToSearch, destinationSearchState (rotation-safe UI)
@@ -110,7 +109,7 @@ This guide stays high-level on purpose — implementation lessons, gotchas, and 
 - `.cursor/rules/mix-auto-core.mdc` (always applied) — stack, theme rules, shortcut packages, manifest
 - `.cursor/rules/mix-auto-build-release.mdc` (always applied) — build, signing, release, emulator GPS tooling
 - `.cursor/rules/mix-auto-map-engine.mdc` — camera, GPS/puck, route rendering, style/traffic overlay, custom pins, search origin (`data/map/**`, `domain/map/**`)
-- `.cursor/rules/mix-auto-navigation.mdc` — turn-by-turn TTS, reroute, multi-route selection/picker (`data/navigation/**`, `RoutePickerPane.kt`)
+- `.cursor/rules/mix-auto-navigation.mdc` — turn-by-turn TTS, reroute, Conventional OSRM routing, in-nav lighter-traffic alternate (`data/navigation/**`, `ConventionalRouteSelector.kt`, `NavigationRouteFetcher.kt`, `RouteRenderer.kt`)
 - `.cursor/rules/mix-auto-media.mdc` — media session, album art, audio source picker (`MediaPlayerPane.kt`, `AlbumArtDisplay.kt`, `data/media/**`)
 - `.cursor/rules/mix-auto-dashboard-ui.mdc` — dashboard layout, shortcut dock, panels, status bar, onboarding, app drawer (`ui/dashboard/**`, `ui/components/**`)
 - `.cursor/rules/mix-auto-places.mdc` — offline Overture POI database + offline map tile regions (`data/places/**`, `MapDataOverlay.kt`)
@@ -128,3 +127,10 @@ This guide stays high-level on purpose — implementation lessons, gotchas, and 
 - **LLM-friendly rules (2026-07):** Tribal knowledge lives in topic-scoped `.cursor/rules/mix-auto-*.mdc` with `globs:` — only `mix-auto-core.mdc` and `mix-auto-build-release.mdc` are always applied. Edit the scoped rule for the subsystem you touch; keep `AGENTS.md` as layout + architecture + pointers.
 - **Detekt size guardrails:** `config/detekt/detekt.yml` enforces `LargeClass` / `TooManyFunctions` / `LongMethod` on new code; existing debt in `config/detekt/baseline.xml` — regenerate baseline only when intentionally accepting new size debt.
 - **Dashboard UI decomposition:** Portrait/landscape dock layouts in `DashboardLayouts.kt`; secondary pane in `DashboardSecondaryPane.kt`; shared props holders avoid repeating huge argument lists across three layout branches.
+- **Destination search empty flicker (2026-07):** Typed search in `NavigationSearchOverlay.kt` must not flash "No results found" during debounce or Photon — hoist `isSearching`/`isLoadingRemote` on `DestinationSearchUiState` (not `remember` in overlay); set pending **before** `delay(300)`; do not clear `results` on re-query; in `LaunchedEffect` `finally`, clear loading only when `coroutineContext.isActive` (`import kotlinx.coroutines.isActive`) so cancelled keystrokes do not wipe the new effect's flags; see `mix-auto-dashboard-ui.mdc` destination search session bullet
+- **Conventional routing (2026-07):** Primary nav uses `ConventionalRouteSelector` among OSRM `alternatives=3` (+12% duration cap) — no route picker; `startNavigation()` → `applyActiveRoute(conventional)` → `showRouteThenDive()`. Reroute uses same scorer. **Regression note:** July 20 v0.0.34 `NavigationRouteFetcher` extraction accidentally reverted July 6 Conventional work — when extracting from `MapLibreEngineImpl`, preserve scorer wiring and `alternatives=3`, not just fetch/parse helpers.
+- **In-nav lighter-traffic alternate (2026-07):** Parallel TomTom fetch on initial navigate; if geometry differs and ETA/traffic qualifies, grey line via `RouteRenderer.showLighterTrafficAlternate()` + `MapUiState.lighterTrafficAlternateActive` chip in `CarMapViewContainer`; tap chip or `ROUTE_TOMTOM_LAYER_ID` hit → `switchToLighterTrafficAlternate()`. Cleared on free-drive/reroute/switch. No `RoutePickerPane` / `ActivePanel.ROUTE_PICKER`.
+- **Driving camera tilt slider (2026-07):** Map Settings **Driving View** **Tilt** slider (20–60°, default **40°**, pref `driving_tilt`) — same wiring as Zoom: `LauncherPreferences` → `LauncherViewModel` → `MainActivity` → `CarMapEngine.setDrivingTilt()` → `NavigationCameraController` injectable `freeDriveTilt()` / `navTilt()` (nav = free-drive **+ 10°**); live apply via `animateCamera` (free-drive) or `onDrivingTiltChanged()` (nav); top-down/route overview stay 0°; do not use `tiltWhileTracking` during nav dive handshake
+- **Idle media manual-play fallbacks (2026-07):** When `!hasActiveSession`, `MediaPlayerPane` shows tappable **Play the album manually** if `audioFallbackResumeLink` is set, else default player icon + **Start music on the player manually**; manual taps use local `launchManualFallbackLink()` (`ACTION_VIEW` only) — not `BackgroundAudioLauncher.launchFallbackResumeLink()` (boot/resume refocuses Mix Auto). See `mix-auto-media.mdc`.
+- **Close parallel-street reroute / stuck greying (2026-07):** Urban parallels are often 20–40 m — old **75 m** off-route + **40 m** road-snap caused TTS “recalculating” with no visible refresh (OSRM snapped start back) and a stuck cyan traveled line. Use **35 m** / 4 confirms, snap **18/22 m**, reroute OSRM `radiuses=25;unlimited` + bearings (`NavigationRouteFetcher.buildOsrmRouteUrl`), unconstrained fallback; `updateRouteProgress` on **raw** GPS with freeze `>25 m` and on-route resync `≤18 m` (`decideRouteProgressUpdate`). Details in `mix-auto-navigation.mdc` / `mix-auto-map-engine.mdc`; tests in `OffRouteParallelStreetTest.kt`.
+- **Map pan / End-nav crash races (2026-07):** Intermittent MapLibre crashes when panning during nav dive/overview or tapping End nav — dive `CancelableCallback` was re-engaging `TRACKING_GPS` after detach, and free-drive snap did not `cancelTransitions`. Fix: `NavigationCameraController.cameraSessionId` + `invalidateCameraSession()` / `prepareForFreeDriveCamera()`; gate `activateNavigationTracking` on navigating + `!isCameraDetached`; `MapLibreEngineImpl.mapReleased` + `withMapStyle` for post-teardown style callbacks. Full contract in `mix-auto-map-engine.mdc` camera-session bullet.

@@ -46,6 +46,7 @@ fun MapSettingsPanelContent(
     navigationVoiceEnabled: Boolean,
     navigationVoiceVolume: Float,
     drivingZoom: Float,
+    drivingTilt: Float,
     puckHorizontalOffset: Float,
     puckVerticalOffset: Float,
     puckScale: Float,
@@ -58,6 +59,7 @@ fun MapSettingsPanelContent(
     onNavigationVoiceVolumeChange: (Float) -> Unit,
     onTestNavigationVoice: () -> Unit,
     onDrivingZoomChange: (Float) -> Unit,
+    onDrivingTiltChange: (Float) -> Unit,
     onPuckHorizontalOffsetChange: (Float) -> Unit,
     onPuckVerticalOffsetChange: (Float) -> Unit,
     onPuckScaleChange: (Float) -> Unit,
@@ -157,10 +159,12 @@ fun MapSettingsPanelContent(
                 puckVerticalOffset = puckVerticalOffset,
                 puckScale = puckScale,
                 drivingZoom = drivingZoom,
+                drivingTilt = drivingTilt,
                 onPuckHorizontalOffsetChange = onPuckHorizontalOffsetChange,
                 onPuckVerticalOffsetChange = onPuckVerticalOffsetChange,
                 onPuckScaleChange = onPuckScaleChange,
                 onDrivingZoomChange = onDrivingZoomChange,
+                onDrivingTiltChange = onDrivingTiltChange,
             )
 
             SettingsSwitchRow(
@@ -256,10 +260,12 @@ private fun DrivingViewSettingsSection(
     puckVerticalOffset: Float,
     puckScale: Float,
     drivingZoom: Float,
+    drivingTilt: Float,
     onPuckHorizontalOffsetChange: (Float) -> Unit,
     onPuckVerticalOffsetChange: (Float) -> Unit,
     onPuckScaleChange: (Float) -> Unit,
     onDrivingZoomChange: (Float) -> Unit,
+    onDrivingTiltChange: (Float) -> Unit,
 ) {
     Column(
         modifier = Modifier.fillMaxWidth(),
@@ -358,9 +364,37 @@ private fun DrivingViewSettingsSection(
                 style = MaterialTheme.typography.labelMedium,
             )
         }
+
+        Column(
+            modifier = Modifier.fillMaxWidth(),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            CarBodyText(
+                text = "Tilt",
+                style = MaterialTheme.typography.bodyLarge,
+            )
+            Slider(
+                value = drivingTilt.coerceIn(MIN_DRIVING_TILT_SLIDER, MAX_DRIVING_TILT_SLIDER),
+                onValueChange = { value ->
+                    onDrivingTiltChange(value.roundToInt().toFloat())
+                },
+                valueRange = MIN_DRIVING_TILT_SLIDER..MAX_DRIVING_TILT_SLIDER,
+                steps = DRIVING_TILT_SLIDER_STEPS,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(CarDimensions.MinTapTarget),
+            )
+            CarLabelText(
+                text = "Tilt ${drivingTilt.roundToInt()}°",
+                style = MaterialTheme.typography.labelMedium,
+            )
+        }
     }
 }
 
 private const val MIN_DRIVING_ZOOM_SLIDER = 12f
 private const val MAX_DRIVING_ZOOM_SLIDER = 22f
 private const val DRIVING_ZOOM_SLIDER_STEPS = 19
+private const val MIN_DRIVING_TILT_SLIDER = 20f
+private const val MAX_DRIVING_TILT_SLIDER = 60f
+private const val DRIVING_TILT_SLIDER_STEPS = 39

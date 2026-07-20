@@ -76,6 +76,9 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     var drivingZoom by mutableStateOf(preferences.drivingZoom)
         private set
 
+    var drivingTilt by mutableStateOf(preferences.drivingTilt)
+        private set
+
     var puckHorizontalOffset by mutableStateOf(preferences.puckHorizontalOffset)
         private set
 
@@ -272,6 +275,14 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     fun updateDrivingZoom(value: Float) {
         drivingZoom = value
         preferences.drivingZoom = value
+    }
+
+    fun updateDrivingTilt(value: Float) {
+        drivingTilt = value.coerceIn(
+            LauncherPreferences.MIN_DRIVING_TILT,
+            LauncherPreferences.MAX_DRIVING_TILT,
+        )
+        preferences.drivingTilt = drivingTilt
     }
 
     fun updatePuckHorizontalOffset(value: Float) {

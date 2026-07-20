@@ -42,6 +42,7 @@ class MapHostViewModel(application: Application) : AndroidViewModel(application)
             initialUseVectorTiles = prefs.useVectorTiles,
             initialShow3dBuildings = prefs.show3dBuildings,
             initialDrivingZoom = prefs.drivingZoom.toDouble(),
+            initialDrivingTilt = prefs.drivingTilt.toDouble(),
             initialPuckHOffset = prefs.puckHorizontalOffset,
             initialPuckVOffset = prefs.puckVerticalOffset,
             initialPuckScale = prefs.puckScale,

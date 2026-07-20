@@ -24,6 +24,31 @@ internal fun buildLineStringFeatureJson(points: List<LatLng>): String {
     return """{"type":"Feature","geometry":{"type":"LineString","coordinates":[$coords]},"properties":{}}"""
 }
 
+/** Pure decision for traveled-line updates — unit-tested without Android Location. */
+internal data class RouteProgressDecision(
+    val shouldUpdate: Boolean,
+    val forceMapUpdate: Boolean,
+)
+
+internal fun decideRouteProgressUpdate(
+    distToRouteM: Float,
+    projectionDistanceFromStartM: Float,
+    currentProgressDistanceM: Float,
+): RouteProgressDecision {
+    if (distToRouteM > ON_ROUTE_PROGRESS_MAX_M) {
+        return RouteProgressDecision(shouldUpdate = false, forceMapUpdate = false)
+    }
+    val delta = projectionDistanceFromStartM - currentProgressDistanceM
+    val allowBackwardResync = delta < -ROUTE_PROGRESS_BACKTRACK_TOLERANCE_M &&
+        distToRouteM <= ON_ROUTE_RESYNC_M
+    val isForward = delta > 0f
+    if (!isForward && !allowBackwardResync) {
+        return RouteProgressDecision(shouldUpdate = false, forceMapUpdate = false)
+    }
+    val forceMapUpdate = allowBackwardResync || delta >= ROUTE_PROGRESS_MAP_MIN_ADVANCE_M * 2f
+    return RouteProgressDecision(shouldUpdate = true, forceMapUpdate = forceMapUpdate)
+}
+
 internal enum class AltRouteStyle {
     LIGHTER_TRAFFIC,
 }
@@ -208,6 +233,7 @@ internal class RouteRenderer(
             routeProgressSplitLng,
         )
         map.getStyle { style ->
+            if (!style.isFullyLoaded) return@getStyle
             (style.getSource(ROUTE_TRAVELED_SOURCE_ID) as? GeoJsonSource)
                 ?.setGeoJson(buildLineStringFeatureJson(traveled))
             (style.getSource(ROUTE_REMAINING_SOURCE_ID) as? GeoJsonSource)
@@ -223,7 +249,8 @@ internal class RouteRenderer(
         val localEnd = (routeProgressSegmentIndex + ROUTE_PROJECTION_SEARCH_RADIUS)
             .coerceAtMost(points.size - 2)
         var projection = scanRouteSegments(location, points, localStart, localEnd)
-        if (projection.distToRouteM > REROUTE_THRESHOLD_M / 2f) {
+        // Expand to full route when the local window misses (rejoin after parallel detour).
+        if (projection.distToRouteM > ON_ROUTE_PROGRESS_MAX_M) {
             projection = scanRouteSegments(location, points, 0, points.size - 2)
         }
         return projection
@@ -247,12 +274,23 @@ internal class RouteRenderer(
         }
     }
 
+    /**
+     * Advances the traveled/remaining split from a **raw** GPS fix (not road-snapped).
+     *
+     * - Far from the line ([ON_ROUTE_PROGRESS_MAX_M]): freeze — avoids ghost-greying while on a
+     *   close parallel street.
+     * - On the line: advance normally, allow large forward catch-up after a freeze, and allow
+     *   on-route resync (including small backtracks) so a stuck split unsticks when the puck
+     *   rejoins.
+     */
     fun updateRouteProgress(location: Location, routeGeometryPoints: List<LatLng>, map: MapLibreMap?) {
         val projection = projectionForLocation(location, routeGeometryPoints) ?: return
-        if (projection.distanceFromStartM + ROUTE_PROGRESS_BACKTRACK_TOLERANCE_M < routeProgressDistanceM) {
-            return
-        }
-        if (projection.distanceFromStartM <= routeProgressDistanceM) return
+        val decision = decideRouteProgressUpdate(
+            distToRouteM = projection.distToRouteM,
+            projectionDistanceFromStartM = projection.distanceFromStartM,
+            currentProgressDistanceM = routeProgressDistanceM,
+        )
+        if (!decision.shouldUpdate) return
 
         routeProgressSegmentIndex = projection.segmentIndex
         routeProgressSplitLat = projection.splitLat
@@ -260,13 +298,21 @@ internal class RouteRenderer(
         routeProgressDistanceM = projection.distanceFromStartM
         val speedMps = if (location.hasSpeed()) location.speed else 0f
         val minAdvance = routeProgressMapMinAdvanceM(speedMps)
-        if (routeProgressDistanceM - lastRouteProgressMapUpdateM < minAdvance) {
+        if (!decision.forceMapUpdate &&
+            routeProgressDistanceM - lastRouteProgressMapUpdateM < minAdvance
+        ) {
             return
         }
         lastRouteProgressMapUpdateM = routeProgressDistanceM
         val activeMap = map ?: return
         applyRouteProgressToMap(activeMap, routeGeometryPoints)
     }
+
+    /** Test/debug: meters along the active route that have been marked traveled. */
+    internal fun debugProgressDistanceM(): Float = routeProgressDistanceM
+
+    /** Test/debug: index of the segment containing the traveled/remaining split. */
+    internal fun debugProgressSegmentIndex(): Int = routeProgressSegmentIndex
 
     private fun clearAltLayer(style: Style, sourceId: String) {
         (style.getSource(sourceId) as? GeoJsonSource)

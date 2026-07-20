@@ -146,6 +146,7 @@ class MainActivity : ComponentActivity() {
                     isAppDrawerLoading = launcherViewModel.isAppDrawerLoading,
                     onEnsureLaunchableAppsLoaded = launcherViewModel::ensureLaunchableAppsLoaded,
                     drivingZoom = launcherViewModel.drivingZoom,
+                    drivingTilt = launcherViewModel.drivingTilt,
                     puckHorizontalOffset = launcherViewModel.puckHorizontalOffset,
                     puckVerticalOffset = launcherViewModel.puckVerticalOffset,
                     puckScale = launcherViewModel.puckScale,
@@ -199,6 +200,10 @@ class MainActivity : ComponentActivity() {
                     onDrivingZoomChange = { value ->
                         launcherViewModel.updateDrivingZoom(value)
                         mapEngine.setDrivingZoom(value.toDouble())
+                    },
+                    onDrivingTiltChange = { value ->
+                        launcherViewModel.updateDrivingTilt(value)
+                        mapEngine.setDrivingTilt(value.toDouble())
                     },
                     onPuckHorizontalOffsetChange = { value ->
                         launcherViewModel.updatePuckHorizontalOffset(value)

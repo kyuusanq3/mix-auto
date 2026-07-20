@@ -25,11 +25,10 @@ internal object NavigationRouteFetcher {
         latA: Double,
         lngB: Double,
         latB: Double,
+        originRadiusM: Double? = null,
+        originBearingDeg: Float? = null,
     ): List<RouteResult> {
-        val url = URL(
-            "https://routing.openstreetmap.de/routed-car/route/v1/driving/" +
-                "$lngA,$latA;$lngB,$latB?alternatives=3&geometries=geojson&steps=true&overview=full",
-        )
+        val url = URL(buildOsrmRouteUrl(lngA, latA, lngB, latB, alternatives = 3, originRadiusM, originBearingDeg))
         val connection = url.openConnection() as HttpURLConnection
         connection.setRequestProperty("User-Agent", "MixAutoCarLauncher/1.0")
         connection.connectTimeout = 10_000
@@ -51,11 +50,10 @@ internal object NavigationRouteFetcher {
         latA: Double,
         lngB: Double,
         latB: Double,
+        originRadiusM: Double? = null,
+        originBearingDeg: Float? = null,
     ): RouteResult? {
-        val url = URL(
-            "https://routing.openstreetmap.de/routed-car/route/v1/driving/" +
-                "$lngA,$latA;$lngB,$latB?geometries=geojson&steps=true&overview=full",
-        )
+        val url = URL(buildOsrmRouteUrl(lngA, latA, lngB, latB, alternatives = null, originRadiusM, originBearingDeg))
         val connection = url.openConnection() as HttpURLConnection
         connection.setRequestProperty("User-Agent", "MixAutoCarLauncher/1.0")
         connection.connectTimeout = 10_000
@@ -70,6 +68,31 @@ internal object NavigationRouteFetcher {
         } finally {
             connection.disconnect()
         }
+    }
+
+    /**
+     * Builds an OSRM driving URL. When [originRadiusM] is set (reroutes), OSRM must snap the
+     * start within that radius so a parallel-street detour is not pulled back onto the old road.
+     */
+    internal fun buildOsrmRouteUrl(
+        lngA: Double,
+        latA: Double,
+        lngB: Double,
+        latB: Double,
+        alternatives: Int?,
+        originRadiusM: Double?,
+        originBearingDeg: Float?,
+    ): String {
+        val altQuery = if (alternatives != null) "alternatives=$alternatives&" else ""
+        val base =
+            "https://routing.openstreetmap.de/routed-car/route/v1/driving/" +
+                "$lngA,$latA;$lngB,$latB?${altQuery}geometries=geojson&steps=true&overview=full"
+        if (originRadiusM == null) return base
+        val radius = originRadiusM.toInt().coerceAtLeast(1)
+        val withRadius = "$base&radiuses=$radius;unlimited"
+        if (originBearingDeg == null) return withRadius
+        val bearing = ((originBearingDeg % 360f) + 360f) % 360f
+        return "$withRadius&bearings=${bearing.toInt()},$REROUTE_ORIGIN_BEARING_RANGE_DEG;"
     }
 
     private fun parseOsrmRoutesResponse(json: String): List<RouteResult> {

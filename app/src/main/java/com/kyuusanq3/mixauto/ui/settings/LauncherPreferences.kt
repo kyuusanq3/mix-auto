@@ -71,6 +71,18 @@ class LauncherPreferences(context: Context) {
             prefs.edit().putFloat(KEY_DRIVING_ZOOM, value).apply()
         }
 
+    var drivingTilt: Float
+        get() = prefs.getFloat(KEY_DRIVING_TILT, DEFAULT_DRIVING_TILT)
+            .coerceIn(MIN_DRIVING_TILT, MAX_DRIVING_TILT)
+        set(value) {
+            prefs.edit()
+                .putFloat(
+                    KEY_DRIVING_TILT,
+                    value.coerceIn(MIN_DRIVING_TILT, MAX_DRIVING_TILT),
+                )
+                .apply()
+        }
+
     var puckHorizontalOffset: Float
         get() = prefs.getFloat(KEY_PUCK_H_OFFSET, DEFAULT_PUCK_H_OFFSET)
         set(value) {
@@ -252,6 +264,7 @@ class LauncherPreferences(context: Context) {
         private const val KEY_LARGE_SHORTCUT_ICONS = "large_shortcut_icons"
         private const val KEY_SHORTCUT_ICON_SIZE = "shortcut_icon_size"
         private const val KEY_DRIVING_ZOOM = "driving_zoom"
+        private const val KEY_DRIVING_TILT = "driving_tilt"
         private const val KEY_PUCK_H_OFFSET = "puck_h_offset"
         private const val KEY_PUCK_V_OFFSET = "puck_v_offset"
         private const val KEY_PUCK_SCALE = "puck_scale"
@@ -281,6 +294,9 @@ class LauncherPreferences(context: Context) {
         const val MAX_DOCK_PINNED_APPS = 5
         const val DEFAULT_MAP_MEDIA_RATIO = 0.6f
         const val DEFAULT_DRIVING_ZOOM = 17.5f
+        const val DEFAULT_DRIVING_TILT = 40f
+        const val MIN_DRIVING_TILT = 20f
+        const val MAX_DRIVING_TILT = 60f
         const val DEFAULT_PUCK_H_OFFSET = 0.3f
         const val DEFAULT_PUCK_V_OFFSET = 0.4f
         const val DEFAULT_PUCK_SCALE = 1.0f

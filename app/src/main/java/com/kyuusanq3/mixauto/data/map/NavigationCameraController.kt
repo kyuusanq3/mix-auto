@@ -16,9 +16,7 @@ import org.maplibre.android.maps.MapView
 import org.maplibre.android.maps.Style
 
 private const val TAG = "NavigationCameraController"
-private const val NAV_TILT = 63.0
 private const val NAV_CAMERA_DURATION_MS = 2500
-private const val FREE_DRIVE_TILT = 50.0
 private const val POI_PREVIEW_ZOOM = 15.5
 private const val TOP_DOWN_EXPLORE_ZOOM = 15.0
 private const val POI_PREVIEW_MAX_RETRIES = 8
@@ -42,6 +40,8 @@ internal class NavigationCameraController(
     private val updateUiState: ((MapUiState) -> MapUiState) -> Unit,
     private val freeDriveZoom: () -> Double,
     private val navZoom: () -> Double,
+    private val freeDriveTilt: () -> Double,
+    private val navTilt: () -> Double,
     private val puckHorizontalOffset: () -> Float,
     private val puckVerticalOffset: () -> Float,
     private val useVectorTiles: () -> Boolean,
@@ -72,6 +72,9 @@ internal class NavigationCameraController(
 ) {
     var navigationCameraTransitionActive: Boolean = false
         private set
+
+    /** Incremented to invalidate in-flight [enterNavigationCamera] callbacks after gesture / End nav. */
+    private var cameraSessionId: Int = 0
 
     private var pendingPoiPreviewTarget: LatLng? = null
     private var pendingPoiPreviewZoom: Double = POI_PREVIEW_ZOOM
@@ -106,6 +109,30 @@ internal class NavigationCameraController(
         } else {
             applyNavigationZoomCeiling()
         }
+    }
+
+    fun onDrivingTiltChanged() {
+        val map = mapLibreMap() ?: return
+        val state = uiState()
+        if (!state.isNavigating || state.isCameraDetached || navigationCameraTransitionActive) return
+
+        val component = map.locationComponent
+        if (!component.isLocationComponentActivated || !component.isLocationComponentEnabled) return
+
+        val target = lastKnownLocation() ?: map.cameraPosition.target ?: return
+        val bearing = component.lastKnownLocation?.bearing?.toDouble() ?: map.cameraPosition.bearing
+        val zoomTarget = resolveNavigationZoomTarget()
+
+        map.moveCamera(
+            CameraUpdateFactory.newCameraPosition(
+                CameraPosition.Builder()
+                    .target(target)
+                    .zoom(zoomTarget)
+                    .tilt(navTilt())
+                    .bearing(bearing)
+                    .build(),
+            ),
+        )
     }
 
     fun updateNavigationZoomForDistance(distanceM: Float) {
@@ -157,6 +184,18 @@ internal class NavigationCameraController(
 
     fun setNavigationCameraTransitionActive(active: Boolean) {
         navigationCameraTransitionActive = active
+    }
+
+    /** Stale dive/overview callbacks must no-op after user pan, zoom, or End nav. */
+    fun invalidateCameraSession() {
+        cameraSessionId++
+        navigationCameraTransitionActive = false
+    }
+
+    fun prepareForFreeDriveCamera(map: MapLibreMap) {
+        invalidateCameraSession()
+        map.cancelTransitions()
+        ensureTopDownCameraDetached(map)
     }
 
     fun hasPendingPoiPreviewTarget(): Boolean = pendingPoiPreviewTarget != null
@@ -519,7 +558,7 @@ internal class NavigationCameraController(
         Log.i(
             TAG,
             "Snapping free-drive camera to ${latLng.latitude}, ${latLng.longitude} " +
-                "zoom=${freeDriveZoom()} tilt=$FREE_DRIVE_TILT (current=${map.cameraPosition.zoom}, " +
+                "zoom=${freeDriveZoom()} tilt=${freeDriveTilt()} (current=${map.cameraPosition.zoom}, " +
                 "target=${formatCameraTarget(map)})",
         )
 
@@ -532,7 +571,7 @@ internal class NavigationCameraController(
             CameraUpdateFactory.newCameraPosition(
                 CameraPosition.Builder()
                     .target(latLng)
-                    .tilt(FREE_DRIVE_TILT)
+                    .tilt(freeDriveTilt())
                     .zoom(freeDriveZoom())
                     .bearing(bearing)
                     .build(),
@@ -568,6 +607,8 @@ internal class NavigationCameraController(
             return
         }
 
+        invalidateCameraSession()
+        val sessionId = cameraSessionId
         navigationCameraTransitionActive = true
 
         val bearing = if (componentReady) {
@@ -578,15 +619,19 @@ internal class NavigationCameraController(
 
         Log.i(
             TAG,
-            "Entering navigation camera zoom=${navZoom()} tilt=$NAV_TILT " +
+            "Entering navigation camera zoom=${navZoom()} tilt=${navTilt()} " +
                 "(current=${map.cameraPosition.zoom}, target=${target.latitude},${target.longitude})",
         )
 
         applyDrivingViewportPadding(map)
         map.cancelTransitions()
         if (componentReady) {
-            component.renderMode = RenderMode.GPS
-            component.cameraMode = CameraMode.NONE
+            runCatching {
+                component.renderMode = RenderMode.GPS
+                component.cameraMode = CameraMode.NONE
+            }.onFailure { error ->
+                Log.w(TAG, "Failed to detach location component before nav dive: ${error.message}")
+            }
         }
 
         map.animateCamera(
@@ -594,55 +639,70 @@ internal class NavigationCameraController(
                 CameraPosition.Builder()
                     .target(target)
                     .zoom(navZoom())
-                    .tilt(NAV_TILT)
+                    .tilt(navTilt())
                     .bearing(bearing)
                     .build(),
             ),
             NAV_CAMERA_DURATION_MS,
             object : MapLibreMap.CancelableCallback {
                 override fun onFinish() {
-                    activateNavigationTracking(componentReady)
+                    finishNavigationCameraTransition(sessionId, componentReady)
                 }
 
                 override fun onCancel() {
-                    activateNavigationTracking(componentReady)
+                    finishNavigationCameraTransition(sessionId, componentReady)
                 }
             },
         )
         updateUiState { it.copy(isCameraDetached = false, isInTopDownView = false) }
     }
 
+    private fun finishNavigationCameraTransition(sessionId: Int, componentReady: Boolean) {
+        if (sessionId != cameraSessionId ||
+            !uiState().isNavigating ||
+            uiState().isCameraDetached
+        ) {
+            navigationCameraTransitionActive = false
+            return
+        }
+        activateNavigationTracking(componentReady)
+    }
+
     fun activateNavigationTracking(componentReady: Boolean) {
         navigationCameraTransitionActive = false
-        if (!uiState().isNavigating) return
+        if (!uiState().isNavigating || uiState().isCameraDetached) return
         val map = mapLibreMap() ?: return
         val component = map.locationComponent
         if (componentReady && component.isLocationComponentActivated && component.isLocationComponentEnabled) {
-            val target = lastKnownLocation() ?: map.cameraPosition.target
-            if (target != null) {
-                val bearing = component.lastKnownLocation?.bearing?.toDouble()
-                    ?: map.cameraPosition.bearing
-                val current = map.cameraPosition
-                val zoomTarget = resolveNavigationZoomTarget()
-                if (current.tilt < NAV_TILT - 5.0 || abs(current.zoom - zoomTarget) > 0.5) {
-                    map.moveCamera(
-                        CameraUpdateFactory.newCameraPosition(
-                            CameraPosition.Builder()
-                                .target(target)
-                                .zoom(zoomTarget)
-                                .tilt(NAV_TILT)
-                                .bearing(bearing)
-                                .build(),
-                        ),
-                    )
-                    lastAppliedDynamicNavZoom = zoomTarget
+            runCatching {
+                val target = lastKnownLocation() ?: map.cameraPosition.target
+                if (target != null) {
+                    val bearing = component.lastKnownLocation?.bearing?.toDouble()
+                        ?: map.cameraPosition.bearing
+                    val current = map.cameraPosition
+                    val zoomTarget = resolveNavigationZoomTarget()
+                    if (current.tilt < navTilt() - 5.0 || abs(current.zoom - zoomTarget) > 0.5) {
+                        map.moveCamera(
+                            CameraUpdateFactory.newCameraPosition(
+                                CameraPosition.Builder()
+                                    .target(target)
+                                    .zoom(zoomTarget)
+                                    .tilt(navTilt())
+                                    .bearing(bearing)
+                                    .build(),
+                            ),
+                        )
+                        lastAppliedDynamicNavZoom = zoomTarget
+                    }
                 }
+                component.renderMode = RenderMode.GPS
+                component.cameraMode = CameraMode.TRACKING_GPS
+                component.setMaxAnimationFps(DRIVING_ANIMATION_FPS)
+                applyDrivingTrackingPadding(map)
+                lastDistToManeuverM?.let { updateNavigationZoomForDistance(it) }
+            }.onFailure { error ->
+                Log.w(TAG, "Failed to activate navigation tracking: ${error.message}")
             }
-            component.renderMode = RenderMode.GPS
-            component.cameraMode = CameraMode.TRACKING_GPS
-            component.setMaxAnimationFps(DRIVING_ANIMATION_FPS)
-            applyDrivingTrackingPadding(map)
-            lastDistToManeuverM?.let { updateNavigationZoomForDistance(it) }
         }
         onNavigationTrackingEngaged()
     }
@@ -741,6 +801,8 @@ internal class NavigationCameraController(
     }
 
     fun onCameraGestureStarted(map: MapLibreMap) {
+        invalidateCameraSession()
+        map.cancelTransitions()
         ensureTopDownCameraDetached(map)
         if (uiState().isInTopDownView) {
             cancelTopDownViewportSync()

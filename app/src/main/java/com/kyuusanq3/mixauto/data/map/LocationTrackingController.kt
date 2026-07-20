@@ -457,7 +457,8 @@ internal class LocationTrackingController(
         }
 
         if (isNavigating) {
-            updateRouteProgress(displayLocation)
+            // Raw GPS — snapped display would ghost-advance progress on close parallel streets.
+            updateRouteProgress(locationWithBearing)
         }
 
         if (BuildConfig.DEBUG) {

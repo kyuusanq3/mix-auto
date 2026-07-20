@@ -28,6 +28,7 @@ interface CarMapEngine {
     fun setTrafficEnabled(enabled: Boolean, apiKey: String)
     fun setNavigationVoiceEnabled(enabled: Boolean)
     fun setDrivingZoom(zoom: Double)
+    fun setDrivingTilt(tilt: Double)
     fun setViewportPadding(horizontalFraction: Float, verticalFraction: Float)
     fun setPuckScale(scale: Float)
     suspend fun searchDestination(

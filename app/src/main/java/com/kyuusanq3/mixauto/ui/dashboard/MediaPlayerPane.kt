@@ -1,6 +1,9 @@
 package com.kyuusanq3.mixauto.ui.dashboard
 
+import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
+import android.net.Uri
 import android.provider.Settings
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
@@ -78,6 +81,7 @@ import kotlinx.coroutines.launch
 
 private val AlbumArtSwipeThreshold = 40.dp
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun MediaPlayerPane(
     mediaState: MediaPlaybackState,
@@ -112,6 +116,11 @@ fun MediaPlayerPane(
     // albumArtMode must go through rememberUpdatedState too, or a long-press after switching
     // modes reopens the picker pre-selecting the stale mode from when the gesture was last set up.
     val albumArtModeState = rememberUpdatedState(albumArtMode)
+    val fallbackResumeLink = launcherViewModel.audioFallbackResumeLink.takeIf { it.isNotBlank() }
+    val showIdleLinkFallback = !mediaState.hasActiveSession && fallbackResumeLink != null
+    val showIdleDefaultPlayerFallback = !mediaState.hasActiveSession &&
+        fallbackResumeLink == null &&
+        defaultAudioPackage.isNotBlank()
 
     ElevatedCard(
         modifier = modifier.padding(
@@ -192,6 +201,10 @@ fun MediaPlayerPane(
                             contentAlignment = Alignment.Center,
                         ) {
                             val artSize = (if (maxWidth < maxHeight) maxWidth else maxHeight) * 0.92f
+                            val openAlbumArtModePicker: (Offset) -> Unit = {
+                                pickerIndex = albumArtModeState.value.ordinal
+                                isPickerOpen = true
+                            }
                             val gestureModifier = if (!isPickerOpen) {
                                 Modifier.pointerInput(
                                     mediaState.hasActiveSession,
@@ -206,10 +219,7 @@ fun MediaPlayerPane(
                                                         onPlayPauseState.value()
                                                     }
                                                 },
-                                                onLongPress = {
-                                                    pickerIndex = albumArtModeState.value.ordinal
-                                                    isPickerOpen = true
-                                                },
+                                                onLongPress = openAlbumArtModePicker,
                                             )
                                         }
                                         launch {
@@ -252,6 +262,24 @@ fun MediaPlayerPane(
                             } else {
                                 Modifier
                             }
+                            val artInteractionModifier = when {
+                                isPickerOpen -> Modifier
+                                showIdleLinkFallback -> Modifier.combinedClickable(
+                                    onClick = {
+                                        launchManualFallbackLink(
+                                            context = context,
+                                            resumeLink = fallbackResumeLink.orEmpty(),
+                                            preferredPackage = defaultAudioPackage.takeIf { it.isNotBlank() },
+                                        )
+                                    },
+                                    onLongClick = { openAlbumArtModePicker(Offset.Zero) },
+                                )
+                                showIdleDefaultPlayerFallback -> Modifier.combinedClickable(
+                                    onClick = { launchAppByPackage(context, defaultAudioPackage) },
+                                    onLongClick = { openAlbumArtModePicker(Offset.Zero) },
+                                )
+                                else -> gestureModifier
+                            }
 
                             if (isPickerOpen) {
                                 AlbumArtModePicker(
@@ -273,7 +301,7 @@ fun MediaPlayerPane(
                                 Box(
                                     modifier = Modifier
                                         .size(artSize)
-                                        .then(gestureModifier)
+                                        .then(artInteractionModifier)
                                         .clip(RoundedCornerShape(12.dp))
                                         .background(
                                             color = MaterialTheme.colorScheme.surfaceVariant,
@@ -281,32 +309,63 @@ fun MediaPlayerPane(
                                         ),
                                     contentAlignment = Alignment.Center,
                                 ) {
-                                    AlbumArtModeContent(
-                                        mode = albumArtMode,
-                                        albumArt = mediaState.albumArt,
-                                        isPlaying = mediaState.isPlaying,
-                                        playbackPositionMs = mediaState.playbackPositionMs,
-                                        modifier = Modifier.fillMaxSize(),
-                                    )
+                                    when {
+                                        showIdleLinkFallback -> {
+                                            IdleManualLinkArt(modifier = Modifier.fillMaxSize())
+                                        }
+                                        showIdleDefaultPlayerFallback -> {
+                                            IdleDefaultPlayerArt(
+                                                packageName = defaultAudioPackage,
+                                                modifier = Modifier.fillMaxSize(),
+                                            )
+                                        }
+                                        else -> {
+                                            AlbumArtModeContent(
+                                                mode = albumArtMode,
+                                                albumArt = mediaState.albumArt,
+                                                isPlaying = mediaState.isPlaying,
+                                                playbackPositionMs = mediaState.playbackPositionMs,
+                                                modifier = Modifier.fillMaxSize(),
+                                            )
+                                        }
+                                    }
                                 }
                             }
                         }
 
                     }
 
-                    CarHeadlineText(
-                        text = mediaState.displayTitle,
-                        modifier = Modifier.padding(top = CarDimensions.PaneGap),
-                        style = MaterialTheme.typography.headlineMedium,
-                    )
-
-                    if (mediaState.displayArtist.isNotBlank()) {
-                        CarBodyText(
-                            text = mediaState.displayArtist,
-                            modifier = Modifier.padding(top = 4.dp),
-                            style = MaterialTheme.typography.bodyLarge,
-                            maxLines = 1,
-                        )
+                    when {
+                        mediaState.hasActiveSession -> {
+                            CarHeadlineText(
+                                text = mediaState.displayTitle,
+                                modifier = Modifier.padding(top = CarDimensions.PaneGap),
+                                style = MaterialTheme.typography.headlineMedium,
+                            )
+                            if (mediaState.displayArtist.isNotBlank()) {
+                                CarBodyText(
+                                    text = mediaState.displayArtist,
+                                    modifier = Modifier.padding(top = 4.dp),
+                                    style = MaterialTheme.typography.bodyLarge,
+                                    maxLines = 1,
+                                )
+                            }
+                        }
+                        showIdleDefaultPlayerFallback -> {
+                            CarBodyText(
+                                text = "Start music on the player manually",
+                                modifier = Modifier.padding(top = CarDimensions.PaneGap),
+                                style = MaterialTheme.typography.bodyLarge,
+                                maxLines = 2,
+                            )
+                        }
+                        !showIdleLinkFallback -> {
+                            CarHeadlineText(
+                                text = mediaState.displayTitle,
+                                modifier = Modifier.padding(top = CarDimensions.PaneGap),
+                                style = MaterialTheme.typography.headlineMedium,
+                            )
+                        }
                     }
                 }
             }
@@ -383,6 +442,81 @@ fun MediaPlayerPane(
         }
         }
     }
+}
+
+@Composable
+private fun IdleManualLinkArt(
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier = modifier.padding(CarDimensions.PaneGap),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
+    ) {
+        Icon(
+            imageVector = Icons.Filled.PlayArrow,
+            contentDescription = null,
+            modifier = Modifier.size(CarDimensions.AppIconSize),
+            tint = ElectricCyan,
+        )
+        CarLabelText(
+            text = "Play the album manually",
+            style = MaterialTheme.typography.labelLarge,
+            modifier = Modifier.padding(top = CarDimensions.PaneGap / 2),
+        )
+    }
+}
+
+@Composable
+private fun IdleDefaultPlayerArt(
+    packageName: String,
+    modifier: Modifier = Modifier,
+) {
+    val appIcon = rememberAppIcon(packageName)
+    Box(
+        modifier = modifier,
+        contentAlignment = Alignment.Center,
+    ) {
+        if (appIcon != null) {
+            Image(
+                bitmap = appIcon,
+                contentDescription = "Open default audio player",
+                modifier = Modifier.size(CarDimensions.PrimaryTapTarget),
+            )
+        } else {
+            Icon(
+                imageVector = Icons.Filled.MusicNote,
+                contentDescription = "Open default audio player",
+                modifier = Modifier.size(CarDimensions.PrimaryTapTarget),
+                tint = ElectricCyan,
+            )
+        }
+    }
+}
+
+private fun launchManualFallbackLink(
+    context: Context,
+    resumeLink: String,
+    preferredPackage: String?,
+) {
+    val uri = runCatching { Uri.parse(resumeLink) }.getOrNull() ?: return
+    val targeted = Intent(Intent.ACTION_VIEW, uri).apply {
+        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        if (!preferredPackage.isNullOrBlank()) {
+            setPackage(preferredPackage)
+        }
+    }
+    val canResolveTargeted = runCatching {
+        context.packageManager.resolveActivity(targeted, PackageManager.MATCH_DEFAULT_ONLY)
+    }.getOrNull() != null
+    val intent = if (canResolveTargeted) {
+        targeted
+    } else {
+        Intent(Intent.ACTION_VIEW, uri).apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+    }
+    runCatching { context.startActivity(intent) }
 }
 
 @Composable

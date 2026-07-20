@@ -5,10 +5,11 @@ import android.util.Log
 import org.maplibre.android.geometry.LatLng
 
 private const val TAG = "OffRouteDetector"
-private const val REROUTE_CONFIRM_COUNT = 3
+private const val REROUTE_CONFIRM_COUNT = 4
 private const val REROUTE_COOLDOWN_MS = 20_000L
-private const val SNAP_TO_ROUTE_MAX_M = 40f
-private const val SNAP_TO_ROUTE_RELEASE_M = 45f
+/** Snap only when clearly on the painted line — 40 m glued the puck to parallel streets. */
+private const val SNAP_TO_ROUTE_MAX_M = 18f
+private const val SNAP_TO_ROUTE_RELEASE_M = 22f
 private const val HIGH_SPEED_SNAP_BLEND_MPS = 15f
 
 /**
@@ -24,7 +25,7 @@ private const val HIGH_SPEED_SNAP_BLEND_MPS = 15f
  */
 internal class OffRouteDetector(
     private val projectionForLocation: (Location) -> RouteProjection?,
-    private val onReroute: (origin: LatLng, destLat: Double, destLng: Double) -> Unit,
+    private val onReroute: (origin: Location, destLat: Double, destLng: Double) -> Unit,
 ) {
     var offRouteCount: Int = 0
     var isRerouteInProgress: Boolean = false
@@ -66,8 +67,8 @@ internal class OffRouteDetector(
         offRouteCount = 0
         isRerouteInProgress = true
         rerouteCooldownUntilMs = System.currentTimeMillis() + REROUTE_COOLDOWN_MS
-        Log.i(TAG, "Re-routing from alternate path")
-        onReroute(LatLng(currentLocation.latitude, currentLocation.longitude), dest.latitude, dest.longitude)
+        Log.i(TAG, "Re-routing from alternate path (${distToRoute.toInt()}m off)")
+        onReroute(currentLocation, dest.latitude, dest.longitude)
     }
 
     private fun distanceToRouteMeters(location: Location, routePoints: List<LatLng>): Float {
