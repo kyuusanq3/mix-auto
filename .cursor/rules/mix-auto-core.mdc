@@ -36,12 +36,25 @@ MainActivity (MapHostViewModel — mapEngine, navigationVoice, localPlaces)
               ├── CarMapViewContainer — map pane
               ├── MediaPlayerPane + ShortcutDock
               ├── PoiDetailDrawer — full-screen overlay when map POI/pin selected
-              ├── RoutePickerPane — media pane when ≥2 routes
+              ├── Lighter-traffic chip in CarMapViewContainer when TomTom alternate qualifies
               └── MapDataOverlay — offline POI / offline map tile downloads
 ```
 
 - Map: `CarMapEngine` interface in `domain/map/`; swap `MapLibreEngineImpl()` in `MainActivity`/`MapHostViewModel` only
 - `LauncherViewModel` — activePanel, poiReturnToSearch, destinationSearchState (rotation-safe UI state)
+
+## LLM architecture invariants
+
+- `MapLibreEngineImpl` is a **facade** — add map/GPS/camera behavior in `data/map/` collaborators (`LocationTrackingController`, `NavigationCameraController`, `MapStyleController`, `RouteRenderer`, etc.); do not grow the facade again
+- Edit the **live owner** of constants (controllers / `SmoothingLocationEngine`); duplicate companions in the facade may be stale — grep before changing
+- Sample / local-LLM patches: **one concern, one file family**, then compile gate (`BUILD SUCCESSFUL`)
+
+## Agent anti-patterns
+
+- Ask-loops ("which component?") — use `AGENTS.md` **Where to edit** table and topic-rule front matter
+- Companion-object carpet bombing — change only constants tied to the hypothesis
+- Using `RouteRenderer` for puck glide — route greying is not puck smoothing
+- Inventing shell syntax or skipping `JAVA_HOME` after a known Gradle failure — follow `mix-auto-build-release.mdc` verify gate
 
 ## Shortcut packages (Eonon / AOSP)
 
@@ -59,7 +72,7 @@ MainActivity (MapHostViewModel — mapEngine, navigationVoice, localPlaces)
 Deep implementation notes are split by subsystem so only the relevant rules load for the file you're editing:
 
 - `.cursor/rules/mix-auto-map-engine.mdc` — camera, GPS/puck, route rendering, style/traffic overlay, custom pins, search origin
-- `.cursor/rules/mix-auto-navigation.mdc` — turn-by-turn TTS, reroute, multi-route selection/picker
+- `.cursor/rules/mix-auto-navigation.mdc` — turn-by-turn TTS, reroute, conventional routing, in-nav lighter-traffic alternate
 - `.cursor/rules/mix-auto-media.mdc` — media session, album art, audio source picker
 - `.cursor/rules/mix-auto-dashboard-ui.mdc` — dashboard layout, shortcut dock, panels, status bar, onboarding, app drawer
 - `.cursor/rules/mix-auto-places.mdc` — offline Overture POI database + offline map tile regions

@@ -6,6 +6,21 @@ alwaysApply: false
 
 # MixAuto map engine (`MapLibreEngineImpl` + `CarMapEngine`)
 
+## Agent front matter
+
+**High-speed puck/camera hitch triage (classify before editing):**
+
+| Likely cause | Check first | Owner files |
+|--------------|-------------|-------------|
+| Smoothing lag | `SmoothingLocationEngine` blend/extrapolation, `shouldSmoothPuckMotion()` | `SmoothingLocationEngine.kt`, `LocationTrackingController.kt` |
+| Camera churn | `NavigationCameraController` tracking modes, `cameraSessionId`, padding while `TRACKING_GPS` | `NavigationCameraController.kt` |
+| Tile/render hitch | `DrivingTilePrefetcher`, vector style load, RenderThread work at speed | `MapStyleController.kt`, `DrivingTilePrefetcher.kt` |
+| Main-thread work | `applyAndroidLocation`, GeoJSON rebuild, UI state throttle | `LocationTrackingController.kt`, `RouteRenderer.kt` (route line only) |
+
+**Do not as first move:** raise `DRIVING_ANIMATION_FPS` or tighten `LOCATION_ENGINE_*`; mass-retune `SmoothingLocationEngine` companion constants; use `RouteRenderer` for puck glide (route greying ≠ puck motion).
+
+**Facade rule:** new logic in `data/map/` collaborators — do not grow `MapLibreEngineImpl`. Constants may live in controllers, not stale facade companions.
+
 ## Map engine architecture
 
 ```

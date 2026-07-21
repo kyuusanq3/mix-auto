@@ -22,10 +22,9 @@ Builds a signed release APK for the mix-auto Android project. After signing, pro
 
 ## Step 1 — Summarize what changed (local diff on dev)
 
-Run the following to collect local uncommitted changes and recent commits on the `dev` branch:
+Run the following from **repo root** to collect local uncommitted changes and recent commits on the `dev` branch:
 
 ```powershell
-cd C:\dev\proj\mix-auto
 git diff --stat
 git diff --stat --cached
 git log --oneline -10
@@ -60,7 +59,9 @@ Edit `app/build.gradle.kts` with the new values.
 Check for `app/mixauto-release.jks`. If missing, generate it:
 
 ```powershell
-$env:JAVA_HOME = "C:\Program Files\Android\Android Studio\jbr"
+if (-not $env:JAVA_HOME) {
+  $env:JAVA_HOME = "C:\Program Files\Android\Android Studio\jbr"
+}
 $env:Path = "$env:JAVA_HOME\bin;$env:Path"
 keytool -genkeypair -v `
   -keystore app\mixauto-release.jks `
@@ -92,7 +93,9 @@ buildTypes {
 ## Step 4 — Build
 
 ```powershell
-$env:JAVA_HOME = "C:\Program Files\Android\Android Studio\jbr"
+if (-not $env:JAVA_HOME) {
+  $env:JAVA_HOME = "C:\Program Files\Android\Android Studio\jbr"
+}
 $env:Path = "$env:JAVA_HOME\bin;$env:Path"
 .\gradlew.bat assembleRelease
 ```
@@ -248,7 +251,7 @@ $notesPath = Join-Path $env:TEMP "mix-auto-release-notes.md"
 Use the commit message and version from Step 6:
 
 ```powershell
-& "C:\dev\proj\mix-auto\.opencode\skills\local-apk\scripts\publish-release.ps1" `
+& ".\.opencode\skills\local-apk\scripts\publish-release.ps1" `
   -Version "{versionName}" `
   -CommitMessage "{commit message from Step 6}" `
   -NotesFile $notesPath
@@ -263,7 +266,7 @@ The script will:
 Optional draft release (user must ask explicitly):
 
 ```powershell
-& "C:\dev\proj\mix-auto\.opencode\skills\local-apk\scripts\publish-release.ps1" `
+& ".\.opencode\skills\local-apk\scripts\publish-release.ps1" `
   -Version "{versionName}" `
   -CommitMessage "{commit message}" `
   -NotesFile $notesPath `

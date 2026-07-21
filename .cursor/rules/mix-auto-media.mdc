@@ -6,6 +6,14 @@ alwaysApply: false
 
 # MixAuto media session, album art, audio source
 
+## Agent front matter
+
+**Owners:** `MediaPlayerPane.kt`, `AlbumArtDisplay.kt`, `data/media/MediaSessionRepository.kt`, `MixAutoNotificationListenerService.kt`, `ui/components/AudioSettingsPanel.kt`.
+
+**Common tasks:** now-playing UI, default audio source, boot/resume (`ensureDefaultPlayerIfNeeded`, `attemptResumeNow`), album art modes/gestures, idle manual-play fallbacks.
+
+**Anti-patterns:** `BackgroundAudioLauncher.launchFallbackResumeLink()` for manual user taps (refocuses Mix Auto); stale closures in `pointerInput` without `rememberUpdatedState`; second GPS subscription for media.
+
 ## Media session / now playing
 
 - Media controls in `MediaPlayerPane.kt`: each button in `Row` needs `Modifier.weight(1f)` + `requiredSize(MinTapTarget)` or last button shrinks when pane is narrow

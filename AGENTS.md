@@ -16,6 +16,26 @@ Custom Android **Car Launcher** for an **Eonon head unit**. This app replaces th
 | Orientation | Portrait + landscape (`android:screenOrientation="sensor"`) |
 | Launcher role | LAUNCHER by default (Navigation App Mode); optional HOME via `LauncherModeAlias` |
 
+## Agent loop (required)
+
+1. **Classify** one primary cause: GPS gap | smoothing lag | camera churn | tile/render hitch | main-thread work | UI-only.
+2. **Open** the matching topic rule under `.cursor/rules/` (do not dump all rules).
+3. **Grep** the symbol; read ≤3 files before proposing a fix.
+4. **Smallest change** that tests the hypothesis — do not mass-retune unrelated companion constants.
+5. **Never claim success** without `BUILD SUCCESSFUL`.
+6. **Windows PowerShell only** — no `&&`. Set `JAVA_HOME` before Gradle (see verify gate below).
+
+### Where to edit
+
+| Symptom / area | Owner files | Topic rule |
+|----------------|-------------|------------|
+| Puck / camera / GPS / map style | `SmoothingLocationEngine`, `LocationTrackingController`, `NavigationCameraController`, `MapStyleController` | `mix-auto-map-engine.mdc` |
+| Turn-by-turn, reroute, route line | `NavigationRouteFetcher`, `ConventionalRouteSelector`, `RouteRenderer`, `data/navigation/` | `mix-auto-navigation.mdc` |
+| Now playing, album art, audio resume | `MediaPlayerPane`, `AlbumArtDisplay`, `data/media/` | `mix-auto-media.mdc` |
+| Dashboard layout, panels, search UI | `DashboardScreen`, `ui/components/`, `LauncherViewModel` | `mix-auto-dashboard-ui.mdc` |
+| Offline POI DB, offline map tiles | `LocalPlacesRepository`, `OfflineMapRepository`, `MapDataOverlay` | `mix-auto-places.mdc` |
+| Build, release APK, emulator GPS | Gradle, `avd-gps.ps1`, `.opencode/skills/local-apk` | `mix-auto-build-release.mdc` |
+
 ## Build
 
 **Android Studio (recommended):**
@@ -24,16 +44,20 @@ Custom Android **Car Launcher** for an **Eonon head unit**. This app replaces th
 2. **File → Settings → Build Tools → Gradle → Gradle JDK** → Embedded JDK / jbr-17
 3. Gradle Sync, then **Build → Make Project** (`Ctrl+F9`)
 
-**Command line (Windows):**
+**Command line (Windows) — verify gate (required after code changes):**
+
+From repo root (agent shells are usually already there). Do not hardcode personal clone paths in docs or commands.
 
 ```powershell
-$env:JAVA_HOME = "C:\Program Files\Android\Android Studio\jbr"
+# Set JAVA_HOME to Android Studio's embedded JBR if unset.
+if (-not $env:JAVA_HOME) {
+  $env:JAVA_HOME = "C:\Program Files\Android\Android Studio\jbr"
+}
 $env:Path = "$env:JAVA_HOME\bin;$env:Path"
-cd C:\dev\proj\mix-auto
 .\gradlew.bat assembleDebug
 ```
 
-APK output: `app/build/outputs/apk/debug/app-debug.apk`
+Expected: `BUILD SUCCESSFUL`. APK output: `app/build/outputs/apk/debug/app-debug.apk`
 
 Release sideload copy: `mix-auto.apk` at project root (see `.cursor/rules/mix-auto-build-release.mdc` for signing/release workflow).
 
@@ -134,3 +158,5 @@ This guide stays high-level on purpose — implementation lessons, gotchas, and 
 - **Idle media manual-play fallbacks (2026-07):** When `!hasActiveSession`, `MediaPlayerPane` shows tappable **Play the album manually** if `audioFallbackResumeLink` is set, else default player icon + **Start music on the player manually**; manual taps use local `launchManualFallbackLink()` (`ACTION_VIEW` only) — not `BackgroundAudioLauncher.launchFallbackResumeLink()` (boot/resume refocuses Mix Auto). See `mix-auto-media.mdc`.
 - **Close parallel-street reroute / stuck greying (2026-07):** Urban parallels are often 20–40 m — old **75 m** off-route + **40 m** road-snap caused TTS “recalculating” with no visible refresh (OSRM snapped start back) and a stuck cyan traveled line. Use **35 m** / 4 confirms, snap **18/22 m**, reroute OSRM `radiuses=25;unlimited` + bearings (`NavigationRouteFetcher.buildOsrmRouteUrl`), unconstrained fallback; `updateRouteProgress` on **raw** GPS with freeze `>25 m` and on-route resync `≤18 m` (`decideRouteProgressUpdate`). Details in `mix-auto-navigation.mdc` / `mix-auto-map-engine.mdc`; tests in `OffRouteParallelStreetTest.kt`.
 - **Map pan / End-nav crash races (2026-07):** Intermittent MapLibre crashes when panning during nav dive/overview or tapping End nav — dive `CancelableCallback` was re-engaging `TRACKING_GPS` after detach, and free-drive snap did not `cancelTransitions`. Fix: `NavigationCameraController.cameraSessionId` + `invalidateCameraSession()` / `prepareForFreeDriveCamera()`; gate `activateNavigationTracking` on navigating + `!isCameraDetached`; `MapLibreEngineImpl.mapReleased` + `withMapStyle` for post-teardown style callbacks. Full contract in `mix-auto-map-engine.mdc` camera-session bullet.
+- **Local LLM agent loop (2026-07):** `AGENTS.md` carries always-on classify→grep≤3 files→smallest patch→`BUILD SUCCESSFUL` loop plus **Where to edit** table; OpenCode may not load Cursor rule `globs:` — open topic rules by path when needed. Committed docs/skills must not hardcode personal clone paths; verify gate = conditional `JAVA_HOME` + `.\gradlew.bat assembleDebug` from repo root (see `mix-auto-build-release.mdc`).
+- **OpenCode local-LLM failure modes (2026-07):** Sample run on high-speed puck hitch retuned FPS/`LOCATION_ENGINE_*`/many `SmoothingLocationEngine` companions without diagnosis, misused `RouteRenderer` for puck glide, used bash `&&` and skipped `JAVA_HOME`, then claimed success after failed Gradle — anti-patterns now in `mix-auto-core.mdc` and topic-rule **Agent front matter**. Baseline hitch intentionally left unfixed for metrics; do not document a spoiler fix in rules.

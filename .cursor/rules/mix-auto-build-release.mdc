@@ -7,7 +7,23 @@ alwaysApply: true
 
 ## Build (Windows CLI)
 
-Set `JAVA_HOME` to Android Studio `jbr` before `.\gradlew.bat assembleDebug`. Gradle in Cursor terminal may fail without `JAVA_HOME`; Android Studio build works with embedded JDK.
+Run from **repo root**. Do not `Set-Location` to a personal clone path in committed docs — use the workspace cwd.
+
+**Verify gate (required after code changes):**
+
+```powershell
+if (-not $env:JAVA_HOME) {
+  $env:JAVA_HOME = "C:\Program Files\Android\Android Studio\jbr"
+}
+$env:Path = "$env:JAVA_HOME\bin;$env:Path"
+.\gradlew.bat assembleDebug
+```
+
+- Expected: `BUILD SUCCESSFUL`; artifact at `app/build/outputs/apk/debug/app-debug.apk`
+- Gradle in Cursor/OpenCode terminals may fail without `JAVA_HOME`; Android Studio build works with embedded JDK
+- **Forbidden:** bash `&&` on PowerShell; claiming success after Gradle failure; `clean` unless stuck; hardcoding clone directories in pushed docs
+
+**Release / sideload APK:** use `.opencode/skills/local-apk` (or Cursor `/local-apk`) — `assembleRelease` → copy to `mix-auto.apk`; do not freestyle `clean assembleDebug` for release
 
 ## Release
 

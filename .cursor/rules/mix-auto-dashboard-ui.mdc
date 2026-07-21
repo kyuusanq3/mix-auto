@@ -6,6 +6,14 @@ alwaysApply: false
 
 # MixAuto dashboard layout, dock, panels, onboarding, app drawer
 
+## Agent front matter
+
+**Owners:** `DashboardScreen.kt`, `DashboardLayouts.kt`, `LauncherViewModel.kt`, `LauncherPreferences.kt`, `ui/components/*` overlays (search, POI detail, settings).
+
+**Common tasks:** portrait/landscape layout, map/media divider, `activePanel` overlays (40% map split), destination search session state, onboarding wizard.
+
+**Anti-patterns:** `remember` for rotation-sensitive panel state (use `LauncherViewModel`); missing `CarLabelText` / `Car*Text` imports; putting map settings in top-right toolbar stack.
+
 ## Dashboard layout
 
 - `DashboardScreen.kt`: portrait Column (map → media → horizontal dock) or landscape Row/Column; map via `CarMapViewContainer` | media + shortcuts; `mapMediaRatio` slider in settings (default 0.6)

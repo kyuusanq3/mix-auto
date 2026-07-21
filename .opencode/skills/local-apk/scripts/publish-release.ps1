@@ -16,7 +16,7 @@ param(
     [Parameter(Mandatory)]
     [string]$NotesFile,
 
-    [string]$RepoRoot = "C:\dev\proj\mix-auto",
+    [string]$RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..\..\..")).Path,
     [string]$Branch = "dev",
     [string]$Repo = "kyuusanq3/mix-auto",
 

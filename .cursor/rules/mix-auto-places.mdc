@@ -6,6 +6,19 @@ alwaysApply: false
 
 # MixAuto offline data: Overture POI database + offline map tiles
 
+## Agent front matter
+
+**Two systems — do not conflate:**
+
+| System | Owners | UI |
+|--------|--------|-----|
+| Overture POI SQLite | `data/places/LocalPlacesRepository.kt` | Map Data country download |
+| Offline map tile regions | `data/map/OfflineMapRepository.kt`, `OfflineMapDownloadService.kt` | Same Map Data panel |
+
+**Common tasks:** catalog fetch from GitHub releases, install/decompress `.db.gz`, TomTom key + traffic toggle in Map Data, offline region download/pause.
+
+**Anti-patterns:** treating Google Places cache as OK (ToS); `importDatabaseFromUri` on `.gz` (decompress first); `VectorSource.querySourceFeatures` for on-screen POIs (use `queryRenderedFeatures`).
+
 Two distinct offline systems share the same "Map Data" UI (`MapDataOverlay.kt` / `MapDataViewModel`): the Overture **POI SQLite database** (`data/places/`) and the MapLibre **offline map tile regions** (`data/map/OfflineMapRepository.kt` + friends).
 
 ## Overture POI database

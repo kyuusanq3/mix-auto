@@ -6,6 +6,14 @@ alwaysApply: false
 
 # MixAuto turn-by-turn navigation
 
+## Agent front matter
+
+**Owners:** `NavigationRouteFetcher.kt`, `ConventionalRouteSelector.kt`, `RouteRenderer.kt` (route line / greying only), `data/navigation/NavigationVoiceController.kt`, step/reroute logic in `MapLibreEngineImpl` / `LocationTrackingController`.
+
+**Common tasks:** off-route reroute (35 m, 4 confirms), conventional OSRM pick (`alternatives=3`), in-nav lighter-traffic alternate (TomTom grey line + chip), nav TTS phrases.
+
+**Anti-patterns:** route picker UI (removed — auto-picks conventional); using `RouteRenderer` changes to fix puck smoothness; reroute without `radiuses=25;unlimited` + bearings on parallel streets.
+
 ## Routing / off-route / reroute
 
 - `router.project-osrm.org` returns 403 for third-party apps — use `routing.openstreetmap.de/routed-car` in `NavigationRouteFetcher`; set `User-Agent: MixAutoCarLauncher/1.0` on OSRM requests (same as Nominatim)
