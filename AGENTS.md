@@ -19,17 +19,23 @@ Custom Android **Car Launcher** for an **Eonon head unit**. This app replaces th
 ## Agent loop (required)
 
 1. **Classify** one primary cause: GPS gap | smoothing lag | camera churn | tile/render hitch | main-thread work | UI-only.
-2. **Open** the matching topic rule under `.cursor/rules/` (do not dump all rules).
-3. **Grep** the symbol; read ≤3 files before proposing a fix.
+2. **Open** the matching topic rule under `.cursor/rules/` (do not dump all rules). For map puck/camera/labels, open `.opencode/skills/local-map-triage` first.
+3. **Grep** the symbol; for files **>~400 lines**, skim signatures / hit context first — full-read only the edit target. Read ≤3 files before proposing a fix.
 4. **Smallest change** that tests the hypothesis — do not mass-retune unrelated companion constants.
-5. **Never claim success** without `BUILD SUCCESSFUL`.
+5. **Never claim success** without `BUILD SUCCESSFUL`. Feed compiler errors back and fix; do not skip the verify gate.
 6. **Windows PowerShell only** — no `&&`. Set `JAVA_HOME` before Gradle (see verify gate below).
+
+### Package map
+
+One-line package index for local LLMs: [`llms.txt`](llms.txt) at repo root. Prefer it over dumping large trees into the prompt.
 
 ### Where to edit
 
 | Symptom / area | Owner files | Topic rule |
 |----------------|-------------|------------|
 | Puck / camera / GPS / map style | `SmoothingLocationEngine`, `LocationTrackingController`, `NavigationCameraController`, `MapStyleController` | `mix-auto-map-engine.mdc` |
+| Rubber-band / bounce / catch-up puck at speed | `SmoothingLocationEngine`, `LocationTrackingController`, `OffRouteDetector` (nav snap) | `mix-auto-map-engine.mdc` |
+| Stretched / streaked / smeared map labels (tilted nav) | `PoiOverlayRenderer`, style pitch alignment / Liberty `poi_*` visibility — **not** Compose / `MapHostViewModel` | `mix-auto-map-engine.mdc` |
 | Turn-by-turn, reroute, route line | `NavigationRouteFetcher`, `ConventionalRouteSelector`, `RouteRenderer`, `data/navigation/` | `mix-auto-navigation.mdc` |
 | Now playing, album art, audio resume | `MediaPlayerPane`, `AlbumArtDisplay`, `data/media/` | `mix-auto-media.mdc` |
 | Dashboard layout, panels, search UI | `DashboardScreen`, `ui/components/`, `LauncherViewModel` | `mix-auto-dashboard-ui.mdc` |
@@ -121,6 +127,9 @@ Swap map provider: change `MapHostViewModel` to construct a new `CarMapEngine` i
 5. **Eonon-specific packages** — radio/Bluetooth package names may differ by firmware; extend the shortcut target resolution in `ShortcutDock.kt` rather than hardcoding in UI composables.
 6. **No commits unless asked** — user prefers explicit commit requests.
 7. **No Gradle multi-module split** — this app stays a single `:app` module; decompose within packages, not new Gradle modules.
+8. **Soft file size for new map/UI collaborators** — prefer **under ~400 lines**; do not grow `MapLibreEngineImpl`; extract only when a class has a clear second responsibility. Do **not** blanket-rewrite existing controllers to a hard 150-line limit.
+9. **Explicit return types** on new `public`/`internal` APIs; skip mass-annotating private helpers.
+10. **Golden examples** in topic rules (especially `mix-auto-map-engine.mdc`) beat long prose — match those snippets when patching.
 
 ## Planned / not yet implemented
 
@@ -140,14 +149,17 @@ This guide stays high-level on purpose — implementation lessons, gotchas, and 
 
 ## Related agent resources
 
+- Package index (local LLM): [`llms.txt`](llms.txt)
 - Session archive: `C:/dev/skills/session-history/mix-auto/`
+- OpenCode map triage (puck hitch, label stretch, nav camera): `.opencode/skills/local-map-triage` — open before editing `data/map/**`
 
 ## Lessons learned
 
 - **Audio Settings drawer:** `ActivePanel.AUDIO_SETTINGS` — overflow ⋮ in `MediaPlayerPane`; 60% pane / 40% map split (`isSplitLockedForOverlay`); map tap dismiss via `setMapTapDismissHandler(onDismissPanel)` in `DashboardScreen.kt`; panel in `ui/components/AudioSettingsPanel.kt`
 - **Startup / manual audio resume:** `MediaSessionRepository.ensureDefaultPlayerIfNeeded()` runs once per process at boot; `attemptResumeNow()` runs when Audio Settings closes (`DisposableEffect` in `AudioSettingsPanelContent`) — not gated by `hasAttemptedBootLaunch`; fallback link via `BackgroundAudioLauncher.launchFallbackResumeLink()` (`ACTION_VIEW`); plain web share URLs may open the app without autoplay
 - **Album art gestures:** When `showAlbumArtControls` is off (default), Info button in media header shows gesture help dialog; any value read inside `pointerInput` that is not a key must use `rememberUpdatedState` — `albumArtMode` in long-press had stale-closure bug
-- **LLM-friendly map layout (2026-07):** `MapLibreEngineImpl` is a facade (~2.7k lines) — add map/GPS/camera logic in `data/map/` collaborators (`LocationTrackingController`, `NavigationCameraController`, `MapStyleController`, `RouteRenderer`, `PoiOverlayRenderer`, `OffRouteDetector`, `BearingEnricher`, etc.) via callback injection; do not grow the engine class again. Cross-cutting flags (`isCameraDetached`, `hasSnappedCameraToGps`, nav state) stay on the engine and pass through getters/setters.
+- **LLM-friendly map layout (2026-07):** `MapLibreEngineImpl` is a facade (~1.7k lines after 2026-07 extraction) — add map/GPS/camera logic in `data/map/` collaborators (`LocationTrackingController`, `NavigationCameraController`, `MapStyleController`, `RouteRenderer`, `PoiOverlayRenderer`, `OffRouteDetector`, `NavigationSessionCoordinator`, `MapInteractionController`, `PoiQueryCoordinator`, etc.) via callback injection; do not grow the engine class again. Cross-cutting flags (`isCameraDetached`, `hasSnappedCameraToGps`, nav state) stay on the engine and pass through getters/setters.
+- **Map facade extraction (2026-07):** Pulled search origin, Photon fetch, POI query, lighter-traffic helper, map tap/custom pin, nav session orchestration, and offline catalog/metadata into dedicated `data/map/` files; `OfflineMapRepository` slimmed to download/observe only. Opportunistic splits only — no hard 150-line rewrite of camera/GPS controllers.
 - **LLM-friendly rules (2026-07):** Tribal knowledge lives in topic-scoped `.cursor/rules/mix-auto-*.mdc` with `globs:` — only `mix-auto-core.mdc` and `mix-auto-build-release.mdc` are always applied. Edit the scoped rule for the subsystem you touch; keep `AGENTS.md` as layout + architecture + pointers.
 - **Detekt size guardrails:** `config/detekt/detekt.yml` enforces `LargeClass` / `TooManyFunctions` / `LongMethod` on new code; existing debt in `config/detekt/baseline.xml` — regenerate baseline only when intentionally accepting new size debt.
 - **Dashboard UI decomposition:** Portrait/landscape dock layouts in `DashboardLayouts.kt`; secondary pane in `DashboardSecondaryPane.kt`; shared props holders avoid repeating huge argument lists across three layout branches.
@@ -159,4 +171,6 @@ This guide stays high-level on purpose — implementation lessons, gotchas, and 
 - **Close parallel-street reroute / stuck greying (2026-07):** Urban parallels are often 20–40 m — old **75 m** off-route + **40 m** road-snap caused TTS “recalculating” with no visible refresh (OSRM snapped start back) and a stuck cyan traveled line. Use **35 m** / 4 confirms, snap **18/22 m**, reroute OSRM `radiuses=25;unlimited` + bearings (`NavigationRouteFetcher.buildOsrmRouteUrl`), unconstrained fallback; `updateRouteProgress` on **raw** GPS with freeze `>25 m` and on-route resync `≤18 m` (`decideRouteProgressUpdate`). Details in `mix-auto-navigation.mdc` / `mix-auto-map-engine.mdc`; tests in `OffRouteParallelStreetTest.kt`.
 - **Map pan / End-nav crash races (2026-07):** Intermittent MapLibre crashes when panning during nav dive/overview or tapping End nav — dive `CancelableCallback` was re-engaging `TRACKING_GPS` after detach, and free-drive snap did not `cancelTransitions`. Fix: `NavigationCameraController.cameraSessionId` + `invalidateCameraSession()` / `prepareForFreeDriveCamera()`; gate `activateNavigationTracking` on navigating + `!isCameraDetached`; `MapLibreEngineImpl.mapReleased` + `withMapStyle` for post-teardown style callbacks. Full contract in `mix-auto-map-engine.mdc` camera-session bullet.
 - **Local LLM agent loop (2026-07):** `AGENTS.md` carries always-on classify→grep≤3 files→smallest patch→`BUILD SUCCESSFUL` loop plus **Where to edit** table; OpenCode may not load Cursor rule `globs:` — open topic rules by path when needed. Committed docs/skills must not hardcode personal clone paths; verify gate = conditional `JAVA_HOME` + `.\gradlew.bat assembleDebug` from repo root (see `mix-auto-build-release.mdc`).
+- **Local LLM docs shape (2026-07):** Prefer golden Kotlin DO/DON'T snippets in topic rules over long bullet lists; use root `llms.txt` as package index; soft under-~400-line budget for new collaborators (not a hard 150-line rewrite of existing debt); for files over ~400 lines, signature/grep skim before full body (`local-map-triage` Step 3b).
 - **OpenCode local-LLM failure modes (2026-07):** Sample run on high-speed puck hitch retuned FPS/`LOCATION_ENGINE_*`/many `SmoothingLocationEngine` companions without diagnosis, misused `RouteRenderer` for puck glide, used bash `&&` and skipped `JAVA_HOME`, then claimed success after failed Gradle — anti-patterns now in `mix-auto-core.mdc` and topic-rule **Agent front matter**. Baseline hitch intentionally left unfixed for metrics; do not document a spoiler fix in rules.
+- **Reject bad local-LLM plans:** Wrong owners include `MapHostViewModel` font metrics for map label stretch, camera position bounds for puck rubber-banding, TomTom alternate mode for puck bounce, or calling `/local-apk` during diagnosis/planning. Use `.opencode/skills/local-map-triage` and `mix-auto-map-engine.mdc` front matter + **Golden examples** instead.

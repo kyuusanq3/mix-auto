@@ -14,15 +14,11 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
-import org.json.JSONObject
-import org.maplibre.android.geometry.LatLng
-import org.maplibre.android.geometry.LatLngBounds
 import org.maplibre.android.offline.OfflineManager
 import org.maplibre.android.offline.OfflineRegion
 import org.maplibre.android.offline.OfflineRegionError
 import org.maplibre.android.offline.OfflineRegionStatus
 import org.maplibre.android.offline.OfflineTilePyramidRegionDefinition
-import java.nio.charset.StandardCharsets
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 import kotlin.math.max
@@ -86,33 +82,6 @@ fun formatOfflineStorageMb(bytes: Long): String {
     }
 }
 
-data class OfflineRegionDefinition(
-    val id: String,
-    val name: String,
-    val countryIso: String,
-    val south: Double,
-    val west: Double,
-    val north: Double,
-    val east: Double,
-    val minZoom: Double,
-    val maxZoom: Double,
-    val sizeEstimateMb: String,
-) {
-    fun contains(lat: Double, lng: Double): Boolean =
-        lat in south..north && lng in west..east
-
-    fun toBounds(): LatLngBounds = LatLngBounds.Builder()
-        .include(LatLng(south, west))
-        .include(LatLng(north, east))
-        .build()
-}
-
-data class OfflineCountryCatalog(
-    val iso: String,
-    val name: String,
-    val regions: List<OfflineRegionDefinition>,
-)
-
 data class OfflineRegionInstallState(
     val regionId: String,
     val isComplete: Boolean,
@@ -141,7 +110,7 @@ class OfflineMapRepository(context: Context) {
 
     private val appContext = context.applicationContext
 
-    private val catalog: List<OfflineCountryCatalog> = loadCatalog()
+    private val catalog: List<OfflineCountryCatalog> = OfflineRegionCatalog.loadCatalog(appContext)
     private val regionById: Map<String, OfflineRegionDefinition> = catalog
         .flatMap { country -> country.regions.map { it to country.iso } }
         .associate { (region, iso) -> region.id to region.copy(countryIso = iso) }
@@ -217,6 +186,8 @@ class OfflineMapRepository(context: Context) {
                             base[regionId] = status.toInstallState(
                                 regionId = regionId,
                                 installedMaxZoom = parseInstalledMaxZoom(sdkRegion),
+                                sizeEstimateMb = regionById[regionId]?.sizeEstimateMb,
+                                catalogMaxZoom = regionById[regionId]?.maxZoom?.toInt(),
                             )
                             pending--
                             if (pending <= 0) {
@@ -555,51 +526,6 @@ class OfflineMapRepository(context: Context) {
         }
     }
 
-    private fun isResumable(region: OfflineRegion, status: OfflineRegionStatus): Boolean {
-        if (status.isComplete) return false
-        // Legacy file:// style regions stall as a single unfetchable style resource.
-        if (status.requiredResourceCount == 1L && status.completedResourceCount == 0L) return false
-        if (!hasLoopbackStyleTransport(region)) {
-            Log.w(TAG, "Region ${parseRegionId(region)} uses legacy style transport — not resumable")
-            return false
-        }
-        val styleUrl = parseRegionStyleUrl(region)
-        if (styleUrl != null && isLegacyStyleUrl(styleUrl)) {
-            Log.w(TAG, "Region ${parseRegionId(region)} uses legacy style URL $styleUrl — not resumable")
-            return false
-        }
-        return true
-    }
-
-    private fun hasLoopbackStyleTransport(region: OfflineRegion): Boolean {
-        return try {
-            val metadata = region.metadata ?: return false
-            val json = JSONObject(String(metadata, StandardCharsets.UTF_8))
-            json.optString("styleTransport") == STYLE_TRANSPORT_LOOPBACK
-        } catch (exception: Exception) {
-            false
-        }
-    }
-
-    private fun parseRegionStyleUrl(region: OfflineRegion): String? {
-        return try {
-            val definition = region.definition
-            if (definition is OfflineTilePyramidRegionDefinition) {
-                definition.styleURL
-            } else {
-                null
-            }
-        } catch (exception: Exception) {
-            Log.w(TAG, "Failed to parse region style URL", exception)
-            null
-        }
-    }
-
-    private fun isLegacyStyleUrl(styleUrl: String): Boolean {
-        val lower = styleUrl.lowercase()
-        return lower.startsWith("file://") || lower.startsWith("asset://")
-    }
-
     suspend fun findPendingResumeRegion(): PendingOfflineResume? = withContext(Dispatchers.Main) {
         findFirstResumableIncompleteRegion()
     }
@@ -630,7 +556,7 @@ class OfflineMapRepository(context: Context) {
         return null
     }
 
-data class PendingOfflineResume(val regionId: String, val pixelRatio: Float)
+    data class PendingOfflineResume(val regionId: String, val pixelRatio: Float)
 
     private fun logStatus(regionId: String, status: OfflineRegionStatus, phase: String) {
         Log.i(
@@ -638,40 +564,6 @@ data class PendingOfflineResume(val regionId: String, val pixelRatio: Float)
             "Offline $regionId [$phase]: ${status.completedResourceCount}/${status.requiredResourceCount} " +
                 "bytes=${status.completedResourceSize} complete=${status.isComplete} " +
                 "state=${status.downloadState}",
-        )
-    }
-
-    private fun OfflineRegionStatus.toInstallState(
-        regionId: String,
-        installedMaxZoom: Int? = null,
-    ): OfflineRegionInstallState {
-        val required = requiredResourceCount
-        val completed = completedResourceCount
-        val progress = if (required > 0) {
-            (completed.toFloat() / required.toFloat()).coerceIn(0f, 1f)
-        } else {
-            0f
-        }
-        val sizeEstimate = regionById[regionId]?.sizeEstimateMb
-        val displayProgress = computeOfflineDisplayProgress(
-            completedResourceCount = completed,
-            requiredResourceCount = required,
-            completedResourceSize = completedResourceSize,
-            sizeEstimateMb = sizeEstimate,
-            isComplete = isComplete,
-        )
-        val catalogMax = regionById[regionId]?.maxZoom?.toInt()
-        return OfflineRegionInstallState(
-            regionId = regionId,
-            isComplete = isComplete,
-            completedResourceCount = completed,
-            requiredResourceCount = required,
-            completedResourceSize = completedResourceSize,
-            downloadProgress = progress,
-            displayProgress = displayProgress,
-            isDownloading = downloadState == OfflineRegion.STATE_ACTIVE && !isComplete,
-            installedMaxZoom = installedMaxZoom,
-            catalogMaxZoom = catalogMax,
         )
     }
 
@@ -700,79 +592,16 @@ data class PendingOfflineResume(val regionId: String, val pixelRatio: Float)
         isDownloading: Boolean,
         installedMaxZoom: Int? = _installStates.value[regionId]?.installedMaxZoom,
     ) {
-        val required = status.requiredResourceCount
-        val completed = status.completedResourceCount
-        val progress = if (required > 0) {
-            (completed.toFloat() / required.toFloat()).coerceIn(0f, 1f)
-        } else {
-            0f
-        }
-        val sizeEstimate = regionById[regionId]?.sizeEstimateMb
-        val displayProgress = computeOfflineDisplayProgress(
-            completedResourceCount = completed,
-            requiredResourceCount = required,
-            completedResourceSize = status.completedResourceSize,
-            sizeEstimateMb = sizeEstimate,
-            isComplete = status.isComplete,
-        )
-        val catalogMax = regionById[regionId]?.maxZoom?.toInt()
         _installStates.value = _installStates.value.toMutableMap().apply {
             put(
                 regionId,
-                OfflineRegionInstallState(
+                status.toInstallState(
                     regionId = regionId,
-                    isComplete = status.isComplete,
-                    completedResourceCount = completed,
-                    requiredResourceCount = required,
-                    completedResourceSize = status.completedResourceSize,
-                    downloadProgress = progress,
-                    displayProgress = displayProgress,
-                    isDownloading = isDownloading && !status.isComplete,
                     installedMaxZoom = installedMaxZoom,
-                    catalogMaxZoom = catalogMax,
-                ),
+                    sizeEstimateMb = regionById[regionId]?.sizeEstimateMb,
+                    catalogMaxZoom = regionById[regionId]?.maxZoom?.toInt(),
+                ).copy(isDownloading = isDownloading && !status.isComplete),
             )
-        }
-    }
-
-    private fun parseInstalledMaxZoom(region: OfflineRegion): Int? {
-        return try {
-            val definition = region.definition
-            if (definition is OfflineTilePyramidRegionDefinition) {
-                definition.maxZoom.toInt()
-            } else {
-                null
-            }
-        } catch (exception: Exception) {
-            Log.w(TAG, "Failed to parse installed maxZoom", exception)
-            null
-        }
-    }
-
-    private fun metadataBytes(
-        regionId: String,
-        name: String,
-        pixelRatio: Float,
-        catalogMaxZoom: Double,
-    ): ByteArray {
-        val json = JSONObject()
-            .put("id", regionId)
-            .put("name", name)
-            .put("pixelRatio", pixelRatio.toDouble())
-            .put("catalogMaxZoom", catalogMaxZoom.toInt())
-            .put("styleTransport", STYLE_TRANSPORT_LOOPBACK)
-            .toString()
-        return json.toByteArray(StandardCharsets.UTF_8)
-    }
-
-    private fun parsePixelRatio(region: OfflineRegion): Float {
-        return try {
-            val metadata = region.metadata ?: return DEFAULT_PIXEL_RATIO
-            val json = JSONObject(String(metadata, StandardCharsets.UTF_8))
-            json.optDouble("pixelRatio", DEFAULT_PIXEL_RATIO.toDouble()).toFloat()
-                .coerceIn(1f, MAX_OFFLINE_PIXEL_RATIO)
-        } catch (exception: Exception) {
-            DEFAULT_PIXEL_RATIO
         }
     }
 
@@ -793,67 +622,13 @@ data class PendingOfflineResume(val regionId: String, val pixelRatio: Float)
             })
         }
 
-    private fun loadCatalog(): List<OfflineCountryCatalog> {
-        return try {
-            val jsonText = appContext.assets.open(CATALOG_ASSET).bufferedReader().use { it.readText() }
-            val root = JSONObject(jsonText)
-            val countriesArray = root.getJSONArray("countries")
-            buildList {
-                for (index in 0 until countriesArray.length()) {
-                    val country = countriesArray.getJSONObject(index)
-                    val iso = country.getString("iso").uppercase()
-                    val name = country.getString("name")
-                    val regionsArray = country.getJSONArray("regions")
-                    val regions = buildList {
-                        for (regionIndex in 0 until regionsArray.length()) {
-                            val region = regionsArray.getJSONObject(regionIndex)
-                            add(
-                                OfflineRegionDefinition(
-                                    id = region.getString("id"),
-                                    name = region.getString("name"),
-                                    countryIso = iso,
-                                    south = region.getDouble("south"),
-                                    west = region.getDouble("west"),
-                                    north = region.getDouble("north"),
-                                    east = region.getDouble("east"),
-                                    minZoom = region.getDouble("minZoom"),
-                                    maxZoom = region.getDouble("maxZoom"),
-                                    sizeEstimateMb = region.getString("sizeEstimateMb"),
-                                ),
-                            )
-                        }
-                    }
-                    add(OfflineCountryCatalog(iso = iso, name = name, regions = regions))
-                }
-            }
-        } catch (exception: Exception) {
-            Log.e(TAG, "Failed to load offline region catalog", exception)
-            emptyList()
-        }
-    }
-
-    private fun parseRegionId(region: OfflineRegion): String? {
-        return try {
-            val metadata = region.metadata ?: return null
-            val json = JSONObject(String(metadata, StandardCharsets.UTF_8))
-            json.optString("id").takeIf { it.isNotBlank() }
-        } catch (exception: Exception) {
-            Log.w(TAG, "Failed to parse offline region metadata", exception)
-            null
-        }
-    }
-
     companion object {
         private const val TAG = "OfflineMapRepository"
-        private const val CATALOG_ASSET = "map/offline_regions.json"
         private const val OFFLINE_TILE_COUNT_LIMIT = 1_000_000L
         private const val PREPARE_TIMEOUT_MS = 120_000L
         private const val DOWNLOAD_TIMEOUT_MS = 45L * 60L * 1000L
         private const val STALL_CHECK_INTERVAL_MS = 30_000L
         private const val STALL_TIMEOUT_MS = 180_000L
         private const val STALL_KICK_GRACE_MS = 60_000L
-        private const val MAX_OFFLINE_PIXEL_RATIO = 2f
-        private const val DEFAULT_PIXEL_RATIO = 2f
-        private const val STYLE_TRANSPORT_LOOPBACK = "loopback-v1"
     }
 }

@@ -108,6 +108,11 @@ internal class SmoothingLocationEngine(
         return deltaS.coerceIn(0f, 0.1f)
     }
 
+    /**
+     * True while the smoothed display may run ahead of the next GPS fix via dead reckoning.
+     * When the next fix arrives behind the display, users see puck **rubber-banding** / bounce catch-up
+     * handled in [resolveBlendStart].
+     */
     private fun shouldExtrapolate(now: Long): Boolean {
         if (effectiveSpeedMps < STOPPED_SPEED_MPS) return false
         if (now - extrapolationStartMs > EXTRAPOLATION_MAX_MS) return false
@@ -243,7 +248,8 @@ internal class SmoothingLocationEngine(
 
     /**
      * Avoid backward puck animation when extrapolation ran ahead of the next GPS fix.
-     * Snap to the fix instead of blending the display backward.
+     * Snap to the fix instead of blending the display backward — visible as **rubber-banding**
+     * at higher speeds when inter-fix gaps grow.
      */
     private fun resolveBlendStart(previousDisplay: Location?, fix: Location): Location {
         if (previousDisplay == null) return Location(fix)

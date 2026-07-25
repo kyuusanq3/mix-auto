@@ -12,14 +12,66 @@ alwaysApply: false
 
 | Likely cause | Check first | Owner files |
 |--------------|-------------|-------------|
-| Smoothing lag | `SmoothingLocationEngine` blend/extrapolation, `shouldSmoothPuckMotion()` | `SmoothingLocationEngine.kt`, `LocationTrackingController.kt` |
+| Smoothing lag (rubber-banding / bounce catch-up) | `SmoothingLocationEngine` blend/extrapolation, `resolveBlendStart`, `shouldSmoothPuckMotion()` | `SmoothingLocationEngine.kt`, `LocationTrackingController.kt` |
 | Camera churn | `NavigationCameraController` tracking modes, `cameraSessionId`, padding while `TRACKING_GPS` | `NavigationCameraController.kt` |
 | Tile/render hitch | `DrivingTilePrefetcher`, vector style load, RenderThread work at speed | `MapStyleController.kt`, `DrivingTilePrefetcher.kt` |
 | Main-thread work | `applyAndroidLocation`, GeoJSON rebuild, UI state throttle | `LocationTrackingController.kt`, `RouteRenderer.kt` (route line only) |
 
-**Do not as first move:** raise `DRIVING_ANIMATION_FPS` or tighten `LOCATION_ENGINE_*`; mass-retune `SmoothingLocationEngine` companion constants; use `RouteRenderer` for puck glide (route greying ≠ puck motion).
+**Label artifact triage (stretched / streaked / smeared text under tilted nav):**
+
+| Likely cause | Check first | Owner files |
+|--------------|-------------|-------------|
+| Style text under nav tilt | `text-pitch-alignment` missing on road/place labels; nav tilt = free-drive + 10° | style / `MapStyleController`, bundled `mix-auto-driving.json` |
+| MapLibre #2788 streaks | icon+text on one `SymbolLayer` under tilt | `PoiOverlayRenderer` (`poiIconOnly*` / `poiTextOnly*`), Liberty `poi_r*` hide path |
+| Labels wrongly visible in nav | mix labels gated by `shouldShowMixPoiLabels()`; native POI hide must stay sticky | `MapLibreEngineImpl`, `PoiOverlayRenderer.syncNativePoiLayerVisibility` |
+
+**Do not as first move:** raise `DRIVING_ANIMATION_FPS` or tighten `LOCATION_ENGINE_*`; mass-retune `SmoothingLocationEngine` companion constants (including `blendDurationForSpeed`); use `RouteRenderer` for puck glide (route greying ≠ puck motion); touch Compose text / `MapHostViewModel` for map label stretch; call `local-apk` until diagnosis + `assembleDebug` succeed.
 
 **Facade rule:** new logic in `data/map/` collaborators — do not grow `MapLibreEngineImpl`. Constants may live in controllers, not stale facade companions.
+
+## Golden examples (prefer these over inventing paths)
+
+**Puck motion vs route greying — different owners:**
+
+```kotlin
+// DO — puck glide / rubber-band: SmoothingLocationEngine + LocationTrackingController
+if (shouldSmoothPuckMotion()) {
+    // skip forceLocationUpdateForImmediateRender (padding-only updates)
+}
+// displayLocation may be road-snapped for puck/HUD; progress uses raw GPS:
+updateRouteProgress(locationWithBearing) // raw — RouteRenderer greying / off-route honesty
+
+// DON'T — RouteRenderer is traveled/remaining GeoJSON only, not puck interpolation
+// DON'T — retune blendDurationForSpeed / DRIVING_ANIMATION_FPS without a triage hypothesis
+```
+
+**Camera session — stale dive callbacks must no-op:**
+
+```kotlin
+// DO — pan / End nav / onDestroy before re-engaging TRACKING_GPS
+navigationCamera.invalidateCameraSession() // or prepareForFreeDriveCamera(map)
+map.cancelTransitions()
+component.cameraMode = CameraMode.NONE
+
+// DO — gate re-engage
+fun activateNavigationTracking(...) {
+    if (!uiState().isNavigating || uiState().isCameraDetached) return
+    // … TRACKING_GPS
+}
+
+// DON'T — dive CancelableCallback that re-sets TRACKING_GPS after session invalidated
+```
+
+**POI symbols under tilted nav (MapLibre #2788):**
+
+```kotlin
+// DO — icon layer and text layer split (PoiOverlayRenderer)
+poiIconOnlyLayerProperties(iconExpr)   // no textField; iconPitchAlignment MAP
+poiTextOnlyLayerProperties()           // separate mix-poi-label-layer; textPitchAlignment VIEWPORT
+
+// DON'T — iconImage + textField on one SymbolLayer (streaks / stretch under nav tilt)
+// DON'T — fix via Compose TextStyle / MapHostViewModel font metrics
+```
 
 ## Map engine architecture
 
@@ -58,7 +110,7 @@ MainActivity (mapEngine = MapLibreEngineImpl())
 - Use `RenderMode.GPS` (not `COMPASS`) for heading-up driving view; set on `activateLocationTracking()` and before nav/free-drive camera modes
 - Synthetic bearing in `MapLibreEngineImpl.enrichLocationWithBearing()`: when `hasBearing()` is false (emulator/mock GPS), compute heading from previous fix via `bearingTo()` if movement > 10 m — prevents north-up camera when moving without compass bearing
 - Bearing freeze when stopped: `enrichLocationWithBearing()` treats stopped as speed < `STOPPED_SPEED_MPS` (1.4 m/s) **or** movement < `STOPPED_MOVE_M` (8 m) between fixes; `resolveFrozenBearing()` locks to `lastStableBearing` or current map camera bearing — **must** feed LocationComponent via `BearingEnrichedLocationEngine` wrapper (`createLocationEngine()`); enriching only in `applyAndroidLocation()` does not affect puck/camera because raw engine still drives MapLibre; app speed/HUD listens on `rawLocationEngine`, enriched engine only for LocationComponent activation
-- Puck smoothing (2026-06): `SmoothingLocationEngine` speed-adaptive blend (500/700/900 ms) + light extrapolation up to 1.2 s / 30 m between GPS fixes feeds LocationComponent — no per-tick `forceLocationUpdate()`; `setMaxAnimationFps(MAX)` on tracking engage; bearing EMA (`BEARING_EMA_ALPHA`); `resetSmoothingMotion()` on camera detach, top-down, route overview, style reload
+- Puck smoothing (2026-06): `SmoothingLocationEngine` speed-adaptive blend (500/700/900 ms default) + extrapolation up to `EXTRAPOLATION_MAX_MS` (2500 ms) / `EXTRAPOLATION_MAX_M` (50 m) between GPS fixes feeds LocationComponent — no per-tick `forceLocationUpdate()`; `setMaxAnimationFps(MAX)` on tracking engage; bearing EMA (`BEARING_EMA_ALPHA`); `resetSmoothingMotion()` on camera detach, top-down, route overview, style reload; high-speed rubber-band often = display ran ahead via extrapolation then snapped on next fix (`resolveBlendStart`) — classify before retuning companions
 - Puck flicker fix (2026-07): single GPS subscription — `BearingEnrichedLocationEngine.onRawFix` tees HUD/nav to `onLocationFixForAppLogic()`; do NOT add second `requestLocationUpdates` on `rawLocationEngine`; while `shouldSmoothPuckMotion()` skip `forceLocationUpdateForImmediateRender` (slider path uses `allowDuringSmoothing=true` + `currentDisplayLocation()`); bucketed lookahead padding (`LOOKAHEAD_ENTER/EXIT`, 8 dp quantize); `handleMapLayoutChange` only reapplies padding when key changes; `activateFreeDriveTrackingMode` mode-change only; road-snap hysteresis (`SNAP_TO_ROUTE_RELEASE_M` 45 m); suppress bearing-only `shouldEmitPuckFix` when stopped
 - **Driving tile prefetch:** `configureDrivingTilePrefetch()` after style load — `prefetchZoomDelta=3`, `setMaximumAmbientCacheSize(256MB)`; `DrivingTilePrefetcher` warms ambient cache via `putResourceWithUrl(url, bytes, modified, expires, etag, mustRevalidate)` on IO — MapLibre **11.5.1** has no callback overload; bearing-biased extra top padding in `computeDrivingViewportPadding()` when speed > 2 m/s
 - Road-snap puck: `snapLocationToRoute()` projects GPS onto nearest `routeGeometryPoints` segment when within `SNAP_TO_ROUTE_MAX_M = 18f` m (release `22f`); `applyAndroidLocation()` uses snapped `displayLocation` for puck/HUD/`lastKnownLocation` but passes **raw** `locationWithBearing` to both `evaluateStepAdvancement()` and `updateRouteProgress()` so off-route (35 m) and greying stay honest on parallel streets; helper `closestPointOnSegment()` returns `ClosestSegmentResult(distM, lat, lng)` — do not use `distanceToSegmentMeters()` alone for snap (it discards the projected coordinates)

@@ -48,6 +48,9 @@ MainActivity (MapHostViewModel — mapEngine, navigationVoice, localPlaces)
 - `MapLibreEngineImpl` is a **facade** — add map/GPS/camera behavior in `data/map/` collaborators (`LocationTrackingController`, `NavigationCameraController`, `MapStyleController`, `RouteRenderer`, etc.); do not grow the facade again
 - Edit the **live owner** of constants (controllers / `SmoothingLocationEngine`); duplicate companions in the facade may be stale — grep before changing
 - Sample / local-LLM patches: **one concern, one file family**, then compile gate (`BUILD SUCCESSFUL`)
+- Soft size: new collaborators prefer **under ~400 lines**; extract only on a clear second responsibility — do **not** blanket-split existing files to a hard 150-line limit
+- New `public`/`internal` APIs: prefer explicit return types; skip mass-annotating private helpers
+- Package index: root `llms.txt`; map patterns: golden examples in `mix-auto-map-engine.mdc`
 
 ## Agent anti-patterns
 
@@ -55,6 +58,9 @@ MainActivity (MapHostViewModel — mapEngine, navigationVoice, localPlaces)
 - Companion-object carpet bombing — change only constants tied to the hypothesis
 - Using `RouteRenderer` for puck glide — route greying is not puck smoothing
 - Inventing shell syntax or skipping `JAVA_HOME` after a known Gradle failure — follow `mix-auto-build-release.mdc` verify gate
+- Diagnosing map label stretch as Compose / `MapHostViewModel` font sizing — map labels are MapLibre symbol layers under tilt, not dashboard Compose text
+- Calling `/local-apk` (or publish) while still planning / diagnosing — release only after verified fix (`assembleDebug` gate)
+- Retuning `blendDurationForSpeed` or other `SmoothingLocationEngine` companions without a logged hypothesis — use `.opencode/skills/local-map-triage` first
 
 ## Shortcut packages (Eonon / AOSP)
 

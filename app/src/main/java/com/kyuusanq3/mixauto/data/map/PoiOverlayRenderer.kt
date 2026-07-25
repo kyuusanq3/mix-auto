@@ -62,6 +62,11 @@ internal fun buildPoiGeoJson(
     }.toString()
 }
 
+/**
+ * Icon-only symbol properties for POI pins under a tilted driving camera.
+ * Do not add [PropertyFactory.textField] here — icon+text on one [SymbolLayer] triggers
+ * MapLibre #2788 color streaks / stretch artifacts under nav tilt.
+ */
 internal fun poiIconOnlyLayerProperties(iconImageExpression: Expression): Array<PropertyValue<*>> {
     return arrayOf(
         PropertyFactory.iconImage(iconImageExpression),
@@ -73,6 +78,10 @@ internal fun poiIconOnlyLayerProperties(iconImageExpression: Expression): Array<
     )
 }
 
+/**
+ * Text-only symbol properties for POI name labels. Kept on a separate layer from icons so
+ * viewport-aligned text does not streak under tilted nav camera (MapLibre #2788).
+ */
 internal fun poiTextOnlyLayerProperties(): Array<PropertyValue<*>> {
     return arrayOf(
         PropertyFactory.textField(Expression.get("name")),
@@ -233,7 +242,13 @@ internal class PoiOverlayRenderer(
         isInTopDownView: Boolean,
         hasSelectedPoi: Boolean,
     ) {
-        if (!useVectorTiles || isNavigating) return
+        if (!useVectorTiles) return
+        if (isNavigating) {
+            vectorPoiLayerIds.forEach { id ->
+                style.getLayer(id)?.setProperties(PropertyFactory.visibility(Property.NONE))
+            }
+            return
+        }
         val showLiberty = when {
             zoom < minPoiZoom -> true
             !mixPoiOverlayActive -> true

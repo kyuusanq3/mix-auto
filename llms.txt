@@ -1,0 +1,56 @@
+# MixAuto package map (one line each — open topic rule / skill before deep reads)
+
+Root guide: AGENTS.md | Verify: assembleDebug (see mix-auto-build-release.mdc)
+Map triage skill: .opencode/skills/local-map-triage | Release APK: .opencode/skills/local-apk
+
+## Packages
+
+MainActivity.kt — entry; permissions; wires MapHostViewModel → DashboardScreen
+domain/map/ — CarMapEngine port, MapUiState, SearchResultPlace (thin contracts)
+domain/media/ — MediaPlaybackState
+data/map/ — MapLibre facade + GPS/puck/camera/style/route/POI collaborators (mix-auto-map-engine.mdc)
+data/navigation/ — turn-by-turn TTS, step phrases (mix-auto-navigation.mdc)
+data/places/ — offline Overture POI SQLite + encountered places (mix-auto-places.mdc)
+data/media/ — MediaSessionRepository, album art, audio resume (mix-auto-media.mdc)
+data/location/ — Nominatim reverse geocode helpers
+data/apps/ — launchable apps for drawer/dock
+data/update/ — app update checks
+data/weather/ — weather fetch (if used by HUD/settings)
+ui/map/ — MapHostViewModel (activity-scoped engine holder; keep thin)
+ui/dashboard/ — DashboardScreen, MediaPlayerPane, dock layouts (mix-auto-dashboard-ui.mdc)
+ui/components/ — map container, search, POI drawer, settings panels, overlays
+ui/settings/ — LauncherViewModel, preferences, MapDataViewModel
+ui/theme/ — Color, CarDimensions, Type, MixAutoTheme
+ui/onboarding/ — first-run permission wizard
+ui/status/ — status bar pieces
+ui/media/ — media ViewModel helpers
+service/ — notification listener, offline map download service
+
+## data/map owners (do not grow MapLibreEngineImpl)
+
+MapLibreEngineImpl.kt — facade / wiring only (~1.7k; prefer collaborators)
+SearchOriginResolver.kt — search origin resolution (GPS / map center / PH fallback)
+PhotonSearchClient.kt — Photon HTTP fetch for destination + nearby POI
+PoiQueryCoordinator.kt — POI cache search, tile query, nearby merge, viewport seed
+LighterTrafficHelper.kt — TomTom alternate scoring / route conversion (pure)
+MapInteractionController.kt — map tap/long-press, custom pin draft, reverse geocode
+NavigationSessionCoordinator.kt — navigate, startNavigation, reroute, lighter-traffic alternate
+OfflineRegionCatalog.kt — offline_regions.json catalog load
+OfflineRegionMetadata.kt — offline region SDK metadata parse / resumability
+SmoothingLocationEngine.kt — puck blend + extrapolation
+LocationTrackingController.kt — GPS tick, road-snap display, padding push
+NavigationCameraController.kt — free-drive / nav dive / cameraSessionId
+MapStyleController.kt — style load, traffic, 3D buildings, road boost
+RouteRenderer.kt — route GeoJSON greying (not puck motion)
+PoiOverlayRenderer.kt — mix POI icon/text layers, native poi_* visibility
+OffRouteDetector.kt — parallel-street off-route confirms
+ConventionalRouteSelector.kt / NavigationRouteFetcher.kt — OSRM conventional + fetch
+OfflineMapRepository.kt — offline tile download/observe (catalog + metadata extracted)
+
+## Agent habits
+
+- Load one topic rule or skill per task (OpenCode: open .mdc by path; globs may not auto-load)
+- Files >~400 lines: grep / signature skim first; full-read only the edit target
+- New collaborators: prefer <~400 lines; extract on clear second responsibility — no hard 150-line rewrite of existing debt
+- Explicit return types on new public/internal APIs; no mass-annotate private helpers
+- Never claim success without BUILD SUCCESSFUL
