@@ -1,7 +1,7 @@
 # MixAuto package map (one line each — open topic rule / skill before deep reads)
 
 Root guide: AGENTS.md | Verify: .\scripts\verify-debug.ps1 (see mix-auto-build-release.mdc)
-Map triage: .opencode/skills/local-map-triage | OpenCode loop: .opencode/skills/local-opencode-loop | GitHub release (not debug): .opencode/skills/local-apk | Debug verify: .\scripts\verify-debug.ps1
+Map triage (bugs): .opencode/skills/local-map-triage | Map feature (implement): .opencode/skills/local-map-feature | OpenCode loop: .opencode/skills/local-opencode-loop | GitHub release (not debug): .opencode/skills/local-apk | Debug verify: .\scripts\verify-debug.ps1
 
 ## Packages
 
@@ -43,7 +43,8 @@ OfflineRegionCatalog.kt — offline_regions.json catalog load
 OfflineRegionMetadata.kt — offline region SDK metadata parse / resumability
 SmoothingLocationEngine.kt — puck blend + extrapolation
 LocationTrackingController.kt — GPS tick, road-snap display, padding push
-NavigationCameraController.kt — free-drive / nav dive / cameraSessionId
+NavigationCameraController.kt — free-drive / nav dive / cameraSessionId / zoomWhileTracking apply
+NavigationZoom.kt — maneuver-distance follow zoom math (pure); extend here for new zoom formulas + tests
 MapStyleController.kt — style load, traffic, 3D buildings, road boost
 RouteRenderer.kt — route GeoJSON greying (not puck motion)
 PoiOverlayRenderer.kt — mix POI icon/text layers, native poi_* visibility

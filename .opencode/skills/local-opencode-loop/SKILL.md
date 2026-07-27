@@ -15,7 +15,9 @@ Ultra-short loop for OpenCode + Ollama (deepseek-15b, qwen3-coder-30b) on mix-au
 
 Use for any mix-auto task that touches code, builds, or diagnoses a bug.
 
-Map puck/camera/label work: also load **`.opencode/skills/local-map-triage`** first.
+Map puck/camera/label **bug** work: also load **`.opencode/skills/local-map-triage`** first.
+
+New map/camera **feature** (implement / add / extend zoom, follow, GPS-tick camera): also load **`.opencode/skills/local-map-feature`**.
 
 ---
 
@@ -23,7 +25,8 @@ Map puck/camera/label work: also load **`.opencode/skills/local-map-triage`** fi
 
 1. Read **`AGENTS.md`** → **Where to edit** (one row only).
 2. Open the matching **`.cursor/rules/mix-auto-*.mdc`** by path (not by glob).
-3. For map issues: **`.opencode/skills/local-map-triage`** before editing `data/map/**`.
+3. For map **bugs** (hitch, labels, rubber-band): **`.opencode/skills/local-map-triage`** before editing `data/map/**`.
+4. For map **features** (implement / add camera behavior): **`.opencode/skills/local-map-feature`** before editing `data/map/**`.
 
 Package index: **`llms.txt`** at repo root — do not dump full trees.
 

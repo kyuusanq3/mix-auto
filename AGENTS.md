@@ -19,13 +19,13 @@ Custom Android **Car Launcher** for an **Eonon head unit**. This app replaces th
 ## Agent loop (required)
 
 1. **Classify** one primary cause: GPS gap | smoothing lag | camera churn | tile/render hitch | main-thread work | UI-only.
-2. **Open** the matching topic rule under `.cursor/rules/` (do not dump all rules). For map puck/camera/labels, open `.opencode/skills/local-map-triage` first.
+2. **Open** the matching topic rule under `.cursor/rules/` (do not dump all rules). For map puck/camera/label **bugs**, open `.opencode/skills/local-map-triage` first. For map/camera **features** (implement / add / extend), open `.opencode/skills/local-map-feature`.
 3. **Grep** the symbol; for files **>~400 lines**, skim signatures / hit context first — full-read only the edit target. Read ≤3 files before proposing a fix.
 4. **Smallest change** that tests the hypothesis — do not mass-retune unrelated companion constants.
 5. **Never claim success** without `BUILD SUCCESSFUL`. Feed compiler errors back and fix; do not skip the verify gate.
 6. **Windows PowerShell only** — no `&&`. Prefer `.\scripts\verify-debug.ps1` (sets `JAVA_HOME`, prints `MIXAUTO_VERIFY_DONE`).
 
-**OpenCode / ≤30B models (deepseek, qwen3-coder):** load `.opencode/skills/local-opencode-loop` for the full loop. Short form: open `AGENTS.md` **Where to edit** → matching skill/rule by path → grep symbol → read hit context only (files >~400 lines) → one-concern patch → `.\scripts\verify-debug.ps1` → stop on `MIXAUTO_VERIFY_DONE` → report impact with real formula (e.g. nav = free-drive + `NAV_TILT_OFFSET`, not guessed deltas).
+**OpenCode / ≤30B models (deepseek, qwen3-coder):** load `.opencode/skills/local-opencode-loop` for the full loop. Map **bugs** → `local-map-triage`; map **features** (implement zoom, follow, GPS-tick camera) → `local-map-feature`. Short form: open `AGENTS.md` **Where to edit** → matching skill/rule by path → grep symbol → read hit context only (files >~400 lines) → one-concern patch → `.\scripts\verify-debug.ps1` → stop on `MIXAUTO_VERIFY_DONE` → report impact with real formula (e.g. nav = free-drive + `NAV_TILT_OFFSET`, not guessed deltas).
 
 ### Package map
 
@@ -161,7 +161,8 @@ This guide stays high-level on purpose — implementation lessons, gotchas, and 
 
 - Package index (local LLM): [`llms.txt`](llms.txt)
 - Session archive: `C:/dev/skills/session-history/mix-auto/`
-- OpenCode map triage (puck hitch, label stretch, nav camera): `.opencode/skills/local-map-triage` — open before editing `data/map/**`
+- OpenCode map triage (puck hitch, label stretch, nav camera bugs): `.opencode/skills/local-map-triage` — open before editing `data/map/**` for **fixes**
+- OpenCode map feature (implement / add driving zoom, follow, GPS-tick camera): `.opencode/skills/local-map-feature` — open before **new** map/camera behavior under `data/map/**`
 
 ## Lessons learned
 
@@ -189,3 +190,4 @@ This guide stays high-level on purpose — implementation lessons, gotchas, and 
 - **Facade wave 2 init handshakes (2026-07):** `PoiOverlayCoordinator` ↔ `PoiQueryCoordinator` and `RouteOverviewController` ↔ `NavigationCameraController` use the same `poiCoordRef`/`poiQueryRef` and `routeOverviewRef`/`navRef` two-phase `init` pattern as `navRef`/`locRef` — do not make either side `lazy` if the other needs it at construction time. `PoiOverlayCoordinator.poiCacheMap()` must return `MutableMap` (not `Map`) for `MapInteractionController`'s callback type.
 - **Map style constants (2026-07):** Raster fallback JSON lives in `MapStyleConstants.OSM_STYLE_JSON` as **`val`** (not `const val`) — `trimIndent()` is not a compile-time constant. Symptom→owner after wave 2: POI cache/overlay/preview → `PoiOverlayCoordinator`; route overview bounds/hold/dive → `RouteOverviewController`; typed destination search merge → `DestinationSearchCoordinator`; route types/layer IDs → `RouteModels.kt` — grep `llms.txt` before opening `MapLibreEngineImpl`.
 - **OpenCode nav-tilt run (2026-07):** Local LLM correctly raised `NAV_TILT_OFFSET` 10→15 for "more nav tilt" but misreported impact as free-drive 40→45° (free-drive stays at pref; nav = free + offset → 55°). Hardening: live-owner KDoc on facade companion, synced docs to +15°/55°, tilt edit vs apply split in `local-map-triage`, new `local-opencode-loop` skill for deepseek/qwen on OpenCode.
+- **OpenCode dynamic-zoom feature run (2026-07):** Local LLM replaced shipped `NavigationZoom.targetZoomForManeuverDistance`, wired free-drive via a facade named arg without a matching `LocationTrackingController` ctor param (compile break), reused nav-only `canApplyDynamicNavigationZoom()` on free-drive (no-op), duplicated pure math, wrote contradictory unit tests, and skipped verify. Hardening: new `.opencode/skills/local-map-feature` (discover→extend→callback+ctor pairing→mode guards→verify); golden example in `mix-auto-map-engine.mdc`; revert broken patch — feature not shipped.

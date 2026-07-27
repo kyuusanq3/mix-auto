@@ -90,6 +90,21 @@ poiTextOnlyLayerProperties()           // separate mix-poi-label-layer; textPitc
 // DON'T — full-read the ~1.3k facade; grep navTilt / NAV_TILT_OFFSET / setDrivingTilt first
 ```
 
+**Extend follow zoom (new feature — see `.opencode/skills/local-map-feature`):**
+
+```kotlin
+// DO — discover NavigationZoom + existing maneuver curve before adding speed/other terms
+// Pure math + unit tests in NavigationZoom.kt (or small data/map helper)
+// Apply in NavigationCameraController via zoomWhileTracking when TRACKING_GPS
+// GPS tick → narrow callback from LocationTrackingController (same pattern as updateNavigationZoomForDistance)
+// Free-drive and nav need separate apply guards — not the same canApply* helper
+
+// DON'T — replace targetZoomForManeuverDistance with ad-hoc boost math
+// DON'T — reuse canApplyDynamicNavigationZoom() (isNavigating) for free-drive zoom
+// DON'T — add MapLibreEngineImpl named arg without matching LocationTrackingController ctor param
+// DON'T — rewrite onDrivingTiltChanged / dive session while adding zoom
+```
+
 ## Map engine architecture
 
 ```

@@ -11,7 +11,9 @@ description: >-
 
 # local-map-triage
 
-Mandatory triage for OpenCode / local LLM agents working on map puck, camera, or label issues in mix-auto.
+Mandatory triage for OpenCode / local LLM agents working on map puck, camera, or label **bugs** in mix-auto.
+
+**New map/camera features** (implement / add / extend zoom, follow behavior) → use **`.opencode/skills/local-map-feature`**, not this skill.
 
 **OpenCode does not auto-load Cursor rule `globs:`** — you must read topic rules by path.
 
