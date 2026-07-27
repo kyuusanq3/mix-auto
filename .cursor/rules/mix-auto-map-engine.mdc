@@ -14,6 +14,7 @@ alwaysApply: false
 |--------------|-------------|-------------|
 | Smoothing lag (rubber-banding / bounce catch-up) | `SmoothingLocationEngine` blend/extrapolation, `resolveBlendStart`, `shouldSmoothPuckMotion()` | `SmoothingLocationEngine.kt`, `LocationTrackingController.kt` |
 | Camera churn | `NavigationCameraController` tracking modes, `cameraSessionId`, padding while `TRACKING_GPS` | `NavigationCameraController.kt` |
+| Driving / nav tilt | `NAV_TILT_OFFSET` on facade companion (live); `navTilt()` applies; `driving_tilt` pref = free-drive only; MapLibre **0° = overhead**, higher = more pitched | `MapLibreEngineImpl` companion + `setDrivingTilt`, `NavigationCameraController.navTilt()`, `LauncherPreferences` |
 | Tile/render hitch | `DrivingTilePrefetcher`, vector style load, RenderThread work at speed | `MapStyleController.kt`, `DrivingTilePrefetcher.kt` |
 | Main-thread work | `applyAndroidLocation`, GeoJSON rebuild, UI state throttle | `LocationTrackingController.kt`, `RouteRenderer.kt` (route line only) |
 
@@ -21,13 +22,13 @@ alwaysApply: false
 
 | Likely cause | Check first | Owner files |
 |--------------|-------------|-------------|
-| Style text under nav tilt | `text-pitch-alignment` missing on road/place labels; nav tilt = free-drive + 10° | style / `MapStyleController`, bundled `mix-auto-driving.json` |
+| Style text under nav tilt | `text-pitch-alignment` missing on road/place labels; nav tilt = free-drive + `NAV_TILT_OFFSET` (default +15°) | style / `MapStyleController`, bundled `mix-auto-driving.json` |
 | MapLibre #2788 streaks | icon+text on one `SymbolLayer` under tilt | `PoiOverlayRenderer` (`poiIconOnly*` / `poiTextOnly*`), Liberty `poi_r*` hide path |
-| Labels wrongly visible in nav | mix labels gated by `shouldShowMixPoiLabels()`; native POI hide must stay sticky | `MapLibreEngineImpl`, `PoiOverlayRenderer.syncNativePoiLayerVisibility` |
+| Labels wrongly visible in nav | mix labels gated by `shouldShowMixPoiLabels()`; native POI hide must stay sticky | `PoiOverlayCoordinator`, `PoiOverlayRenderer.syncNativePoiLayerVisibility` |
 
-**Do not as first move:** raise `DRIVING_ANIMATION_FPS` or tighten `LOCATION_ENGINE_*`; mass-retune `SmoothingLocationEngine` companion constants (including `blendDurationForSpeed`); use `RouteRenderer` for puck glide (route greying ≠ puck motion); touch Compose text / `MapHostViewModel` for map label stretch; call `local-apk` until diagnosis + `assembleDebug` succeed.
+**Do not as first move:** raise `DRIVING_ANIMATION_FPS` or tighten `LOCATION_ENGINE_*`; mass-retune `SmoothingLocationEngine` companion constants (including `blendDurationForSpeed`); use `RouteRenderer` for puck glide (route greying ≠ puck motion); touch Compose text / `MapHostViewModel` for map label stretch; bump `NAV_TILT_OFFSET` when the user wants overhead / flatter look-ahead; full-dump `MapLibreEngineImpl` for tilt apply (grep `navTilt` / `NAV_TILT_OFFSET` first); call `local-apk` until diagnosis + `assembleDebug` succeed.
 
-**Facade rule:** new logic in `data/map/` collaborators — do not grow `MapLibreEngineImpl`. Constants may live in controllers, not stale facade companions.
+**Facade rule:** new logic in `data/map/` collaborators — do not grow `MapLibreEngineImpl`. Grep all hits before changing constants; prefer controllers when duplicated. Exception: `NAV_TILT_OFFSET` on the facade companion is live (not stale).
 
 ## Golden examples (prefer these over inventing paths)
 
@@ -71,6 +72,22 @@ poiTextOnlyLayerProperties()           // separate mix-poi-label-layer; textPitc
 
 // DON'T — iconImage + textField on one SymbolLayer (streaks / stretch under nav tilt)
 // DON'T — fix via Compose TextStyle / MapHostViewModel font metrics
+```
+
+**Driving / nav tilt (MapLibre pitch semantics):**
+
+```kotlin
+// DO — MapLibre: 0° = overhead (top-down); higher tilt = more windshield / horizon
+// Nav tilt = freeDriveTilt + NAV_TILT_OFFSET (default 40° + 15° = 55°)
+// User wants "nearer overhead" / flatter look-ahead → DECREASE tilt or NAV_TILT_OFFSET
+// User wants more 3D / pitched → INCREASE offset or free-drive tilt (slider 20–60°)
+// Edit: MapLibreEngineImpl companion NAV_TILT_OFFSET + setDrivingTilt()
+// Apply: NavigationCameraController.navTilt() callback only
+
+// DON'T — raise NAV_TILT_OFFSET when user asks for overhead (inverts semantics)
+// DON'T — claim free-drive tilt rose when only NAV_TILT_OFFSET changed (free stays at pref)
+// DON'T — search domain/map for MapLibreEngineImpl (lives in data/map/)
+// DON'T — full-read the ~1.3k facade; grep navTilt / NAV_TILT_OFFSET / setDrivingTilt first
 ```
 
 ## Map engine architecture
@@ -124,15 +141,15 @@ MainActivity (mapEngine = MapLibreEngineImpl())
 
 ## Camera modes (free drive / nav / top-down)
 
-- After OSRM route draw, `showRouteThenDive()` shows a 2 s `LatLngBounds` overview then dives to `CameraMode.TRACKING_GPS` (zoom 17.5, tilt 55°) — do not set `TRACKING` immediately after route draw or it snaps back before the dive
+- After OSRM route draw, `RouteOverviewController.showRouteThenDive()` shows a 2 s `LatLngBounds` overview then dives to `CameraMode.TRACKING_GPS` (zoom 17.5, tilt 55°) — do not set `TRACKING` immediately after route draw or it snaps back before the dive
 - `startFreeDrive()` removes route layer/source, resets `MapUiState`, snaps once via `snapCameraToGpsIfNeeded()` — do not re-snap on every GPS fix (causes camera twitching)
-- Free drive camera: `FREE_DRIVE_ZOOM` 17.5 / default tilt **40°** (`driving_tilt` pref, slider 20–60°) / `CameraMode.TRACKING_GPS`; full nav uses zoom 18.5 / tilt **free-drive + 10°** (default 50°)
+- Free drive camera: `FREE_DRIVE_ZOOM` 17.5 / default tilt **40°** (`driving_tilt` pref, slider 20–60°) / `CameraMode.TRACKING_GPS`; full nav uses zoom 18.5 / tilt **free-drive + NAV_TILT_OFFSET** (default 40° + 15° = **55°**)
 - **Dynamic nav zoom:** while `isNavigating` and following (`!isCameraDetached`, not route overview / nav dive transition), `NavigationZoom.targetZoomForManeuverDistance()` maps puck→next-maneuver distance to zoom in `[15, navZoom]` (log curve; ≤80 m = ceiling, ≥1.5 km = floor); applied via `LocationComponent.zoomWhileTracking()` from `evaluateStepAdvancement()` — **not** during `enterNavigationCamera()` handshake; 0.2 zoom hysteresis; `setDrivingZoom()` updates ceiling only; reset in `startFreeDrive()` via `resetDynamicNavigationZoom()`
 - One-time snap: `hasSnappedCameraToGps` gates `snapCameraToGpsIfNeeded()`; use `moveCamera` then `TRACKING_GPS` — do not loop animated `setCameraMode` or stale-target checks on GPS updates
 - Style-load callback calls `startFreeDrive()` after `activateLocationTracking()`; `retryLocationActivation()` must NOT call `startFreeDrive()` again (duplicate snap/twitch)
 - Enabling `CameraMode.TRACKING` at wide fallback zoom (6) locks the visual view zoomed out even when `cameraPosition.zoom` reports 14–16 — snap after location component is active
 - End navigation button in `CarMapViewContainer` (Close icon, red tint) calls `engine.startFreeDrive()` when `isNavigating`
-- 3D nav camera: `showRouteThenDive()` sets `CameraMode.NONE` + `cancelTransitions()`, animates bounds in `ROUTE_OVERVIEW_ANIMATION_MS` (2 s), holds full-route view for `ROUTE_OVERVIEW_HOLD_MS` (10 s) with `routeOverviewProgress` timer bar in `CarMapViewContainer`; then `enterNavigationCamera()` — guard with `_uiState.value.isNavigating`; cancel `routeOverviewJob` in `startFreeDrive()`
+- 3D nav camera: `RouteOverviewController.showRouteThenDive()` sets `CameraMode.NONE` + `cancelTransitions()`, animates bounds in `ROUTE_OVERVIEW_ANIMATION_MS` (2 s), holds full-route view for `ROUTE_OVERVIEW_HOLD_MS` (10 s) with `routeOverviewProgress` timer bar in `CarMapViewContainer`; then `enterNavigationCamera()` — guard with `_uiState.value.isNavigating`; cancel overview in `startFreeDrive()` via `RouteOverviewController.clearRouteOverviewState()`
 - Nav dive camera: `enterNavigationCamera()` must NOT call `zoomWhileTracking`/`tiltWhileTracking` right after `TRACKING_GPS` — MapLibre ignores them while camera mode is transitioning; use `CameraMode.NONE` → `map.animateCamera(zoom 18.5 / tilt 63°)` → set `TRACKING_GPS` in `CancelableCallback.onFinish` (same snap pattern as free drive)
 - Manual pan/zoom sets `isCameraDetached` via `MapLibreMap.OnCameraMoveStartedListener.REASON_API_GESTURE`; recenter button in `CarMapViewContainer` `MapToolbarOverlay` shows when `isCameraDetached` (**including during navigation** — `GpsFixed` below red End nav); CropFree top-down button remains **free-drive only** (`!isNavigating`); tap calls `engine.recenterCamera()` → `enterNavigationCamera()` when navigating
 - Free-drive camera follow regression: `applyDrivingTrackingPadding()` must NOT call `applyMapPaddingImmediate()` / `moveCamera(paddingTo)` while `component.cameraMode == TRACKING_GPS` — MapLibre drops out of follow mode; update `paddingWhileTracking` only; skip `forceLocationUpdateForImmediateRender()` while `shouldSmoothPuckMotion()` (padding-only update)
@@ -145,7 +162,7 @@ MainActivity (mapEngine = MapLibreEngineImpl())
 - Pin tap camera: `handleMapPointSelection()` calls `focusOnPoi(..., moveCamera = true)` → `animateTopDownCamera` at `POI_PREVIEW_ZOOM` (15.5); must `clearViewportPaddingForPreview()` via `paddingTo(0,0,0,0)` + zero `paddingWhileTracking` before animating — free-drive puck padding shifts POI off visual center; `handleMapLayoutChange()` re-centers on `selectedPoi` only when `isInTopDownView`; explore mode (no POI) calls `syncTopDownViewportPaddingOnly()` — do NOT recenter on `lastKnownLocation`; guard `applyDrivingViewportPadding` / `applyDrivingTrackingPadding` with `if (isInTopDownView) return`
 - Top-view explore (CropFree): `TOP_DOWN_EXPLORE_ZOOM = 15.0`; `handleMapLayoutChange()` when `isInTopDownView` without `selectedPoi` → `syncTopDownViewportPaddingOnly()` only until `topDownExploreUserAdjusted`; user pan/zoom gesture cancels `topDownViewportSyncRunnable` + POI preview retries and sets `topDownExploreUserAdjusted`; `snapCameraToGpsIfNeeded()` / `activateFreeDriveTrackingMode()` / `applyAndroidLocation` must no-op camera moves when `isInTopDownView`; `clearPoiOverlay()` on `animateTopDownCamera()`; skip mix POI overlay refresh while `isInTopDownView` (native vector labels remain)
 - Map pan stiffness (CropFree + free-drive manual pan): on `REASON_API_GESTURE` call `ensureTopDownCameraDetached()` and cancel dead reckoning for all modes; `topDownExploreUserAdjusted` skips `syncTopDownViewportPaddingOnly`/`scheduleTopDownViewportSync` after CropFree user pans; `applyDrivingTrackingPadding`/`activateFreeDriveTrackingMode`/`handleMapLayoutChange` bail when `isCameraDetached`; dead reckoning only when `!isInTopDownView && !isCameraDetached`
-- Route overview after POI **Navigate**: `startNavigation()` must call `clearRoutePreviewState()` — cancel `pendingPoiPreviewTarget`, POI preview retries, and top-down viewport sync; clear `isInTopDownView` before `showRouteThenDive()`; do NOT rely on `dismissSelectedPoi()` (Navigate calls `navigateToCoordinates()` directly)
+- Route overview after POI **Navigate**: `startNavigation()` must call `clearRoutePreviewState()` — cancel `pendingPoiPreviewTarget`, POI preview retries, and top-down viewport sync; clear `isInTopDownView` before `RouteOverviewController.showRouteThenDive()`; do NOT rely on `dismissSelectedPoi()` (Navigate calls `navigateToCoordinates()` directly)
 - Route overview bounds: `fitRouteOverviewCamera()` uses full `routeGeometryPoints` via `buildRouteOverviewBounds()`; `handleMapLayoutChange()` re-fits while `routeOverviewJob?.isActive` only when `lastRouteOverviewLayoutWidth/Height` change (not every layout tick) — do not apply driving padding during overview (`isRouteOverviewActive()` guard in `applyDrivingTrackingPadding`); clear `lastAppliedTrackingPadding`/`lastEngagedTrackingPadding` on overview enter so puck offset re-applies after dive
 - Nearby search main thread: `getNearbyPois()` → `currentViewportBounds()` uses `map.projection` (UI thread only) — `readOnMainThread()` dispatches from IO workers; `searchDestination()` already wraps viewport cache in `withContext(Dispatchers.Main)`
 - Nav dive after overview: `navigationCameraTransitionActive` blocks `handleMapLayoutChange` and `applyDrivingTrackingPadding` while `enterNavigationCamera()` animates (2.5 s); post dive via `mapView.post { enterNavigationCamera() }` after 10 s hold; `activateNavigationTracking()` must snap to `navZoom`/`navTilt()` via `moveCamera` before `TRACKING_GPS` if animation was cancelled — otherwise nav HUD works but camera stays flat at overview zoom
@@ -201,11 +218,11 @@ MainActivity (mapEngine = MapLibreEngineImpl())
 
 ## Search origin / destination search
 
-- Destination search distance: default **500 km** cap via `MAX_SEARCH_RADIUS_M` in `MapLibreEngineImpl`; filter runs after `mergeAndDeduplicate()` when `limitDistance` is true — local SQLite bbox (±0.5°) unchanged
+- Destination search distance: default **500 km** cap via `MAX_SEARCH_RADIUS_M` in `DestinationSearchCoordinator`; filter runs after `mergeAndDeduplicate()` when `limitDistance` is true — local SQLite bbox (±0.5°) unchanged
 - Launcher Settings toggle **"Nearby results only (within 500 km)"** (`LauncherPreferences.limitSearchDistance`, default ON) flows DashboardScreen → CarMapViewContainer → NavigationSearchOverlay → `searchDestination(limitDistance)`; include `limitSearchDistance` in search `LaunchedEffect` keys so toggling re-queries
 - Photon returns global results (lat/lon is bias only); public OSRM demo server cannot reliably route intercontinental or 5000+ km trips — distance limit protects search UX, not routing capability
 - Search origin: `CarMapEngine.resolveSearchOrigin()` — GPS from `MapUiState` → `lastKnownLocation` → `resolveMapViewOriginForSearch()` (zoom ≥ 10, or **any zoom while navigating**) → system `readLastKnownLocation` → `DEFAULT_LOCATION` (PH center); **never `(0,0)`**; `isValidSearchOrigin()` rejects near-zero coords; `resolveInitialLocation()` must set `MapUiState.currentLat/currentLng` from cached fix on cold start
 - Search origin refresh: `NavigationSearchContent` calls `engine.refreshSearchOrigin()` on open then **snapshots** `resolveSearchOrigin()` + `hasReliableSearchOrigin()` for the panel session — do NOT key typed-search or nearby `LaunchedEffect` on live `uiState.currentLat/Lng` (cancels Photon while driving); remount on close/reopen refreshes snapshot
 - Search origin UX: `hasReliableSearchOrigin()` = GPS/last fix/camera (not PH default fallback); overlay shows **Waiting for GPS** when typed search empty and snapshot origin unreliable — not generic "No results found"
-- Search diagnostics: `searchDestination()` logs query, origin, local/cache/photon counts under tag `MapLibreEngineImpl`; `searchDestination()` / `getNearbyPois()` **honor valid passed lat/lng** — do not always override with live `resolveSearchOrigin()` when caller supplies snapshot coords
+- Search diagnostics: `DestinationSearchCoordinator.searchDestination()` logs query, origin, local/cache/photon counts under tag `MapLibreEngineImpl`; `searchDestination()` / `getNearbyPois()` **honor valid passed lat/lng** — do not always override with live `resolveSearchOrigin()` when caller supplies snapshot coords
 - Nearby search suggestions: `getNearbyPois()` offline ±0.5° bbox + full `poiCache` + **viewport** `poiCache` entries; `seedSearchFromMapViewport()` on search open loads tile/local POIs into cache; nearby UI limit **20**; `searchPoiCache` matches name/subtitle/category; typed search also uses `searchViewportPoiCache`

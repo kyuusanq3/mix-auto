@@ -1,7 +1,7 @@
 # MixAuto package map (one line each — open topic rule / skill before deep reads)
 
-Root guide: AGENTS.md | Verify: assembleDebug (see mix-auto-build-release.mdc)
-Map triage skill: .opencode/skills/local-map-triage | Release APK: .opencode/skills/local-apk
+Root guide: AGENTS.md | Verify: .\scripts\verify-debug.ps1 (see mix-auto-build-release.mdc)
+Map triage: .opencode/skills/local-map-triage | OpenCode loop: .opencode/skills/local-opencode-loop | GitHub release (not debug): .opencode/skills/local-apk | Debug verify: .\scripts\verify-debug.ps1
 
 ## Packages
 
@@ -28,7 +28,11 @@ service/ — notification listener, offline map download service
 
 ## data/map owners (do not grow MapLibreEngineImpl)
 
-MapLibreEngineImpl.kt — facade / wiring only (~1.7k; prefer collaborators)
+MapLibreEngineImpl.kt — facade / wiring only (~1.3k; prefer collaborators); still owns NAV_TILT_OFFSET companion (live)
+RouteModels.kt — LegStep, RouteResult, route layer/progress constants
+PoiOverlayCoordinator.kt — POI cache, mix overlay refresh, preview layers, native poi_* visibility
+RouteOverviewController.kt — route overview bounds/hold timer, then nav camera dive
+DestinationSearchCoordinator.kt — destination search merge (local/cache/Photon)
 SearchOriginResolver.kt — search origin resolution (GPS / map center / PH fallback)
 PhotonSearchClient.kt — Photon HTTP fetch for destination + nearby POI
 PoiQueryCoordinator.kt — POI cache search, tile query, nearby merge, viewport seed
@@ -53,4 +57,6 @@ OfflineMapRepository.kt — offline tile download/observe (catalog + metadata ex
 - Files >~400 lines: grep / signature skim first; full-read only the edit target
 - New collaborators: prefer <~400 lines; extract on clear second responsibility — no hard 150-line rewrite of existing debt
 - Explicit return types on new public/internal APIs; no mass-annotate private helpers
-- Never claim success without BUILD SUCCESSFUL
+- Never claim success without BUILD SUCCESSFUL or MIXAUTO_VERIFY_DONE exit=0
+- Gradle done = done: BUILD SUCCESSFUL / BUILD FAILED / MIXAUTO_VERIFY_DONE means finished even if agent UI still shows Running
+- MapLibre tilt: 0° = overhead; higher = more pitched; overhead request → decrease tilt or NAV_TILT_OFFSET; more nav pitch → increase NAV_TILT_OFFSET; report nav = freeDriveTilt + NAV_TILT_OFFSET (not free-drive alone)

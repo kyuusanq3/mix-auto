@@ -1,11 +1,29 @@
 ---
 name: local-apk
-description: Builds a signed release APK for the mix-auto Android project, copies it to mix-auto.apk, and optionally commits, pushes, and publishes to GitHub Releases. Use when the user says "local-apk", "local-apk publish", "build the apk", "build and sign", "build and publish", or asks to produce or ship a release APK.
+description: >-
+  GitHub release / version bump / signed release APK for mix-auto (assembleRelease
+  → mix-auto.apk → optional commit, push, GitHub Releases). Use when the user says
+  "local-apk", "local-apk publish", "ship release", "publish to GitHub", "bump
+  version and release", or asks to produce/ship a release APK. Do NOT use for
+  debug builds, compile checks, or verify gates — those use .\scripts\verify-debug.ps1
+  (assembleDebug) via local-opencode-loop / local-map-triage.
 ---
 
 # local-apk
 
-Builds a signed release APK for the mix-auto Android project. After signing, produces a suggested commit message, release title, and user-facing release description. When the user asks to **publish** ("local-apk publish", "build and publish", "commit and release"), also commits, pushes to `dev`, and uploads `mix-auto.apk` to GitHub Releases via `gh`.
+**Purpose:** GitHub updates and releases — version bump, signed **release** APK, optional commit/push + GitHub Releases upload.
+
+**Not for debug APKs.** Do **not** run this skill to compile-check a fix, validate a patch, or produce `app-debug.apk`. For that, use:
+
+```powershell
+.\scripts\verify-debug.ps1
+```
+
+(`assembleDebug` → `BUILD SUCCESSFUL` / `MIXAUTO_VERIFY_DONE`). See `.opencode/skills/local-opencode-loop` and `.opencode/skills/local-map-triage`.
+
+Only load **local-apk** after a verified fix when the user explicitly wants a **sideload release** or **GitHub publish**.
+
+Builds a signed release APK (`assembleRelease`), copies it to `mix-auto.apk`, and drafts commit/release notes. When the user asks to **publish** ("local-apk publish", "build and publish", "commit and release"), also commits, pushes to `dev`, and uploads `mix-auto.apk` to GitHub Releases via `gh`.
 
 ---
 
@@ -13,10 +31,12 @@ Builds a signed release APK for the mix-auto Android project. After signing, pro
 
 | Trigger | Steps |
 |---------|-------|
-| "local-apk", "build the apk", "build and sign" | Steps 1–6 only (build + output artifacts) |
-| "local-apk publish", "build and publish", "commit and release" | Steps 1–7 (build + commit + push + GitHub release) |
+| "local-apk", "build the release apk", "build and sign" | Steps 1–6 only (release build + artifacts) |
+| "local-apk publish", "build and publish", "commit and release", "ship to GitHub" | Steps 1–7 (release + commit + push + GitHub release) |
 
+**Never** use `assembleDebug` or `verify-debug.ps1` inside this skill — release only (`assembleRelease`).
 **Never commit or push** unless the user explicitly requested publish in the same message.
+**Never** run during diagnosis / planning — wait for an explicit release/publish request after verify.
 
 ---
 
@@ -90,7 +110,7 @@ buildTypes {
 
 ---
 
-## Step 4 — Build
+## Step 4 — Build release (not debug)
 
 ```powershell
 if (-not $env:JAVA_HOME) {
@@ -101,6 +121,10 @@ $env:Path = "$env:JAVA_HOME\bin;$env:Path"
 ```
 
 Allow at least 5 minutes for this build to complete. Expected output: `BUILD SUCCESSFUL`.
+
+**Wrong task:** `assembleDebug` / `.\scripts\verify-debug.ps1` — those are the compile/verify gate, not this skill.
+
+**Gradle done = done:** treat `BUILD SUCCESSFUL` or `BUILD FAILED` as command finished. If the agent UI still shows Running / `esc interrupt` after that line, do not wait or re-run — proceed from the exit code.
 
 ---
 
@@ -303,6 +327,7 @@ https://github.com/kyuusanq3/mix-auto/releases/latest/download/mix-auto.apk
 
 ## Notes
 
+- **Not a debug skill.** Compile/verify = `.\scripts\verify-debug.ps1` (`assembleDebug`). This skill = `assembleRelease` + GitHub release workflow only.
 - `JAVA_HOME` must point to Android Studio's embedded JRE (`jbr`). The environment variable persists across chained shell calls in a session.
 - Keystore credentials are stored in plaintext in `build.gradle.kts` — acceptable for a personal/sideload release; not for Play Store publishing.
 - `mix-auto.apk` and `app/mixauto-release.jks` are in `.gitignore` and must never be committed.

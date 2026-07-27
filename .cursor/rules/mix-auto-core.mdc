@@ -46,7 +46,7 @@ MainActivity (MapHostViewModel — mapEngine, navigationVoice, localPlaces)
 ## LLM architecture invariants
 
 - `MapLibreEngineImpl` is a **facade** — add map/GPS/camera behavior in `data/map/` collaborators (`LocationTrackingController`, `NavigationCameraController`, `MapStyleController`, `RouteRenderer`, etc.); do not grow the facade again
-- Edit the **live owner** of constants (controllers / `SmoothingLocationEngine`); duplicate companions in the facade may be stale — grep before changing
+- Edit the **live owner** of constants — grep all hits first; prefer controllers / `SmoothingLocationEngine` when duplicated; exception: `NAV_TILT_OFFSET` on `MapLibreEngineImpl` companion is live (not stale)
 - Sample / local-LLM patches: **one concern, one file family**, then compile gate (`BUILD SUCCESSFUL`)
 - Soft size: new collaborators prefer **under ~400 lines**; extract only on a clear second responsibility — do **not** blanket-split existing files to a hard 150-line limit
 - New `public`/`internal` APIs: prefer explicit return types; skip mass-annotating private helpers
@@ -57,7 +57,9 @@ MainActivity (MapHostViewModel — mapEngine, navigationVoice, localPlaces)
 - Ask-loops ("which component?") — use `AGENTS.md` **Where to edit** table and topic-rule front matter
 - Companion-object carpet bombing — change only constants tied to the hypothesis
 - Using `RouteRenderer` for puck glide — route greying is not puck smoothing
-- Inventing shell syntax or skipping `JAVA_HOME` after a known Gradle failure — follow `mix-auto-build-release.mdc` verify gate
+- Inventing shell syntax or skipping `JAVA_HOME` after a known Gradle failure — follow `mix-auto-build-release.mdc` verify gate (`.\scripts\verify-debug.ps1`)
+- Waiting after `BUILD SUCCESSFUL` or `MIXAUTO_VERIFY_DONE` because the tool UI still shows Running — Gradle output is authoritative
+- Increasing MapLibre tilt degrees when the user asks for overhead / flatter look-ahead — **0° = overhead**, higher = more pitched; decrease tilt or `NAV_TILT_OFFSET` for overhead
 - Diagnosing map label stretch as Compose / `MapHostViewModel` font sizing — map labels are MapLibre symbol layers under tilt, not dashboard Compose text
 - Calling `/local-apk` (or publish) while still planning / diagnosing — release only after verified fix (`assembleDebug` gate)
 - Retuning `blendDurationForSpeed` or other `SmoothingLocationEngine` companions without a logged hypothesis — use `.opencode/skills/local-map-triage` first

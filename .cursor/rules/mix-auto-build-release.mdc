@@ -11,6 +11,14 @@ Run from **repo root**. Do not `Set-Location` to a personal clone path in commit
 
 **Verify gate (required after code changes):**
 
+Preferred — one script, no freestyle shell:
+
+```powershell
+.\scripts\verify-debug.ps1
+```
+
+Fallback (same behavior inline):
+
 ```powershell
 if (-not $env:JAVA_HOME) {
   $env:JAVA_HOME = "C:\Program Files\Android\Android Studio\jbr"
@@ -19,8 +27,9 @@ $env:Path = "$env:JAVA_HOME\bin;$env:Path"
 .\gradlew.bat assembleDebug
 ```
 
-- Expected: `BUILD SUCCESSFUL`; artifact at `app/build/outputs/apk/debug/app-debug.apk`
+- Expected: `BUILD SUCCESSFUL` then `MIXAUTO_VERIFY_DONE exit=0`; artifact at `app/build/outputs/apk/debug/app-debug.apk`
 - Gradle in Cursor/OpenCode terminals may fail without `JAVA_HOME`; Android Studio build works with embedded JDK
+- **Gradle done = done:** treat `BUILD SUCCESSFUL`, `BUILD FAILED`, or `MIXAUTO_VERIFY_DONE` as **command finished**. If the agent UI still shows Running / `esc interrupt` after that line, do not wait, re-run, or spin — proceed from exit code / sentinel. Truncated mid-task logs (`UP-TO-DATE` + `…`) are not proof the build is still going.
 - **Forbidden:** bash `&&` on PowerShell; claiming success after Gradle failure; `clean` unless stuck; hardcoding clone directories in pushed docs
 
 **Release / sideload APK:** use `.opencode/skills/local-apk` (or Cursor `/local-apk`) — `assembleRelease` → copy to `mix-auto.apk`; do not freestyle `clean assembleDebug` for release
