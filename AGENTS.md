@@ -1,5 +1,15 @@
 # MixAuto — Agent Guide
 
+## OpenCode cold start (local ≤30B — short user prompts)
+
+User messages may be one line. Do **not** ask which component. First tool calls:
+
+1. `skill` → `local-opencode-loop`
+2. Map bug (puck / labels / tilt / hitch) → `skill` → `local-map-triage`
+3. New map/camera feature → `skill` → `local-map-feature`
+
+Then follow **Agent loop** below. Prefer `/map-bug <symptom>` or `/map-plan <symptom>` when available. Stop on `MIXAUTO_VERIFY_DONE`.
+
 Custom Android **Car Launcher** for an **Eonon head unit**. This app replaces the default home screen with a dashboard that adapts to portrait (stacked) or landscape (split) orientation: map, media player, and system app shortcuts.
 
 ## Quick facts
@@ -37,7 +47,7 @@ One-line package index for local LLMs: [`llms.txt`](llms.txt) at repo root. Pref
 |----------------|-------------|------------|
 | Puck / camera / GPS / map style | `SmoothingLocationEngine`, `LocationTrackingController`, `NavigationCameraController`, `MapStyleController` | `mix-auto-map-engine.mdc` |
 | Rubber-band / bounce / catch-up puck at speed | `SmoothingLocationEngine`, `LocationTrackingController`, `OffRouteDetector` (nav snap) | `mix-auto-map-engine.mdc` |
-| Stretched / streaked / smeared map labels (tilted nav) | `PoiOverlayRenderer`, style pitch alignment / Liberty `poi_*` visibility — **not** Compose / `MapHostViewModel` | `mix-auto-map-engine.mdc` |
+| Stretched / streaked / smeared map labels (tilted nav) | **Nav:** style `text-pitch-alignment` / [`mix-auto-driving.json`](app/src/main/assets/map/mix-auto-driving.json), `MapStyleController`. **Detached pan only:** `PoiOverlayRenderer` (`poiTextOnly*` = VIEWPORT) — **not** Compose / `MapHostViewModel` | `mix-auto-map-engine.mdc` |
 | Turn-by-turn, reroute, route line | `NavigationRouteFetcher`, `ConventionalRouteSelector`, `RouteRenderer`, `data/navigation/` | `mix-auto-navigation.mdc` |
 | Now playing, album art, audio resume | `MediaPlayerPane`, `AlbumArtDisplay`, `data/media/` | `mix-auto-media.mdc` |
 | Dashboard layout, panels, search UI | `DashboardScreen`, `ui/components/`, `LauncherViewModel` | `mix-auto-dashboard-ui.mdc` |
@@ -163,6 +173,8 @@ This guide stays high-level on purpose — implementation lessons, gotchas, and 
 - Session archive: `C:/dev/skills/session-history/mix-auto/`
 - OpenCode map triage (puck hitch, label stretch, nav camera bugs): `.opencode/skills/local-map-triage` — open before editing `data/map/**` for **fixes**
 - OpenCode map feature (implement / add driving zoom, follow, GPS-tick camera): `.opencode/skills/local-map-feature` — open before **new** map/camera behavior under `data/map/**`
+- OpenCode agent loop / GitHub release: `.opencode/skills/local-opencode-loop` (verify gate); `.opencode/skills/local-apk` (signed release + GitHub publish only — not debug)
+- Cursor review of local-LLM diffs: `/local-llm-review` → `~/.cursor/skills/local-llm-review` (personal; not in repo)
 
 ## Lessons learned
 
@@ -191,3 +203,6 @@ This guide stays high-level on purpose — implementation lessons, gotchas, and 
 - **Map style constants (2026-07):** Raster fallback JSON lives in `MapStyleConstants.OSM_STYLE_JSON` as **`val`** (not `const val`) — `trimIndent()` is not a compile-time constant. Symptom→owner after wave 2: POI cache/overlay/preview → `PoiOverlayCoordinator`; route overview bounds/hold/dive → `RouteOverviewController`; typed destination search merge → `DestinationSearchCoordinator`; route types/layer IDs → `RouteModels.kt` — grep `llms.txt` before opening `MapLibreEngineImpl`.
 - **OpenCode nav-tilt run (2026-07):** Local LLM correctly raised `NAV_TILT_OFFSET` 10→15 for "more nav tilt" but misreported impact as free-drive 40→45° (free-drive stays at pref; nav = free + offset → 55°). Hardening: live-owner KDoc on facade companion, synced docs to +15°/55°, tilt edit vs apply split in `local-map-triage`, new `local-opencode-loop` skill for deepseek/qwen on OpenCode.
 - **OpenCode dynamic-zoom feature run (2026-07):** Local LLM replaced shipped `NavigationZoom.targetZoomForManeuverDistance`, wired free-drive via a facade named arg without a matching `LocationTrackingController` ctor param (compile break), reused nav-only `canApplyDynamicNavigationZoom()` on free-drive (no-op), duplicated pure math, wrote contradictory unit tests, and skipped verify. Hardening: new `.opencode/skills/local-map-feature` (discover→extend→callback+ctor pairing→mode guards→verify); golden example in `mix-auto-map-engine.mdc`; revert broken patch — feature not shipped.
+- **OpenCode label+rubber-band run (2026-07):** deepseek multi-bucket plan (MapStyleConstants, LauncherPreferences, GPU profiling, both bugs at once); qwen flipped mix text VIEWPORT→MAP, mass-retuned `SmoothingLocationEngine` extrapolation **up** (worsens ahead-then-snap), unrelated `NAV_CAMERA_DURATION_MS` drive-by; verify succeeded but agent kept thinking past `MIXAUTO_VERIFY_DONE`. Hardening: `local-map-triage` **Reject these plans**, nav stretch → style `text-pitch-alignment` not mix labels (`shouldShowMixPoiLabels` off in nav), `local-opencode-loop` **End turn after verify**, KDoc on live owners.
+- **Cursor `/local-llm-review` (2026-07):** Personal skill `~/.cursor/skills/local-llm-review` — review uncommitted + unpushed local-LLM (OpenCode) diffs as codebase-aware reviewer; ask for original goal if unclear; classify **blockers** / **needs-fixing** / **nits**; end with copy-pasteable OpenCode prompt (decide applicability). Do not implement fixes unless asked after the review.
+- **OpenCode `local-apk` vs debug (2026-07):** `.opencode/skills/local-apk` is GitHub release/publish only (`assembleRelease` → `mix-auto.apk` → optional commit/push/release). Compile/verify fixes with `.\scripts\verify-debug.ps1` (`assembleDebug`) — never use `local-apk` as a debug build or during diagnosis.

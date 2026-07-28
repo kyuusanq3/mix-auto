@@ -1,6 +1,11 @@
 ---
 name: local-opencode-loop
-description: Required agent loop for OpenCode on mix-auto with local Ollama models (deepseek, qwen3-coder). Use for any code edit, verify, or fix task. Covers classify, grep, smallest patch, PowerShell verify gate, and correct impact reporting.
+description: >-
+  ALWAYS load first on mix-auto for any code edit, bug fix, diagnose, plan, or
+  verify (OpenCode + Ollama deepseek/qwen). Short user prompts still need this.
+  Classify → grep ≤3 files → one patch → .\scripts\verify-debug.ps1 → STOP on
+  MIXAUTO_VERIFY_DONE. Map bugs also need local-map-triage; new map features
+  need local-map-feature.
 ---
 
 # local-opencode-loop
@@ -72,6 +77,16 @@ $env:Path = "$env:JAVA_HOME\bin;$env:Path"
 - **Gradle done = done** — do not wait if agent UI still shows Running after those lines.
 - Never claim success after Gradle failure.
 - No **`local-apk`** until verify passes **and** the user explicitly asks to ship a **GitHub release** / signed release APK — local-apk is never a debug build (use `verify-debug.ps1` for that)
+
+---
+
+## Step 4b — End turn after verify (required)
+
+When you see **`BUILD SUCCESSFUL`** and **`MIXAUTO_VERIFY_DONE exit=0`**:
+
+- **Stop** — end the turn; do not keep planning, diagnosing, or starting a second concern
+- Do not wait because the agent UI still shows Running / `esc interrupt` — Gradle output is authoritative
+- If the user listed two map bugs (e.g. labels + rubber-band): one classified patch + verify, then **stop and report** — defer the second symptom to the next turn
 
 ---
 

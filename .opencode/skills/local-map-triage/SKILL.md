@@ -1,12 +1,12 @@
 ---
 name: local-map-triage
 description: >-
-  Classify and plan fixes for MixAuto map driving issues — puck rubber-banding,
-  high-speed hitch, stretched/streaked labels, nav camera/GPS smoothness. Use
-  before editing data/map/** or proposing map-engine patches. Verify with
-  .\scripts\verify-debug.ps1 (assembleDebug). Do NOT use local-apk here —
-  local-apk is GitHub release/publish only, after a verified fix when the user
-  explicitly asks.
+  ALWAYS load before editing data/map/** for MixAuto map BUGS — even if the user
+  prompt is only a short symptom. Triggers: puck rubber-band/bounce/catch-up,
+  high-speed hitch, stretched/streaked/smeared labels, nav tilt/camera/GPS
+  smoothness. One class, ≤3 owners, no ask-loops. Verify with
+  .\scripts\verify-debug.ps1. Not for new features (use local-map-feature). Not
+  local-apk (release only).
 ---
 
 # local-map-triage
@@ -54,6 +54,21 @@ Pick exactly one before proposing edits:
 
 Do not blend multiple hypotheses in one patch.
 
+**Two symptoms in one user message** (e.g. label stretch **and** rubber-band puck): still pick **one** class for the first patch; explicitly defer the other to a separate turn after verify.
+
+---
+
+## Reject these plans (common local-LLM mistakes)
+
+Do **not** adopt or execute plans that:
+
+- Blend label stretch + puck rubber-band into one patch or one companion/style dump
+- Point at wrong first owners: `MapStyleConstants.kt`, `LauncherPreferences`, `MapHostViewModel`, GPU/CPU profiling, or "adaptive controls from metrics"
+- Fix **nav-mode** label stretch by editing `poiTextOnlyLayerProperties` first — mix labels are hidden while navigating (`shouldShowMixPoiLabels()` requires `!isNavigating`); grep that gate, then inspect style / `mix-auto-driving.json` / `MapStyleController` for missing `text-pitch-alignment` on road/place/`poi_r*` symbol layers
+- Change mix text pitch/rotation from **`VIEWPORT` to `MAP`** — golden example requires **VIEWPORT** for MapLibre #2788 streaks; MAP is the wrong direction
+- Raise `EXTRAPOLATION_MAX_MS`, `EXTRAPOLATION_MAX_M`, or `EXTRAPOLATION_SNAP_BACK_MAX_M` as a first rubber-band fix — high-speed bounce is often display ran **ahead** via extrapolation then snapped in `resolveBlendStart`; increasing ahead limits usually **worsens** bounce
+- Mass-edit 3+ `SmoothingLocationEngine` companion constants in one patch without a single logged hypothesis
+
 ---
 
 ## Step 3 — Name ≤3 owner files
@@ -63,7 +78,7 @@ Examples (grep to confirm, read ≤3 files total before editing):
 | Symptom | Owner files |
 |---------|-------------|
 | Rubber-band puck | `SmoothingLocationEngine.kt`, `LocationTrackingController.kt`, `OffRouteDetector.kt` |
-| Streaked labels | `PoiOverlayRenderer.kt`, `MapLibreEngineImpl.kt`, `MapStyleController.kt` / style JSON |
+| Streaked labels (nav / tilted driving) | **First:** `mix-auto-driving.json` / `MapStyleController.kt` (`text-pitch-alignment` on style symbol layers). **Detached pan only:** `PoiOverlayRenderer.kt` (`poiTextOnly*` = VIEWPORT). Not `MapLibreEngineImpl` facade dump |
 | Driving / nav tilt | **Edit:** `MapLibreEngineImpl` companion `NAV_TILT_OFFSET` + `setDrivingTilt()`. **Apply:** `NavigationCameraController.navTilt()` callback only. **Pref:** `LauncherPreferences.driving_tilt` = free-drive only (not nav delta) |
 
 **Wrong owners (reject):**
@@ -95,7 +110,9 @@ Large owners (`MapLibreEngineImpl`, camera/location controllers, big UI) burn lo
 Do **not** as the first patch:
 
 - Raise `DRIVING_ANIMATION_FPS` or tighten `LOCATION_ENGINE_*`
-- Mass-retune `SmoothingLocationEngine` companion constants (including `blendDurationForSpeed`) without a logged hypothesis
+- Mass-retune `SmoothingLocationEngine` companion constants (including `blendDurationForSpeed`) without a logged hypothesis — especially do not raise `EXTRAPOLATION_MAX_*` / snap-back as a first rubber-band move
+- Mass-edit 3+ `SmoothingLocationEngine` companion constants in one patch
+- Change `poiTextOnlyLayerProperties` text pitch/rotation from VIEWPORT to MAP
 - Use `RouteRenderer` for puck motion
 - Call **`local-apk`** or publish a GitHub release while still diagnosing (local-apk = release/GitHub only, not debug)
 - Grow `MapLibreEngineImpl` — add logic in `data/map/` collaborators

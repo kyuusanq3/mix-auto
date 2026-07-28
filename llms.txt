@@ -1,6 +1,8 @@
 # MixAuto package map (one line each — open topic rule / skill before deep reads)
 
 Root guide: AGENTS.md | Verify: .\scripts\verify-debug.ps1 (see mix-auto-build-release.mdc)
+OpenCode cold start: skill local-opencode-loop first; map bugs → local-map-triage; map features → local-map-feature; short prompts OK — no ask-loops
+Commands: /map-bug <symptom> (build) | /map-plan <symptom> (plan only)
 Map triage (bugs): .opencode/skills/local-map-triage | Map feature (implement): .opencode/skills/local-map-feature | OpenCode loop: .opencode/skills/local-opencode-loop | GitHub release (not debug): .opencode/skills/local-apk | Debug verify: .\scripts\verify-debug.ps1
 
 ## Packages
@@ -45,9 +47,9 @@ SmoothingLocationEngine.kt — puck blend + extrapolation
 LocationTrackingController.kt — GPS tick, road-snap display, padding push
 NavigationCameraController.kt — free-drive / nav dive / cameraSessionId / zoomWhileTracking apply
 NavigationZoom.kt — maneuver-distance follow zoom math (pure); extend here for new zoom formulas + tests
-MapStyleController.kt — style load, traffic, 3D buildings, road boost
+PoiOverlayRenderer.kt — mix POI icon/text layers, native poi_* visibility; mix poiTextOnly* = VIEWPORT (detached pan only — hidden while navigating)
+MapStyleController.kt — style load, traffic, 3D buildings, road boost; nav label stretch → style text-pitch-alignment / mix-auto-driving.json (not mix-poi-label MAP flip)
 RouteRenderer.kt — route GeoJSON greying (not puck motion)
-PoiOverlayRenderer.kt — mix POI icon/text layers, native poi_* visibility
 OffRouteDetector.kt — parallel-street off-route confirms
 ConventionalRouteSelector.kt / NavigationRouteFetcher.kt — OSRM conventional + fetch
 OfflineMapRepository.kt — offline tile download/observe (catalog + metadata extracted)

@@ -416,6 +416,12 @@ internal class SmoothingLocationEngine(
         delegate.removeLocationUpdates(pendingIntent)
     }
 
+    /**
+     * Puck smoothing constants. High-speed rubber-band is often display ran ahead via
+     * [shouldExtrapolate] then snapped in [resolveBlendStart] — raising [EXTRAPOLATION_MAX_MS],
+     * [EXTRAPOLATION_MAX_M], or [EXTRAPOLATION_SNAP_BACK_MAX_M] usually **worsens** bounce.
+     * Change one constant at a time with a logged triage hypothesis; no companion carpet bombing.
+     */
     companion object {
         private const val SMOOTHING_BLEND_DURATION_DEFAULT_MS = 900L
         private const val STOPPED_SPEED_MPS = 1.4f

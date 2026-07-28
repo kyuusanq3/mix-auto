@@ -270,6 +270,11 @@ internal class PoiOverlayCoordinator(
         return null
     }
 
+    /**
+     * Mix POI name labels are shown only when the camera is manually detached in free drive.
+     * Nav-mode label stretch/streak artifacts are **not** fixed here — while [isNavigating],
+     * use style symbol `text-pitch-alignment` in [MapStyleController] / mix-auto-driving.json.
+     */
     private fun shouldShowMixPoiLabels(): Boolean {
         val state = uiState()
         return state.isCameraDetached &&

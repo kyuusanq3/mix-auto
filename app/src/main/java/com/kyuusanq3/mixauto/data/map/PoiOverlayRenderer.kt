@@ -81,6 +81,11 @@ internal fun poiIconOnlyLayerProperties(iconImageExpression: Expression): Array<
 /**
  * Text-only symbol properties for POI name labels. Kept on a separate layer from icons so
  * viewport-aligned text does not streak under tilted nav camera (MapLibre #2788).
+ *
+ * Keep [Property.TEXT_PITCH_ALIGNMENT_VIEWPORT] — do **not** switch to MAP (wrong direction).
+ * This layer is hidden during navigation ([PoiOverlayCoordinator.shouldShowMixPoiLabels] requires
+ * `!isNavigating`); nav-mode label stretch is fixed in bundled driving style symbol
+ * `text-pitch-alignment`, not here.
  */
 internal fun poiTextOnlyLayerProperties(): Array<PropertyValue<*>> {
     return arrayOf(
