@@ -61,5 +61,7 @@ OfflineMapRepository.kt — offline tile download/observe (catalog + metadata ex
 - New collaborators: prefer <~400 lines; extract on clear second responsibility — no hard 150-line rewrite of existing debt
 - Explicit return types on new public/internal APIs; no mass-annotate private helpers
 - Never claim success without BUILD SUCCESSFUL or MIXAUTO_VERIFY_DONE exit=0
-- Gradle done = done: BUILD SUCCESSFUL / BUILD FAILED / MIXAUTO_VERIFY_DONE means finished even if agent UI still shows Running
+- Gradle done = done: BUILD SUCCESSFUL / BUILD FAILED / MIXAUTO_VERIFY_DONE in stream/metadata OR repo-root MIXAUTO_VERIFY_DONE.txt means finished even if bash UI still shows Running — do not re-run
+- Verify command: .\scripts\verify-debug.ps1 alone (no cd, no &&); stamp file is gitignored
+- mix-auto-driving.json is one minified JSON line (not binary) — rewrite with Python for text-pitch-alignment; no *.backup
 - MapLibre tilt: 0° = overhead; higher = more pitched; overhead request → decrease tilt or NAV_TILT_OFFSET; more nav pitch → increase NAV_TILT_OFFSET; report nav = freeDriveTilt + NAV_TILT_OFFSET (not free-drive alone)

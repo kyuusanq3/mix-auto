@@ -10,6 +10,6 @@ Required before any read/edit:
   skill local-opencode-loop
   skill local-map-triage
 
-ONE class only — if two bugs, pick one and defer the other. Label stretch: add text-pitch-alignment viewport on style layers in mix-auto-driving.json (never MAP; never mix poiTextOnly flip). Rubber-band: at most ONE SmoothingLocationEngine constant.
+ONE class only — if two bugs, pick one and defer the other. Label stretch: add text-pitch-alignment viewport on style layers in mix-auto-driving.json via JSON rewrite (never MAP; never mix poiTextOnly flip; never treat minified JSON as binary; no *.backup). Rubber-band: at most ONE SmoothingLocationEngine constant.
 
-From repo root run ONLY .\scripts\verify-debug.ps1 (no cd, no &&, no &). STOP on MIXAUTO_VERIFY_DONE exit=0 — do not start the deferred bug.
+From repo root run ONLY .\scripts\verify-debug.ps1 (no cd, no &&, no &). If stream/metadata OR MIXAUTO_VERIFY_DONE.txt shows exit=0 / BUILD SUCCESSFUL — STOP even if bash still says Running. Do not start the deferred bug.

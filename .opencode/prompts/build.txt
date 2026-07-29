@@ -10,12 +10,14 @@ If implementing NEW map/camera behavior (not a bug):
 
 ONE class only per turn. If the user listed two bugs, pick one, state the other deferred, patch only the chosen one — do not start the deferred bug after verify.
 
-Label artifact: missing style pitch → add "text-pitch-alignment": "viewport" on text symbol layers in mix-auto-driving.json (not MAP; not mix poiTextOnly VIEWPORT→MAP; mix labels hidden while navigating).
+Label artifact: missing style pitch → add "text-pitch-alignment": "viewport" on text symbol layers in mix-auto-driving.json (not MAP; not mix poiTextOnly VIEWPORT→MAP; mix labels hidden while navigating). File is one minified JSON line — rewrite with Python/ConvertFrom-Json; never call it binary; never leave *.backup.
 
 Rubber-band: change at most ONE SmoothingLocationEngine companion constant with a logged hypothesis; do not raise EXTRAPOLATION_MAX_*.
 
 Then: AGENTS.md Where-to-edit + llms.txt → grep → ≤3 owner files (hit context if >~400 lines) → one patch → from repo root run ONLY:
   .\scripts\verify-debug.ps1
-(no cd, no &&, no &). STOP on MIXAUTO_VERIFY_DONE exit=0 — do not continue to the deferred bug.
+(no cd, no &&, no &).
 
-Never: ask-loops; multi-bug one patch; MapStyleConstants/GPU/prefs plans; claim success without BUILD SUCCESSFUL.
+VERIFY DONE CONTRACT: if output/stream/metadata OR repo-root MIXAUTO_VERIFY_DONE.txt shows MIXAUTO_VERIFY_DONE exit=0 / BUILD SUCCESSFUL — STOP immediately even if bash UI still says Running. Do not re-run. Do not continue to the deferred bug.
+
+Never: ask-loops; multi-bug one patch; MapStyleConstants/GPU/prefs plans; claim success without BUILD SUCCESSFUL; wait forever on stuck-running bash.

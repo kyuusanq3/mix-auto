@@ -23,9 +23,10 @@ import org.maplibre.android.style.sources.TileSet
  *
  * Nav-mode stretched/streaked map labels under tilted camera: fix bundled driving style symbol
  * `text-pitch-alignment` (viewport) in mix-auto-driving.json — not Compose, not mix-poi-label
- * VIEWPORT→MAP flips in [PoiOverlayRenderer] (mix labels hidden while navigating).
+ * VIEWPORT→MAP flips in [PoiOverlayRenderer] (mix labels hidden while navigating). The asset is
+ * one minified JSON line — rewrite with a script (not "binary"); do not leave `*.backup` copies.
  *
- * This is a stateless helper extracted from [MapLibreEngineImpl] â€” it does not own any of the
+ * This is a stateless helper extracted from [MapLibreEngineImpl] — it does not own any of the
  * `useVectorTiles`/`show3dBuildings`/`trafficEnabled`/`tomTomApiKey` flags (those stay on the
  * engine because they are also read by unrelated navigation/POI/search code); callers pass the
  * current values in on every call. Puck-layer-ordering operations that must stay coordinated

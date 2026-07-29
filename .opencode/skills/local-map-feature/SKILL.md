@@ -115,7 +115,7 @@ From repo root (PowerShell only — **no bash `&&`**):
 
 - Expected: **`BUILD SUCCESSFUL`** then **`MIXAUTO_VERIFY_DONE exit=0`**
 - If you changed unit tests, run the relevant test task or fix failures before claiming done.
-- **Gradle done = done** — do not wait if agent UI still shows Running.
+- **Gradle done = done** — do not wait if agent UI still shows Running. Fallback: Read `MIXAUTO_VERIFY_DONE.txt` at repo root.
 - Never claim success after compile failure or missing ctor wiring.
 
 No **`local-apk`** unless user explicitly asks for release after verify passes.

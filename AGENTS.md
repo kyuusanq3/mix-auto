@@ -8,7 +8,7 @@ User messages may be one line. Do **not** ask which component. First tool calls:
 2. Map bug (puck / labels / tilt / hitch) → `skill` → `local-map-triage`
 3. New map/camera feature → `skill` → `local-map-feature`
 
-Then follow **Agent loop** below. Prefer `/map-bug <symptom>` or `/map-plan <symptom>` when available. Stop on `MIXAUTO_VERIFY_DONE`.
+Then follow **Agent loop** below. Prefer `/map-bug <symptom>` or `/map-plan <symptom>` when available. Stop on `MIXAUTO_VERIFY_DONE` (stdout, stream metadata, or repo-root `MIXAUTO_VERIFY_DONE.txt`).
 
 Custom Android **Car Launcher** for an **Eonon head unit**. This app replaces the default home screen with a dashboard that adapts to portrait (stacked) or landscape (split) orientation: map, media player, and system app shortcuts.
 
@@ -83,7 +83,7 @@ $env:Path = "$env:JAVA_HOME\bin;$env:Path"
 .\gradlew.bat assembleDebug
 ```
 
-Expected: `BUILD SUCCESSFUL` then `MIXAUTO_VERIFY_DONE exit=0`. APK output: `app/build/outputs/apk/debug/app-debug.apk`. If the agent UI still shows Running after those lines, treat the build as finished — do not wait or re-run.
+Expected: `BUILD SUCCESSFUL` then `MIXAUTO_VERIFY_DONE exit=0`. APK output: `app/build/outputs/apk/debug/app-debug.apk`. Script also writes gitignored `MIXAUTO_VERIFY_DONE.txt` at repo root. If the agent UI still shows Running after those lines (or the stamp says `exit=0`), treat the build as finished — do not wait or re-run.
 
 Release sideload copy: `mix-auto.apk` at project root (see `.cursor/rules/mix-auto-build-release.mdc` for signing/release workflow).
 
@@ -208,3 +208,4 @@ This guide stays high-level on purpose — implementation lessons, gotchas, and 
 - **OpenCode session DB review (2026-07-29):** Jul 18–29 trajectory = mild better `data/map/` file targeting, little correctness gain; same Ollama weights. “Won’t stop thinking” after verify is often `MessageAbortedError` / aborted `bash` on `verify-debug.ps1`, not only ignoring `MIXAUTO_VERIFY_DONE`. Nav stretch primary owner remains bundled `mix-auto-driving.json` symbol layers missing `text-pitch-alignment` (not mix-poi-label MAP flip).
 - **Cursor `/local-llm-review` (2026-07):** Personal skill `~/.cursor/skills/local-llm-review` — review uncommitted + unpushed local-LLM (OpenCode) diffs as codebase-aware reviewer; ask for original goal if unclear; classify **blockers** / **needs-fixing** / **nits**; end with copy-pasteable OpenCode prompt (decide applicability). Do not implement fixes unless asked after the review.
 - **OpenCode `local-apk` vs debug (2026-07):** `.opencode/skills/local-apk` is GitHub release/publish only (`assembleRelease` → `mix-auto.apk` → optional commit/push/release). Compile/verify fixes with `.\scripts\verify-debug.ps1` (`assembleDebug`) — never use `local-apk` as a debug build or during diagnosis.
+- **OpenCode verify stuck-running + minified style (2026-07-30):** qwen3-coder:30b ran `.\scripts\verify-debug.ps1` successfully (`BUILD SUCCESSFUL` + sentinel in tool **metadata**) but OpenCode left bash `status=running` with empty `state.output`, so the model never “saw” completion; also used `cd … &&` once, abandoned label fix calling minified `mix-auto-driving.json` “binary”, left `.backup`, and one-constant rubber-band tweak only. Hardening: verify script writes gitignored `MIXAUTO_VERIFY_DONE.txt` stamp; skills/prompts/rules teach stream/metadata/stamp ⇒ STOP; reject binary/backup plans; JSON rewrite guidance for style pitch.

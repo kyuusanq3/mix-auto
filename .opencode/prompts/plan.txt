@@ -8,7 +8,7 @@ Then grep/read ≤3 owners (hit context). Do NOT ask the user which file/area to
 
 ONE primary class. If user listed two bugs, pick one and mark the other deferred in Hypothesis.
 
-Label artifact: add "text-pitch-alignment": "viewport" on style text symbol layers in mix-auto-driving.json when pitch is missing — never MAP; never mix poiTextOnly VIEWPORT→MAP for nav stretch.
+Label artifact: add "text-pitch-alignment": "viewport" on style text symbol layers in mix-auto-driving.json when pitch is missing — never MAP; never mix poiTextOnly VIEWPORT→MAP for nav stretch. Note: file is minified one-line JSON (rewrite with a script; not binary).
 
 Output ONLY the triage template:
 ## Classification
@@ -20,3 +20,4 @@ Output ONLY the triage template:
 assembleDebug after patch
 
 Reject MapStyleConstants / LauncherPreferences / GPU profiling / MapHostViewModel for these map symptoms.
+Reject plans that quit because mix-auto-driving.json is one line, or that leave *.backup copies.

@@ -68,8 +68,10 @@ Do **not** adopt or execute plans that:
 - Change mix text pitch/rotation from **`VIEWPORT` to `MAP`** — golden example requires **VIEWPORT** for MapLibre #2788 streaks; MAP is the wrong direction
 - Raise `EXTRAPOLATION_MAX_MS`, `EXTRAPOLATION_MAX_M`, or `EXTRAPOLATION_SNAP_BACK_MAX_M` as a first rubber-band fix — high-speed bounce is often display ran **ahead** via extrapolation then snapped in `resolveBlendStart`; increasing ahead limits usually **worsens** bounce
 - Mass-edit 3+ `SmoothingLocationEngine` companion constants in one patch
+- Treat `mix-auto-driving.json` as “binary” / uneditable because it is **one minified line** — it is normal JSON; rewrite with Python/`ConvertFrom-Json` (or extend `tools/gen_mix_auto_driving_style.py`), do not give up or leave `*.backup` files
+- Hand-edit via Read line offsets on the minified style (offsets fail on a 1-line file)
 
-**DO (label artifact when pitch missing):** add `"text-pitch-alignment": "viewport"` on style text symbol layers in `mix-auto-driving.json` — do not set MAP; do not edit mix `poiTextOnly*` for nav-mode stretch (`shouldShowMixPoiLabels` is off while navigating). without a single logged hypothesis
+**DO (label artifact when pitch missing):** add `"text-pitch-alignment": "viewport"` on style text symbol layers in `mix-auto-driving.json` — do not set MAP; do not edit mix `poiTextOnly*` for nav-mode stretch (`shouldShowMixPoiLabels` is off while navigating). Use a JSON rewrite script; confirm with `python -c "import json; …"` that every `symbol`+`text-field` layer has pitch set.
 
 ---
 
@@ -151,7 +153,8 @@ $env:Path = "$env:JAVA_HOME\bin;$env:Path"
 ```
 
 - Expected: **`BUILD SUCCESSFUL`** then **`MIXAUTO_VERIFY_DONE exit=0`**
-- **Gradle done = done:** if you see `BUILD SUCCESSFUL`, `BUILD FAILED`, or `MIXAUTO_VERIFY_DONE`, the command finished — do not wait because the agent UI still shows Running / `esc interrupt`
+- **Gradle done = done:** if you see `BUILD SUCCESSFUL`, `BUILD FAILED`, or `MIXAUTO_VERIFY_DONE` in any tool output/stream, the command finished — do not wait because the agent UI still shows Running / `esc interrupt`
+- **OpenCode stuck-running:** bash may never flip to `completed` even after success. Fallback: **Read** `MIXAUTO_VERIFY_DONE.txt` at repo root; `exit=0` ⇒ **STOP** (do not re-run)
 - Never claim success after Gradle failure
 - Only after a verified fix **and** an explicit user request: **`local-apk`** for signed release APK / GitHub publish (not debug)
 

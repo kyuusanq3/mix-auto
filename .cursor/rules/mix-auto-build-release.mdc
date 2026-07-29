@@ -28,9 +28,10 @@ $env:Path = "$env:JAVA_HOME\bin;$env:Path"
 ```
 
 - Expected: `BUILD SUCCESSFUL` then `MIXAUTO_VERIFY_DONE exit=0`; artifact at `app/build/outputs/apk/debug/app-debug.apk`
+- Script also writes repo-root **`MIXAUTO_VERIFY_DONE.txt`** (`exit=<code>` + timestamp; gitignored) so agents can **Read** the stamp if OpenCode bash stays `running` after Gradle finishes
 - Gradle in Cursor/OpenCode terminals may fail without `JAVA_HOME`; Android Studio build works with embedded JDK
-- **Gradle done = done:** treat `BUILD SUCCESSFUL`, `BUILD FAILED`, or `MIXAUTO_VERIFY_DONE` as **command finished**. If the agent UI still shows Running / `esc interrupt` after that line, do not wait, re-run, or spin — proceed from exit code / sentinel. Truncated mid-task logs (`UP-TO-DATE` + `…`) are not proof the build is still going.
-- **Forbidden:** bash `&&` on PowerShell; claiming success after Gradle failure; `clean` unless stuck; hardcoding clone directories in pushed docs
+- **Gradle done = done:** treat `BUILD SUCCESSFUL`, `BUILD FAILED`, or `MIXAUTO_VERIFY_DONE` (in any tool stream/metadata **or** in `MIXAUTO_VERIFY_DONE.txt`) as **command finished**. If the agent UI still shows Running / `esc interrupt` after that line, do not wait, re-run, or spin — proceed from exit code / sentinel / stamp. Truncated mid-task logs (`UP-TO-DATE` + `…`) are not proof the build is still going.
+- **Forbidden:** bash `&&` / `cd … &&` on PowerShell; claiming success after Gradle failure; `clean` unless stuck; hardcoding clone directories in pushed docs; leaving `*.backup` asset copies
 
 **Release / sideload APK:** use `.opencode/skills/local-apk` (or Cursor `/local-apk`) — `assembleRelease` → copy to `mix-auto.apk`; do not freestyle `clean assembleDebug` for release
 

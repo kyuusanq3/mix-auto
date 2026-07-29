@@ -75,6 +75,7 @@ $env:Path = "$env:JAVA_HOME\bin;$env:Path"
 
 - Expected: **`BUILD SUCCESSFUL`** then **`MIXAUTO_VERIFY_DONE exit=0`**
 - **Gradle done = done** — do not wait if agent UI still shows Running after those lines.
+- **OpenCode stuck-running:** bash may stay `running` with empty `state.output` even after success — treat **any** streamed/metadata chunk containing `MIXAUTO_VERIFY_DONE exit=0` or `BUILD SUCCESSFUL` as finished. Fallback: **Read** repo-root `MIXAUTO_VERIFY_DONE.txt` (written by the script); if it says `exit=0`, **STOP**.
 - Never claim success after Gradle failure.
 - No **`local-apk`** until verify passes **and** the user explicitly asks to ship a **GitHub release** / signed release APK — local-apk is never a debug build (use `verify-debug.ps1` for that)
 
@@ -82,10 +83,11 @@ $env:Path = "$env:JAVA_HOME\bin;$env:Path"
 
 ## Step 4b — End turn after verify (required)
 
-When you see **`BUILD SUCCESSFUL`** and **`MIXAUTO_VERIFY_DONE exit=0`**:
+When you see **`BUILD SUCCESSFUL`** and/or **`MIXAUTO_VERIFY_DONE exit=0`** (in tool output, streaming metadata, **or** `MIXAUTO_VERIFY_DONE.txt`):
 
 - **Stop** — end the turn; do not keep planning, diagnosing, or starting a second concern
-- Do not wait because the agent UI still shows Running / `esc interrupt` — Gradle output is authoritative
+- Do not wait because the agent UI still shows Running / `esc interrupt` — Gradle output / stamp file is authoritative
+- Do **not** re-run verify just because the tool never flipped to `completed`
 - If the user listed two map bugs (e.g. labels + rubber-band): one classified patch + verify, then **stop and report** — defer the second symptom to the next turn
 
 ---
@@ -104,11 +106,13 @@ After constant edits, sync docs that hardcode the old value (or reference the co
 
 ## Forbidden
 
-- Bash `&&` on Windows
+- Bash `&&` / `cd … &&` on Windows — run `.\scripts\verify-debug.ps1` alone from repo root
 - Skipping `JAVA_HOME` after a known Gradle failure
+- Waiting forever because bash status is still `running` after sentinel/stamp exists
 - Full-dumping `MapLibreEngineImpl` when grep finds the constant in the companion
 - **`local-apk`** during diagnosis (that skill is GitHub release/publish + `assembleRelease` only — not `assembleDebug`)
 - Wrong owners: `MapHostViewModel` for map labels; `RouteRenderer` for puck glide
+- Leaving `*.backup` / `*.json.backup` of assets in the tree
 
 ---
 
