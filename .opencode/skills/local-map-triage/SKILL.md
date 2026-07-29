@@ -67,7 +67,9 @@ Do **not** adopt or execute plans that:
 - Fix **nav-mode** label stretch by editing `poiTextOnlyLayerProperties` first — mix labels are hidden while navigating (`shouldShowMixPoiLabels()` requires `!isNavigating`); grep that gate, then inspect style / `mix-auto-driving.json` / `MapStyleController` for missing `text-pitch-alignment` on road/place/`poi_r*` symbol layers
 - Change mix text pitch/rotation from **`VIEWPORT` to `MAP`** — golden example requires **VIEWPORT** for MapLibre #2788 streaks; MAP is the wrong direction
 - Raise `EXTRAPOLATION_MAX_MS`, `EXTRAPOLATION_MAX_M`, or `EXTRAPOLATION_SNAP_BACK_MAX_M` as a first rubber-band fix — high-speed bounce is often display ran **ahead** via extrapolation then snapped in `resolveBlendStart`; increasing ahead limits usually **worsens** bounce
-- Mass-edit 3+ `SmoothingLocationEngine` companion constants in one patch without a single logged hypothesis
+- Mass-edit 3+ `SmoothingLocationEngine` companion constants in one patch
+
+**DO (label artifact when pitch missing):** add `"text-pitch-alignment": "viewport"` on style text symbol layers in `mix-auto-driving.json` — do not set MAP; do not edit mix `poiTextOnly*` for nav-mode stretch (`shouldShowMixPoiLabels` is off while navigating). without a single logged hypothesis
 
 ---
 
