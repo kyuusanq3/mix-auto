@@ -114,10 +114,7 @@ internal class LocationTrackingController(
     private var locationEngine: LocationEngine? = null
     private var rawLocationEngine: LocationEngine? = null
     private var smoothingLocationEngine: SmoothingLocationEngine? = null
-    private var freshLocationListener: LocationListener? = null
     private var pendingLocationFix: Location? = null
-    private var locationPollJob: Job? = null
-    private var locationRetryJob: Job? = null
     private var lastLocationFixForDedup: Location? = null
     private var lastUiStateCoordUpdateMs: Long = 0L
     private var lastUiStateCoordLat: Double? = null
@@ -125,6 +122,41 @@ internal class LocationTrackingController(
     private var lastPuckPushLocation: Location? = null
     private var lastForcePuckRenderMs: Long = 0L
     private var lastDrivingSpeedMps: Float = 0f
+
+    private lateinit var navigationProgress: NavigationProgressEvaluator
+    private lateinit var locationAcquisition: LocationAcquisitionHelper
+
+    init {
+        navigationProgress = NavigationProgressEvaluator(
+            engineScope = engineScope,
+            uiState = uiState,
+            updateUiState = updateUiState,
+            fullRouteSteps = fullRouteSteps,
+            currentStepIndex = currentStepIndex,
+            setCurrentStepIndex = setCurrentStepIndex,
+            destinationLatLng = destinationLatLng,
+            navigationArrivalTriggered = navigationArrivalTriggered,
+            setNavigationArrivalTriggered = setNavigationArrivalTriggered,
+            routeGeometryPoints = routeGeometryPoints,
+            offRouteDetector = offRouteDetector,
+            navigationVoice = navigationVoice,
+            isRouteOverviewActive = isRouteOverviewActive,
+            navigationCameraTransitionActive = navigationCameraTransitionActive,
+            updateNavigationZoomForDistance = updateNavigationZoomForDistance,
+            startFreeDrive = startFreeDrive,
+        )
+        locationAcquisition = LocationAcquisitionHelper(
+            engineScope = engineScope,
+            appContext = appContext,
+            updateUiState = updateUiState,
+            hasSnappedCameraToGps = hasSnappedCameraToGps,
+            lastKnownLocation = lastKnownLocation,
+            rawLocationEngine = { rawLocationEngine },
+            onLocationFix = { location, snapCamera -> applyAndroidLocation(location, snapCamera) },
+            onSystemLocation = { latLng, snapCamera -> applySystemLocation(latLng, snapCamera) },
+            flushPendingLocationFix = ::flushPendingLocationFix,
+        )
+    }
 
     fun lastDrivingSpeedMps(): Float = lastDrivingSpeedMps
 
@@ -206,11 +238,8 @@ internal class LocationTrackingController(
     }
 
     fun onDestroy() {
-        locationPollJob?.cancel()
-        locationPollJob = null
-        locationRetryJob?.cancel()
-        locationRetryJob = null
-        removeFreshLocationListener()
+        locationAcquisition.removeFreshLocationListener()
+        locationAcquisition.cancelJobs()
         smoothingLocationEngine?.reset()
         smoothingLocationEngine = null
         locationEngine = null
@@ -320,17 +349,8 @@ internal class LocationTrackingController(
         return offRouteDetector.snapLocationToRoute(location)
     }
 
-    fun scheduleLocationRetries(context: Context) {
-        locationRetryJob?.cancel()
-        locationRetryJob = engineScope.launch {
-            for (delayMs in LOCATION_RETRY_DELAYS_MS) {
-                delay(delayMs)
-                if (hasSnappedCameraToGps() && lastKnownLocation() != null) return@launch
-                Log.i(TAG, "Scheduled location retry after ${delayMs}ms")
-                refreshLocationOnly(context)
-            }
-        }
-    }
+    fun scheduleLocationRetries(context: Context) =
+        locationAcquisition.scheduleLocationRetries(context)
 
     fun flushPendingLocationFix() {
         val location = pendingLocationFix ?: return
@@ -344,7 +364,7 @@ internal class LocationTrackingController(
     }
 
     fun refreshLocationFromSystem(context: Context): LatLng? {
-        val location = readLastKnownLocation(context) ?: return null
+        val location = locationAcquisition.readLastKnownLocation(context) ?: return null
         applySystemLocation(location, snapCamera = !hasSnappedCameraToGps())
         return location
     }
@@ -493,259 +513,27 @@ internal class LocationTrackingController(
         encounteredPlacesSampler.maybeSample(locationWithBearing)
     }
 
-    private fun evaluateStepAdvancement(currentLocation: Location) {
-        if (navigationArrivalTriggered()) return
+    private fun evaluateStepAdvancement(currentLocation: Location) =
+        navigationProgress.evaluateStepAdvancement(currentLocation)
 
-        val steps = fullRouteSteps()
-        if (steps.isEmpty()) return
+    fun beginLocationAcquisition(context: Context) =
+        locationAcquisition.beginLocationAcquisition(context)
 
-        val dest = destinationLatLng()
-        if (dest != null) {
-            val destLoc = Location("dest").apply {
-                latitude = dest.latitude
-                longitude = dest.longitude
-            }
-            if (currentLocation.distanceTo(destLoc) < ARRIVAL_THRESHOLD_M) {
-                triggerArrival()
-                return
-            }
-        }
+    fun refreshLocationOnly(context: Context) =
+        locationAcquisition.refreshLocationOnly(context)
 
-        val nextIdx = currentStepIndex() + 1
-        if (nextIdx >= steps.size) {
-            triggerArrival()
-            return
-        }
+    fun readLastKnownLocation(context: Context): LatLng? =
+        locationAcquisition.readLastKnownLocation(context)
 
-        val nextStep = steps[nextIdx]
-        val maneuverLoc = Location("maneuver").apply {
-            latitude = nextStep.maneuverLat
-            longitude = nextStep.maneuverLng
-        }
-        val distToManeuver = currentLocation.distanceTo(maneuverLoc)
+    fun hasLocationPermission(context: Context): Boolean =
+        locationAcquisition.hasLocationPermission(context)
 
-        updateUiState {
-            it.copy(distanceToNextTurn = NavigationRouteFetcher.formatDistance(distToManeuver.toDouble()))
-        }
-        updateNavigationZoomForDistance(distToManeuver)
+    private fun snapLocationToRoute(location: Location): Location? =
+        blendSnapToRoute(location)
 
-        val speedMps = if (currentLocation.hasSpeed()) currentLocation.speed else 0f
-        navigationVoice()?.onNavTick(
-            NavTickContext(
-                currentStepIndex = currentStepIndex(),
-                steps = steps.map { it.toNavStepPhrase() },
-                distToNextManeuverM = distToManeuver,
-                speedMps = speedMps,
-                isRouteOverviewActive = isRouteOverviewActive() ||
-                    navigationCameraTransitionActive(),
-                isRerouteInProgress = offRouteDetector.isRerouteInProgress,
-            ),
-        )
-
-        if (distToManeuver < STEP_ADVANCE_THRESHOLD_M) {
-            setCurrentStepIndex(nextIdx)
-            offRouteDetector.offRouteGraceUntilMs = System.currentTimeMillis() + OFF_ROUTE_GRACE_AFTER_MANEUVER_MS
-            val advanced = steps[currentStepIndex()]
-            navigationVoice()?.onStepAdvanced(currentStepIndex(), advanced.toNavStepPhrase())
-            updateUiState {
-                it.copy(
-                    turnInstruction = advanced.instruction,
-                    distanceToNextTurn = advanced.distanceLabel,
-                    streetName = advanced.streetName.ifBlank { "On route" },
-                )
-            }
-        }
-
-        checkOffRoute(currentLocation)
-    }
-
-    private fun checkOffRoute(currentLocation: Location) {
-        offRouteDetector.checkOffRoute(
-            currentLocation,
-            routeGeometryPoints(),
-            destinationLatLng(),
-            navigationArrivalTriggered(),
-        )
-    }
-
-    private fun snapLocationToRoute(location: Location): Location? {
-        return blendSnapToRoute(location)
-    }
-
-    private fun triggerArrival() {
-        if (navigationArrivalTriggered()) return
-        setNavigationArrivalTriggered(true)
-        updateUiState { it.copy(streetName = "Arrived at destination") }
-        navigationVoice()?.onArrival {
-            engineScope.launch {
-                if (navigationArrivalTriggered()) {
-                    startFreeDrive()
-                }
-            }
-        } ?: engineScope.launch {
-            delay(ARRIVAL_FREE_DRIVE_DELAY_MS)
-            startFreeDrive()
-        }
-    }
-
-    fun beginLocationAcquisition(context: Context) {
-        if (!hasLocationPermission(context)) {
-            Log.w(TAG, "beginLocationAcquisition skipped: permission not granted")
-            return
-        }
-
-        val locationManager = context.getSystemService(Context.LOCATION_SERVICE) as? LocationManager
-        Log.i(
-            TAG,
-            "beginLocationAcquisition: providers=${locationManager?.allProviders}, " +
-                "enabled=${isLocationEnabled(context)}",
-        )
-        logPermissionState(context)
-
-        refreshLocationFromSystem(context)
-        ensureLocationListeners(context)
-        startLocationPolling(context)
-    }
-
-    fun refreshLocationOnly(context: Context) {
-        if (!hasLocationPermission(context)) return
-        refreshLocationFromSystem(context)
-        flushPendingLocationFix()
-    }
-
-    private fun ensureLocationListeners(context: Context) {
-        if (freshLocationListener != null) {
-            if (BuildConfig.DEBUG) {
-                Log.d(TAG, "GPS location listener already active; skipping re-register")
-            }
-            return
-        }
-        ensureGpsLocationListener(context)
-    }
-
-    private fun ensureGpsLocationListener(context: Context) {
-        if (freshLocationListener != null) return
-        if (rawLocationEngine != null) {
-            if (BuildConfig.DEBUG) {
-                Log.d(TAG, "Skipping direct GPS listener; using LocationEngine")
-            }
-            return
-        }
-        val locationManager = context.getSystemService(Context.LOCATION_SERVICE) as? LocationManager
-            ?: return
-
-        val listener = LocationListener { location ->
-            if (BuildConfig.DEBUG) {
-                Log.d(
-                    TAG,
-                    "GPS update: ${location.latitude}, ${location.longitude} from ${location.provider}",
-                )
-            }
-            applyAndroidLocation(location, snapCamera = !hasSnappedCameraToGps())
-        }
-        freshLocationListener = listener
-
-        runCatching {
-            locationManager.requestLocationUpdates(
-                LocationManager.GPS_PROVIDER,
-                FRESH_LOCATION_MIN_TIME_MS,
-                0f,
-                listener,
-                Looper.getMainLooper(),
-            )
-            Log.i(TAG, "GPS location listener registered")
-        }.onFailure { error ->
-            Log.w(TAG, "Failed to register GPS listener: ${error.message}")
-            freshLocationListener = null
-        }
-    }
-
-    private fun startLocationPolling(context: Context) {
-        if (locationPollJob?.isActive == true) return
-        locationPollJob?.cancel()
-        locationPollJob = engineScope.launch {
-            repeat(LOCATION_POLL_ATTEMPTS) {
-                readLastKnownLocation(context)?.let { latLng ->
-                    applySystemLocation(latLng, snapCamera = !hasSnappedCameraToGps())
-                    if (hasSnappedCameraToGps()) return@launch
-                }
-                delay(LOCATION_POLL_INTERVAL_MS)
-            }
-            if (lastKnownLocation() == null) {
-                updateUiState { state ->
-                    if (state.streetName == "Map ready" || state.streetName == "Locating..." ||
-                        state.streetName == "Scanning Road..." || state.streetName == "Free Drive"
-                    ) {
-                        state.copy(streetName = "Zoom map to your area (no GPS fix)")
-                    } else {
-                        state
-                    }
-                }
-            }
-        }
-    }
-
-    private fun buildDrivingLocationEngineRequest(): LocationEngineRequest {
-        return LocationEngineRequest.Builder(LOCATION_ENGINE_INTERVAL_MS)
+    private fun buildDrivingLocationEngineRequest(): LocationEngineRequest =
+        LocationEngineRequest.Builder(LOCATION_ENGINE_INTERVAL_MS)
             .setFastestInterval(LOCATION_ENGINE_FASTEST_INTERVAL_MS)
             .setPriority(LocationEngineRequest.PRIORITY_HIGH_ACCURACY)
             .build()
-    }
-
-    fun readLastKnownLocation(context: Context): LatLng? {
-        if (!hasLocationPermission(context)) {
-            return null
-        }
-
-        val locationManager = context.getSystemService(Context.LOCATION_SERVICE) as? LocationManager
-            ?: return null
-
-        val bestLocation = locationManager.allProviders
-            .mapNotNull { provider ->
-                runCatching { locationManager.getLastKnownLocation(provider) }.getOrNull()
-            }
-            .maxByOrNull { it.time }
-
-        return bestLocation?.let { LatLng(it.latitude, it.longitude) }
-    }
-
-    fun hasLocationPermission(context: Context): Boolean {
-        val fineGranted = ContextCompat.checkSelfPermission(
-            context,
-            Manifest.permission.ACCESS_FINE_LOCATION,
-        ) == PackageManager.PERMISSION_GRANTED
-        val coarseGranted = ContextCompat.checkSelfPermission(
-            context,
-            Manifest.permission.ACCESS_COARSE_LOCATION,
-        ) == PackageManager.PERMISSION_GRANTED
-        return fineGranted || coarseGranted
-    }
-
-    private fun isLocationEnabled(context: Context): Boolean {
-        val locationManager = context.getSystemService(Context.LOCATION_SERVICE) as? LocationManager
-            ?: return false
-        return locationManager.isProviderEnabled(LocationManager.GPS_PROVIDER) ||
-            locationManager.isProviderEnabled(LocationManager.NETWORK_PROVIDER)
-    }
-
-    private fun removeFreshLocationListener() {
-        val context = appContext() ?: return
-        val listener = freshLocationListener ?: return
-        val locationManager = context.getSystemService(Context.LOCATION_SERVICE) as? LocationManager
-            ?: return
-        runCatching { locationManager.removeUpdates(listener) }
-        freshLocationListener = null
-    }
-
-    private fun logPermissionState(context: Context) {
-        val fineGranted = ContextCompat.checkSelfPermission(
-            context,
-            Manifest.permission.ACCESS_FINE_LOCATION,
-        ) == PackageManager.PERMISSION_GRANTED
-        val coarseGranted = ContextCompat.checkSelfPermission(
-            context,
-            Manifest.permission.ACCESS_COARSE_LOCATION,
-        ) == PackageManager.PERMISSION_GRANTED
-        Log.i(TAG, "Location permission: fine=$fineGranted coarse=$coarseGranted")
-    }
 }

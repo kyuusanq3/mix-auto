@@ -37,7 +37,7 @@ Do **not** use for: puck hitch triage, label streaks, tilt bug fixes, or `/local
    - `NavigationZoom`, `updateNavigationZoomForDistance`, `zoomWhileTracking`
    - `canApplyDynamicNavigationZoom`, `resetDynamicNavigationZoom`
    - `LocationTrackingController`, `NavigationCameraController`
-5. Files **>~400 lines**: read **hit context only**. Full-read **≤3** edit targets.
+5. Files **>~300 lines**: read **hit context only**. Full-read **≤3** edit targets.
 
 ---
 

@@ -76,25 +76,47 @@ internal class NavigationCameraController(
     /** Incremented to invalidate in-flight [enterNavigationCamera] callbacks after gesture / End nav. */
     private var cameraSessionId: Int = 0
 
-    private var pendingPoiPreviewTarget: LatLng? = null
-    private var pendingPoiPreviewZoom: Double = POI_PREVIEW_ZOOM
-    private var poiPreviewRetryCount = 0
-    private var poiPreviewRetryRunnable: Runnable? = null
-    private var topDownViewportSyncRunnable: Runnable? = null
-    var topDownExploreUserAdjusted: Boolean = false
-        private set
-
-    private var lastAppliedTrackingPadding: IntArray? = null
-    private var lastEngagedTrackingPadding: IntArray? = null
-    private var lastPaddingMapWidth: Int = 0
-    private var lastPaddingMapHeight: Int = 0
-    private var lookaheadPaddingActive: Boolean = false
     private var lastAppliedDynamicNavZoom: Double? = null
     private var lastDistToManeuverM: Float? = null
 
-    fun resetLookaheadPaddingActive() {
-        lookaheadPaddingActive = false
+    private lateinit var viewportPadding: DrivingViewportPaddingController
+    private lateinit var topDownPoi: TopDownPoiCameraController
+
+    init {
+        viewportPadding = DrivingViewportPaddingController(
+            appContext = appContext,
+            uiState = uiState,
+            puckHorizontalOffset = puckHorizontalOffset,
+            puckVerticalOffset = puckVerticalOffset,
+            lastDrivingSpeedMps = lastDrivingSpeedMps,
+            isRouteOverviewActive = isRouteOverviewActive,
+            navigationCameraTransitionActive = { navigationCameraTransitionActive },
+            shouldSmoothPuckMotion = shouldSmoothPuckMotion,
+            forceLocationUpdateForImmediateRender = forceLocationUpdateForImmediateRender,
+        )
+        topDownPoi = TopDownPoiCameraController(
+            mapView = mapView,
+            mapLibreMap = mapLibreMap,
+            uiState = uiState,
+            updateUiState = updateUiState,
+            useVectorTiles = useVectorTiles,
+            lastKnownLocation = lastKnownLocation,
+            resolveFreeDriveTarget = ::resolveFreeDriveTarget,
+            stopDeadReckoning = stopDeadReckoning,
+            resetSmoothingMotion = resetSmoothingMotion,
+            showNativeVectorPoiLayers = showNativeVectorPoiLayers,
+            clearPoiOverlay = clearPoiOverlay,
+            clearViewportPaddingForPreview = viewportPadding::clearViewportPaddingForPreview,
+            ensureTopDownCameraDetached = { map ->
+                val component = map.locationComponent
+                if (component.isLocationComponentActivated && component.isLocationComponentEnabled) {
+                    component.cameraMode = CameraMode.NONE
+                }
+            },
+        )
     }
+
+    fun resetLookaheadPaddingActive() = viewportPadding.resetLookaheadPaddingActive()
 
     fun resetDynamicNavigationZoom() {
         lastAppliedDynamicNavZoom = null
@@ -174,9 +196,7 @@ internal class NavigationCameraController(
         lastAppliedDynamicNavZoom = target
     }
 
-    fun resetTopDownExploreUserAdjusted() {
-        topDownExploreUserAdjusted = false
-    }
+    fun resetTopDownExploreUserAdjusted() = topDownPoi.resetTopDownExploreUserAdjusted()
 
     fun clearNavigationCameraTransitionActive() {
         navigationCameraTransitionActive = false
@@ -198,109 +218,21 @@ internal class NavigationCameraController(
         ensureTopDownCameraDetached(map)
     }
 
-    fun hasPendingPoiPreviewTarget(): Boolean = pendingPoiPreviewTarget != null
+    fun hasPendingPoiPreviewTarget(): Boolean = topDownPoi.hasPendingPoiPreviewTarget()
 
-    fun clearPoiPreviewState() {
-        cancelPoiPreviewRetries()
-        pendingPoiPreviewTarget = null
-        topDownExploreUserAdjusted = false
-    }
+    fun clearPoiPreviewState() = topDownPoi.clearPoiPreviewState()
 
     fun animateTopDownCamera(
         lat: Double,
         lng: Double,
         zoom: Double,
         exploreMode: Boolean = false,
-    ) {
-        val map = mapLibreMap() ?: return
-        val targetZoom = if (exploreMode) {
-            zoom
-        } else {
-            map.cameraPosition.zoom.coerceAtLeast(zoom)
-        }
-        stopDeadReckoning()
-        resetSmoothingMotion()
-        topDownExploreUserAdjusted = false
-        val component = map.locationComponent
-        if (component.isLocationComponentActivated && component.isLocationComponentEnabled) {
-            component.cameraMode = CameraMode.NONE
-        }
-        updateUiState { it.copy(isCameraDetached = true, isInTopDownView = true) }
-        clearViewportPaddingForPreview(map)
-        if (useVectorTiles()) {
-            map.getStyle { showNativeVectorPoiLayers(it) }
-        }
-        clearPoiOverlay()
-        pendingPoiPreviewTarget = LatLng(lat, lng)
-        pendingPoiPreviewZoom = targetZoom
-        poiPreviewRetryCount = 0
-        mapView()?.requestLayout()
-        schedulePoiPreviewCameraRetry(immediate = true)
-    }
+    ) = topDownPoi.animateTopDownCamera(lat, lng, zoom, exploreMode)
 
-    fun cancelPoiPreviewRetries() {
-        poiPreviewRetryRunnable?.let { runnable ->
-            mapView()?.removeCallbacks(runnable)
-        }
-        poiPreviewRetryRunnable = null
-        poiPreviewRetryCount = 0
-    }
+    fun cancelPoiPreviewRetries() = topDownPoi.cancelPoiPreviewRetries()
 
-    fun schedulePoiPreviewCameraRetry(immediate: Boolean = false) {
-        val map = mapLibreMap() ?: return
-        val view = mapView() ?: return
-        poiPreviewRetryRunnable?.let { view.removeCallbacks(it) }
-        poiPreviewRetryRunnable = null
-        val runnable = Runnable {
-            poiPreviewRetryRunnable = null
-            if (applyPoiPreviewCamera(map)) return@Runnable
-            if (poiPreviewRetryCount < POI_PREVIEW_MAX_RETRIES) {
-                poiPreviewRetryCount++
-                schedulePoiPreviewCameraRetry(immediate = false)
-            } else {
-                poiPreviewRetryCount = 0
-            }
-        }
-        poiPreviewRetryRunnable = runnable
-        if (immediate) {
-            view.post { view.post(runnable) }
-        } else {
-            view.postDelayed(runnable, POI_PREVIEW_RETRY_DELAY_MS * poiPreviewRetryCount.coerceAtLeast(1))
-        }
-    }
-
-    private fun applyPoiPreviewCamera(map: MapLibreMap): Boolean {
-        val view = mapView() ?: return false
-        if (view.width <= 0 || view.height <= 0) return false
-        val target = pendingPoiPreviewTarget ?: return true
-
-        val component = map.locationComponent
-        if (component.isLocationComponentActivated && component.isLocationComponentEnabled) {
-            component.cameraMode = CameraMode.NONE
-        }
-        clearViewportPaddingForPreview(map)
-        if (useVectorTiles()) {
-            map.getStyle { style -> showNativeVectorPoiLayers(style) }
-        }
-
-        val zoom = pendingPoiPreviewZoom
-        map.cancelTransitions()
-        map.moveCamera(
-            CameraUpdateFactory.newCameraPosition(
-                CameraPosition.Builder()
-                    .target(target)
-                    .zoom(zoom)
-                    .tilt(0.0)
-                    .bearing(0.0)
-                    .build(),
-            ),
-        )
-        pendingPoiPreviewTarget = null
-        map.triggerRepaint()
-        view.invalidate()
-        scheduleTopDownViewportSync(map)
-        return true
-    }
+    fun schedulePoiPreviewCameraRetry(immediate: Boolean = false) =
+        topDownPoi.schedulePoiPreviewCameraRetry(immediate)
 
     fun ensureTopDownCameraDetached(map: MapLibreMap) {
         val component = map.locationComponent
@@ -309,63 +241,9 @@ internal class NavigationCameraController(
         }
     }
 
-    private fun syncTopDownViewportPaddingOnly(map: MapLibreMap) {
-        ensureTopDownCameraDetached(map)
-        clearViewportPaddingForPreview(map)
-        map.triggerRepaint()
-        mapView()?.invalidate()
-    }
+    fun cancelTopDownViewportSync() = topDownPoi.cancelTopDownViewportSync()
 
-    fun cancelTopDownViewportSync() {
-        topDownViewportSyncRunnable?.let { runnable ->
-            mapView()?.removeCallbacks(runnable)
-        }
-        topDownViewportSyncRunnable = null
-    }
-
-    fun scheduleTopDownViewportSync(map: MapLibreMap) {
-        val view = mapView() ?: return
-        cancelTopDownViewportSync()
-        val runnable = Runnable {
-            topDownViewportSyncRunnable = null
-            if (!uiState().isInTopDownView) return@Runnable
-            if (topDownExploreUserAdjusted && uiState().selectedPoi == null) return@Runnable
-            syncTopDownViewportPaddingOnly(map)
-        }
-        topDownViewportSyncRunnable = runnable
-        view.post(runnable)
-    }
-
-    private fun recenterOnSelectedPoi(map: MapLibreMap, place: SearchResultPlace) {
-        refreshTopDownCamera(
-            map,
-            LatLng(place.latitude, place.longitude),
-            map.cameraPosition.zoom.coerceAtLeast(POI_PREVIEW_ZOOM),
-        )
-    }
-
-    private fun refreshTopDownCamera(map: MapLibreMap, target: LatLng, zoom: Double) {
-        val view = mapView() ?: return
-        val component = map.locationComponent
-        if (component.isLocationComponentActivated && component.isLocationComponentEnabled) {
-            component.cameraMode = CameraMode.NONE
-        }
-        clearViewportPaddingForPreview(map)
-        map.cancelTransitions()
-        map.moveCamera(
-            CameraUpdateFactory.newCameraPosition(
-                CameraPosition.Builder()
-                    .target(target)
-                    .zoom(zoom)
-                    .tilt(0.0)
-                    .bearing(0.0)
-                    .build(),
-            ),
-        )
-        map.triggerRepaint()
-        view.invalidate()
-        scheduleTopDownViewportSync(map)
-    }
+    fun scheduleTopDownViewportSync(map: MapLibreMap) = topDownPoi.scheduleTopDownViewportSync(map)
 
     fun handleMapLayoutChange(map: MapLibreMap) {
         val view = mapView() ?: return
@@ -391,10 +269,9 @@ internal class NavigationCameraController(
         val state = uiState()
         if (state.isInTopDownView) {
             when {
-                pendingPoiPreviewTarget != null -> schedulePoiPreviewCameraRetry(immediate = true)
-                state.selectedPoi != null -> recenterOnSelectedPoi(map, state.selectedPoi)
-                topDownExploreUserAdjusted -> Unit
-                else -> syncTopDownViewportPaddingOnly(map)
+                topDownPoi.hasPendingPoiPreviewTarget() -> topDownPoi.schedulePoiPreviewCameraRetry(immediate = true)
+                state.selectedPoi != null -> topDownPoi.recenterOnSelectedPoi(map, state.selectedPoi)
+                else -> topDownPoi.handleTopDownLayoutChange(map)
             }
             return
         }
@@ -403,15 +280,15 @@ internal class NavigationCameraController(
             val componentReady = component.isLocationComponentActivated &&
                 component.isLocationComponentEnabled
             val trackingGps = componentReady && component.cameraMode == CameraMode.TRACKING_GPS
-            val padding = computeDrivingViewportPadding(map)
+            val padding = viewportPadding.computeDrivingViewportPadding(map)
             val paddingKey = intArrayOf(padding.left, padding.top, padding.right, padding.bottom)
-            val paddingChanged = drivingPaddingNeedsUpdate(map, paddingKey, trackingGps)
+            val paddingChanged = viewportPadding.drivingPaddingNeedsUpdate(map, paddingKey, trackingGps)
             if (paddingChanged) {
                 if (trackingGps) {
-                    applyDrivingTrackingPadding(map)
+                    viewportPadding.applyDrivingTrackingPadding(map)
                 } else {
-                    applyDrivingViewportPadding(map)
-                    applyDrivingTrackingPadding(map)
+                    viewportPadding.applyDrivingViewportPadding(map)
+                    viewportPadding.applyDrivingTrackingPadding(map)
                     if (state.isNavigating) {
                         forceLocationUpdateForImmediateRender(map, true, false)
                     }
@@ -424,64 +301,17 @@ internal class NavigationCameraController(
     }
 
     fun applyPuckPaddingUpdate(map: MapLibreMap, bypassRenderThrottle: Boolean = false) {
-        invalidateDrivingPaddingCache()
+        viewportPadding.applyPuckPaddingUpdate(map, bypassRenderThrottle)
         val component = map.locationComponent
         val componentReady = component.isLocationComponentActivated &&
             component.isLocationComponentEnabled
-        val trackingGps = componentReady && component.cameraMode == CameraMode.TRACKING_GPS
-        if (trackingGps) {
-            applyDrivingTrackingPadding(map)
-            forceLocationUpdateForImmediateRender(
-                map,
-                bypassRenderThrottle,
-                true,
-            )
-        } else {
-            applyDrivingViewportPadding(map)
-            applyDrivingTrackingPadding(map)
-            forceLocationUpdateForImmediateRender(
-                map,
-                bypassRenderThrottle,
-                true,
-            )
-        }
         if (uiState().isNavigating && componentReady && component.cameraMode != CameraMode.TRACKING_GPS) {
             activateNavigationTracking(componentReady)
         }
     }
 
-    private fun applyMapPaddingImmediate(map: MapLibreMap, padding: ViewportPadding) {
-        map.moveCamera(
-            CameraUpdateFactory.paddingTo(
-                padding.left.toDouble(),
-                padding.top.toDouble(),
-                padding.right.toDouble(),
-                padding.bottom.toDouble(),
-            ),
-        )
-    }
-
-    private fun applyPaddingWhileTrackingIfEngaged(
-        component: LocationComponent,
-        padding: ViewportPadding,
-    ) {
-        if (!component.isLocationComponentActivated || !component.isLocationComponentEnabled) return
-        if (component.cameraMode == CameraMode.NONE) return
-        component.paddingWhileTracking(
-            doubleArrayOf(
-                padding.left.toDouble(),
-                padding.top.toDouble(),
-                padding.right.toDouble(),
-                padding.bottom.toDouble(),
-            ),
-        )
-    }
-
-    fun clearViewportPaddingForPreview(map: MapLibreMap) {
-        invalidateDrivingPaddingCache()
-        applyMapPaddingImmediate(map, ViewportPadding(0, 0, 0, 0))
-        applyPaddingWhileTrackingIfEngaged(map.locationComponent, ViewportPadding(0, 0, 0, 0))
-    }
+    fun clearViewportPaddingForPreview(map: MapLibreMap) =
+        viewportPadding.clearViewportPaddingForPreview(map)
 
     fun scheduleFreeDrivePaddingRestore(map: MapLibreMap) {
         if (uiState().isNavigating) return
@@ -521,8 +351,8 @@ internal class NavigationCameraController(
         val alreadyTracking = component.cameraMode == CameraMode.TRACKING_GPS &&
             component.renderMode == RenderMode.GPS
         if (alreadyTracking) {
-            if (lastEngagedTrackingPadding == null) {
-                applyDrivingTrackingPadding(map)
+            if (!viewportPadding.hasEngagedTrackingPadding()) {
+                viewportPadding.applyDrivingTrackingPadding(map)
                 forceLocationUpdateForImmediateRender(
                     map,
                     true,
@@ -535,7 +365,7 @@ internal class NavigationCameraController(
         component.renderMode = RenderMode.GPS
         component.cameraMode = CameraMode.TRACKING_GPS
         component.setMaxAnimationFps(DRIVING_ANIMATION_FPS)
-        applyDrivingTrackingPadding(map)
+        viewportPadding.applyDrivingTrackingPadding(map)
     }
 
     fun snapCameraToGpsIfNeeded(latLng: LatLng) {
@@ -580,7 +410,7 @@ internal class NavigationCameraController(
 
         if (componentReady) {
             component.cameraMode = CameraMode.TRACKING_GPS
-            applyDrivingTrackingPadding(map)
+            viewportPadding.applyDrivingTrackingPadding(map)
             forceLocationUpdateForImmediateRender(
                 map,
                 true,
@@ -623,7 +453,7 @@ internal class NavigationCameraController(
                 "(current=${map.cameraPosition.zoom}, target=${target.latitude},${target.longitude})",
         )
 
-        applyDrivingViewportPadding(map)
+        viewportPadding.applyDrivingViewportPadding(map)
         map.cancelTransitions()
         if (componentReady) {
             runCatching {
@@ -698,7 +528,7 @@ internal class NavigationCameraController(
                 component.renderMode = RenderMode.GPS
                 component.cameraMode = CameraMode.TRACKING_GPS
                 component.setMaxAnimationFps(DRIVING_ANIMATION_FPS)
-                applyDrivingTrackingPadding(map)
+                viewportPadding.applyDrivingTrackingPadding(map)
                 lastDistToManeuverM?.let { updateNavigationZoomForDistance(it) }
             }.onFailure { error ->
                 Log.w(TAG, "Failed to activate navigation tracking: ${error.message}")
@@ -707,126 +537,30 @@ internal class NavigationCameraController(
         onNavigationTrackingEngaged()
     }
 
-    fun computeDrivingViewportPadding(map: MapLibreMap): ViewportPadding {
-        val density = appContext()?.resources?.displayMetrics?.density ?: 1f
-        val lookaheadFrac = bucketedLookaheadTopFraction(lastDrivingSpeedMps(), lookaheadPaddingActive)
-        val dm = appContext()?.resources?.displayMetrics
-        val fallbackW = dm?.widthPixels?.takeIf { it > 0 } ?: 1080
-        val fallbackH = dm?.heightPixels?.takeIf { it > 0 } ?: 1920
-        return computeDrivingViewportPadding(
-            density = density,
-            mapWidth = map.width,
-            mapHeight = map.height,
-            fallbackWidth = fallbackW,
-            fallbackHeight = fallbackH,
-            puckHorizontalOffset = puckHorizontalOffset(),
-            puckVerticalOffset = puckVerticalOffset(),
-            lookaheadFraction = lookaheadFrac,
-        )
-    }
+    fun computeDrivingViewportPadding(map: MapLibreMap): ViewportPadding =
+        viewportPadding.computeDrivingViewportPadding(map)
 
-    private fun drivingPaddingNeedsUpdate(
-        map: MapLibreMap,
-        paddingKey: IntArray,
-        trackingGps: Boolean,
-    ): Boolean {
-        val w = map.width.toInt()
-        val h = map.height.toInt()
-        if (w > 0 && h > 0 && (w != lastPaddingMapWidth || h != lastPaddingMapHeight)) {
-            return true
-        }
-        val cached = if (trackingGps) lastEngagedTrackingPadding else lastAppliedTrackingPadding
-        return cached?.contentEquals(paddingKey) != true
-    }
+    fun updateLookaheadPaddingState(speedMps: Float) =
+        viewportPadding.updateLookaheadPaddingState(speedMps)
 
-    private fun markDrivingPaddingMapSize(map: MapLibreMap) {
-        val w = map.width.toInt()
-        val h = map.height.toInt()
-        if (w > 0) lastPaddingMapWidth = w
-        if (h > 0) lastPaddingMapHeight = h
-    }
+    fun maybeApplyDrivingPaddingForSpeedChange(map: MapLibreMap) =
+        viewportPadding.maybeApplyDrivingPaddingForSpeedChange(map)
 
-    fun updateLookaheadPaddingState(speedMps: Float) {
-        lookaheadPaddingActive = nextLookaheadPaddingActive(lookaheadPaddingActive, speedMps)
-    }
+    fun applyDrivingViewportPadding(map: MapLibreMap) =
+        viewportPadding.applyDrivingViewportPadding(map)
 
-    fun maybeApplyDrivingPaddingForSpeedChange(map: MapLibreMap) {
-        if (isRouteOverviewActive() || navigationCameraTransitionActive) return
-        if (uiState().isInTopDownView || uiState().isCameraDetached) return
-        val padding = computeDrivingViewportPadding(map)
-        val paddingKey = intArrayOf(padding.left, padding.top, padding.right, padding.bottom)
-        val component = map.locationComponent
-        val trackingGps = component.isLocationComponentActivated &&
-            component.isLocationComponentEnabled &&
-            component.cameraMode == CameraMode.TRACKING_GPS
-        if (!drivingPaddingNeedsUpdate(map, paddingKey, trackingGps)) return
-        applyDrivingTrackingPadding(map)
-    }
+    fun invalidateDrivingPaddingCache() = viewportPadding.invalidateDrivingPaddingCache()
 
-    fun applyDrivingViewportPadding(map: MapLibreMap) {
-        if (uiState().isInTopDownView) return
-        applyMapPaddingImmediate(map, computeDrivingViewportPadding(map))
-    }
-
-    fun invalidateDrivingPaddingCache() {
-        lastAppliedTrackingPadding = null
-        lastEngagedTrackingPadding = null
-        lastPaddingMapWidth = 0
-        lastPaddingMapHeight = 0
-    }
-
-    fun applyDrivingTrackingPadding(map: MapLibreMap) {
-        if (isRouteOverviewActive() || navigationCameraTransitionActive) return
-        if (uiState().isInTopDownView || uiState().isCameraDetached) return
-        val padding = computeDrivingViewportPadding(map)
-        val paddingKey = intArrayOf(padding.left, padding.top, padding.right, padding.bottom)
-        val component = map.locationComponent
-        val componentReady = component.isLocationComponentActivated && component.isLocationComponentEnabled
-        val alreadyTrackingGps = componentReady && component.cameraMode == CameraMode.TRACKING_GPS
-        if (!alreadyTrackingGps) {
-            if (!drivingPaddingNeedsUpdate(map, paddingKey, trackingGps = false)) return
-            lastAppliedTrackingPadding = paddingKey
-            markDrivingPaddingMapSize(map)
-            applyMapPaddingImmediate(map, padding)
-            return
-        }
-        if (!drivingPaddingNeedsUpdate(map, paddingKey, trackingGps = true)) return
-        lastAppliedTrackingPadding = paddingKey
-        lastEngagedTrackingPadding = paddingKey
-        markDrivingPaddingMapSize(map)
-        applyPaddingWhileTrackingIfEngaged(component, padding)
-        if (!shouldSmoothPuckMotion()) {
-            forceLocationUpdateForImmediateRender(map, false, false)
-        }
-    }
+    fun applyDrivingTrackingPadding(map: MapLibreMap) =
+        viewportPadding.applyDrivingTrackingPadding(map)
 
     fun onCameraGestureStarted(map: MapLibreMap) {
         invalidateCameraSession()
         map.cancelTransitions()
-        ensureTopDownCameraDetached(map)
-        if (uiState().isInTopDownView) {
-            cancelTopDownViewportSync()
-            cancelPoiPreviewRetries()
-            pendingPoiPreviewTarget = null
-            if (uiState().selectedPoi == null) {
-                topDownExploreUserAdjusted = true
-            }
-        }
+        topDownPoi.onCameraGestureStarted(map)
     }
 
-    fun enterTopDownExploreView() {
-        val map = mapLibreMap() ?: return
-        val target = lastKnownLocation()
-            ?: resolveFreeDriveTarget(map)
-            ?: map.cameraPosition.target
-            ?: return
-        animateTopDownCamera(
-            target.latitude,
-            target.longitude,
-            TOP_DOWN_EXPLORE_ZOOM,
-            exploreMode = true,
-        )
-    }
+    fun enterTopDownExploreView() = topDownPoi.enterTopDownExploreView()
 
     private fun isFreeDriveZoomTooWide(map: MapLibreMap): Boolean =
         map.cameraPosition.zoom < freeDriveZoom() - 0.5

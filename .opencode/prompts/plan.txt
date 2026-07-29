@@ -8,7 +8,10 @@ Then grep/read ≤3 owners (hit context). Do NOT ask the user which file/area to
 
 ONE primary class. If user listed two bugs, pick one and mark the other deferred in Hypothesis.
 
-Label artifact: set layout["text-pitch-alignment"]="viewport" on symbol+text-field layers in mix-auto-driving.json (NOT layer root). Prefer python tools/fix_driving_text_pitch.py — never MAP; never mix poiTextOnly VIEWPORT→MAP; never indent=2 dump / *.backup / temp_fix.py in repo root.
+Label artifact: layout["text-pitch-alignment"]="viewport" on symbol+text-field layers in mix-auto-driving.json (NOT layer root). Build turn uses run-tool only:
+  powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\run-tool.ps1 check_driving_text_pitch
+  powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\run-tool.ps1 fix_driving_text_pitch
+Never python -c / temp_fix.py / indent=2 / *.backup. Never MAP; never mix poiTextOnly VIEWPORT→MAP for nav stretch.
 
 Output ONLY the triage template:
 ## Classification
@@ -20,4 +23,4 @@ Output ONLY the triage template:
 assembleDebug after patch
 
 Reject MapStyleConstants / LauncherPreferences / GPU profiling / MapHostViewModel for these map symptoms.
-Reject plans that quit because mix-auto-driving.json is one line, set pitch at layer root, or leave *.backup copies.
+Reject plans that quit because mix-auto-driving.json is one line, set pitch at layer root, use python -c, or leave *.backup copies.

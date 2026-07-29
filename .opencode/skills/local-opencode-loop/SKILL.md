@@ -40,7 +40,7 @@ Package index: **`llms.txt`** at repo root — do not dump full trees.
 ## Step 2 — Grep before read
 
 1. **Grep** the symbol or constant.
-2. Files **>~400 lines**: read **hit context only** (signatures + ~20 lines around match).
+2. Files **>~300 lines**: read **hit context only** (signatures + ~20 lines around match).
 3. **Full-read ≤3 owner files** — only the file(s) you will edit.
 4. Do not search `domain/map/` for `MapLibreEngineImpl` (lives in `data/map/`).
 

@@ -1,11 +1,16 @@
 package com.kyuusanq3.mixauto.data.map
 
 import android.content.Context
+import android.location.Location
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import android.util.Log
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
+import org.maplibre.android.location.modes.CameraMode
+import org.maplibre.android.maps.MapLibreMap
 import org.maplibre.android.offline.OfflineManager
 import java.net.HttpURLConnection
 import java.net.URL
@@ -69,6 +74,38 @@ class DrivingTilePrefetcher(
     fun cancel() {
         prefetchJob?.cancel()
         prefetchJob = null
+    }
+
+    internal fun maybePrefetchWhileDriving(
+        displayLocation: Location,
+        map: MapLibreMap,
+        useVectorTiles: Boolean,
+        isCameraDetached: Boolean,
+        isInTopDownView: Boolean,
+        isRouteOverviewActive: Boolean,
+        bearingEnricher: BearingEnricher,
+    ) {
+        val component = map.locationComponent
+        val trackingGps = component.isLocationComponentActivated &&
+            component.isLocationComponentEnabled &&
+            component.cameraMode == CameraMode.TRACKING_GPS
+        val bearing = when {
+            displayLocation.hasBearing() -> displayLocation.bearing
+            bearingEnricher.lastBearing() != null -> bearingEnricher.lastBearing()!!
+            else -> map.cameraPosition.bearing.toFloat()
+        }
+        maybePrefetch(
+            lat = displayLocation.latitude,
+            lng = displayLocation.longitude,
+            bearingDeg = bearing,
+            zoom = map.cameraPosition.zoom,
+            enabled = useVectorTiles &&
+                trackingGps &&
+                !isCameraDetached &&
+                !isInTopDownView &&
+                !isRouteOverviewActive &&
+                isNetworkAvailable(appContext),
+        )
     }
 
     private suspend fun prefetchTiles(
@@ -178,6 +215,15 @@ class DrivingTilePrefetcher(
     }
 
     companion object {
+        fun isNetworkAvailable(context: Context): Boolean {
+            val connectivityManager =
+                context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+                    ?: return true
+            val network = connectivityManager.activeNetwork ?: return false
+            val capabilities = connectivityManager.getNetworkCapabilities(network) ?: return false
+            return capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+        }
+
         private const val TAG = "DrivingTilePrefetcher"
         private const val PLANET_TILEJSON_URL = "https://tiles.openfreemap.org/planet"
         private const val USER_AGENT = "MixAutoCarLauncher/1.0"

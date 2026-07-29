@@ -143,7 +143,7 @@ class MapLibreEngineImpl(
                 addLayerBelowPuckOrAbove(style, layer, fallbackAboveId)
             },
             restackRouteLayersAbove = { style, anchorLayerId ->
-                restackRouteLayersAbove(style, anchorLayerId)
+                routeRenderer.restackRouteLayersAbove(style, anchorLayerId)
             },
         )
     }
@@ -245,6 +245,8 @@ class MapLibreEngineImpl(
     private lateinit var poiOverlayCoordinator: PoiOverlayCoordinator
     private lateinit var poiQueryCoordinator: PoiQueryCoordinator
     private lateinit var routeOverviewController: RouteOverviewController
+    private lateinit var poiSelectionController: PoiSelectionController
+    private lateinit var freeDriveSessionCoordinator: FreeDriveSessionCoordinator
     private val destinationSearchCoordinator by lazy {
         DestinationSearchCoordinator(
             localPlaces = { localPlaces },
@@ -316,7 +318,7 @@ class MapLibreEngineImpl(
             updateLocationEngineInterval = ::updateLocationEngineInterval,
             clearForcedPreviewPoi = poiOverlayCoordinator::clearForcedPreviewPoi,
             clearPoiLayer = poiOverlayCoordinator::clearPoiLayer,
-            clearCustomPin = ::clearCustomPin,
+            clearCustomPin = { poiSelectionController.clearCustomPin() },
             clearRoutePreviewState = ::clearRoutePreviewState,
             hideNativeVectorPoiLayers = poiOverlayCoordinator::hideNativeVectorPoiLayers,
             drawRoute = ::drawRoute,
@@ -337,7 +339,7 @@ class MapLibreEngineImpl(
             setPoiRefreshJob = { poiRefreshJob = it },
             focusOnPoi = ::focusOnPoi,
             switchToLighterTrafficAlternate = ::switchToLighterTrafficAlternate,
-            placeCustomPin = ::placeCustomPin,
+            placeCustomPin = poiSelectionController::placeCustomPin,
             animateTopDownCamera = ::animateTopDownCamera,
             clearPoiOverlay = poiOverlayCoordinator::clearPoiOverlay,
             mergeIntoPoiCache = poiOverlayCoordinator::mergeIntoPoiCache,
@@ -347,9 +349,9 @@ class MapLibreEngineImpl(
             encounteredPlacesSampler = encounteredPlacesSampler,
             shouldQueryPhoton = poiOverlayCoordinator::shouldQueryPhoton,
             setLastPhotonQueryCenter = poiOverlayCoordinator::setLastPhotonQueryCenter,
-            findSavedPlaceAt = ::findSavedPlaceAt,
-            coordinatesNear = ::coordinatesNear,
-            formatLatLng = ::formatLatLng,
+            findSavedPlaceAt = poiSelectionController::findSavedPlaceAt,
+            coordinatesNear = poiSelectionController::coordinatesNear,
+            formatLatLng = poiSelectionController::formatLatLng,
             customPinController = customPinController,
             localPlaces = { localPlaces },
             useVectorTiles = { useVectorTiles },
@@ -530,7 +532,11 @@ class MapLibreEngineImpl(
             drivingTilePrefetcher = { drivingTilePrefetcher },
             encounteredPlacesSampler = encounteredPlacesSampler,
             clearTickProjectionCache = ::clearTickProjectionCache,
-            updateRouteProgress = ::updateRouteProgress,
+            updateRouteProgress = { location ->
+                if (!mapReleased && _uiState.value.isNavigating) {
+                    routeRenderer.updateRouteProgress(location, routeGeometryPoints, mapLibreMap)
+                }
+            },
             onReroute = { origin, destLat, destLng ->
                 lastKnownLocation = origin
                 rerouteNavigation(origin, destLat, destLng, null)
@@ -551,6 +557,62 @@ class MapLibreEngineImpl(
         routeOverviewController = routeOverviewRef!!
         navigationCamera = navRef!!
         locationTracking = locRef!!
+
+        poiSelectionController = PoiSelectionController(
+            uiState = { _uiState.value },
+            updateUiState = { transform -> _uiState.update(transform) },
+            mapLibreMap = { mapLibreMap },
+            navigationCamera = { navigationCamera },
+            poiOverlayCoordinator = { poiOverlayCoordinator },
+            customPinController = customPinController,
+            encounteredPlaces = { encounteredPlaces },
+            getNearbyPois = ::getNearbyPois,
+            getSavedPlacesCache = { savedPlacesCache },
+            getSavedPlacesKeys = { savedPlacesKeys },
+            setSavedPlacesCache = { savedPlacesCache = it },
+            setSavedPlacesKeys = { savedPlacesKeys = it },
+            lastKnownLocation = { lastKnownLocation },
+            animateTopDownCamera = ::animateTopDownCamera,
+            emptyCustomPinGeoJson = EMPTY_CUSTOM_PIN_GEOJSON,
+            nearbyPinDedupThresholdM = NEARBY_PIN_DEDUP_THRESHOLD_M,
+            poiPreviewZoom = POI_PREVIEW_ZOOM,
+        )
+        freeDriveSessionCoordinator = FreeDriveSessionCoordinator(
+            mapReleased = { mapReleased },
+            mapLibreMap = { mapLibreMap },
+            mapView = { mapView },
+            updateUiState = { transform -> _uiState.update(transform) },
+            navigationCamera = { navigationCamera },
+            locationTracking = { locationTracking },
+            poiOverlayCoordinator = { poiOverlayCoordinator },
+            routeOverviewController = { routeOverviewController },
+            navigationSessionCoordinator = { navigationSessionCoordinator },
+            routeRenderer = { routeRenderer },
+            encounteredPlacesSampler = encounteredPlacesSampler,
+            navigationVoice = { navigationVoice },
+            lastKnownLocation = { lastKnownLocation },
+            setHasSnappedCameraToGps = { hasSnappedCameraToGps = it },
+            getPoiRefreshJob = { poiRefreshJob },
+            setPoiRefreshJob = { poiRefreshJob = it },
+            resetNavSessionFields = {
+                fullRouteSteps = emptyList()
+                currentStepIndex = 0
+                destinationLatLng = null
+                navigationArrivalTriggered = false
+                routeGeometryPoints = emptyList()
+                routeRenderer.resetRouteProgress(routeGeometryPoints)
+                offRouteDetector.reset()
+                hasSnappedCameraToGps = false
+                navigationSessionCoordinator.clearLighterTrafficAlternate()
+            },
+            clearCustomPin = { poiSelectionController.clearCustomPin() },
+            clearRoutePreviewState = ::clearRoutePreviewState,
+            stopDeadReckoning = ::stopDeadReckoning,
+            updateLocationEngineInterval = ::updateLocationEngineInterval,
+            withMapStyle = { block -> withMapStyle(block) },
+            enterNavigationCamera = ::enterNavigationCamera,
+            isNavigating = { _uiState.value.isNavigating },
+        )
     }
 
     override fun createMapView(context: Context): View {
@@ -878,149 +940,17 @@ class MapLibreEngineImpl(
         }
     }
 
-    override fun recenterCamera() {
-        val map = mapLibreMap ?: return
-        if (_uiState.value.isNavigating) {
-            enterNavigationCamera()
-        } else {
-            navigationCamera.prepareForFreeDriveCamera(map)
-            clearRoutePreviewState()
-            _uiState.update { it.copy(isCameraDetached = false, isInTopDownView = false) }
-            hasSnappedCameraToGps = false
-            val target = lastKnownLocation ?: resolveFreeDriveTarget(map)
-            if (target != null) {
-                snapCameraToGpsIfNeeded(target)
-            } else {
-                activateFreeDriveTrackingMode(map)
-            }
-            scheduleFreeDrivePaddingRestore(map)
-            withMapStyle { poiOverlayCoordinator.syncPoiOverlayVisibility(it) }
-        }
-    }
+    override fun recenterCamera() = freeDriveSessionCoordinator.recenterCamera()
 
-    override fun startFreeDrive() {
-        navigationVoice?.onNavigationEnded()
-        stopDeadReckoning()
-        routeOverviewController.clearRouteOverviewState()
-        poiRefreshJob?.cancel()
-        poiRefreshJob = null
-        encounteredPlacesSampler.cancel()
-        clearRoutePreviewState()
-        poiOverlayCoordinator.clearForcedPreviewPoi()
-        fullRouteSteps = emptyList()
-        currentStepIndex = 0
-        destinationLatLng = null
-        navigationArrivalTriggered = false
-        routeGeometryPoints = emptyList()
-        resetRouteProgress()
-        offRouteDetector.reset()
-        hasSnappedCameraToGps = false
-        clearLighterTrafficAlternate()
-        navigationSessionCoordinator.clearNavTrafficPrefetchState()
+    override fun startFreeDrive() = freeDriveSessionCoordinator.startFreeDrive()
 
-        val map = mapLibreMap
-        map?.let { navigationCamera.prepareForFreeDriveCamera(it) }
+    override fun dismissSelectedPoi() = poiSelectionController.dismissSelectedPoi()
 
-        _uiState.value = MapUiState(
-            isNavigating = false,
-            streetName = "Free Drive",
-            routeOverviewProgress = 0f,
-        )
+    override fun focusOnLocation(lat: Double, lng: Double) =
+        poiSelectionController.focusOnLocation(lat, lng)
 
-        if (map != null) {
-            applyFreeDriveToMap(map)
-            poiOverlayCoordinator.clearPoiLayer()
-            clearCustomPin()
-            withMapStyle { poiOverlayCoordinator.showNativeVectorPoiLayers(it) }
-        } else if (!mapReleased) {
-            mapView?.getMapAsync { loadedMap ->
-                if (mapReleased) return@getMapAsync
-                navigationCamera.prepareForFreeDriveCamera(loadedMap)
-                applyFreeDriveToMap(loadedMap)
-                poiOverlayCoordinator.clearPoiLayer()
-                clearCustomPin()
-                withMapStyle { poiOverlayCoordinator.showNativeVectorPoiLayers(it) }
-            }
-        }
-        updateLocationEngineInterval()
-        locationTracking.resetSmoothingMotion()
-        navigationCamera.resetLookaheadPaddingActive()
-        navigationCamera.resetDynamicNavigationZoom()
-    }
-
-    override fun dismissSelectedPoi() {
-        navigationCamera.cancelPoiPreviewRetries()
-        navigationCamera.resetTopDownExploreUserAdjusted()
-        poiOverlayCoordinator.clearForcedPreviewPoi()
-        _uiState.update {
-            it.copy(
-                selectedPoi = null,
-                nearbyPois = emptyList(),
-                isInTopDownView = false,
-            )
-        }
-        clearCustomPin()
-        poiOverlayCoordinator.updatePoiLayerFromCache()
-        mapLibreMap?.triggerRepaint()
-    }
-
-    override fun focusOnLocation(lat: Double, lng: Double) {
-        animateTopDownCamera(lat, lng, POI_PREVIEW_ZOOM)
-    }
-
-    override fun focusOnPoi(place: SearchResultPlace, moveCamera: Boolean) {
-        poiOverlayCoordinator.clearForcedPreviewPoi()
-        if (moveCamera) {
-            _uiState.update { it.copy(isCameraDetached = true, isInTopDownView = true) }
-        }
-        val distanceInMeters = computeDistanceFromReference(place.latitude, place.longitude)
-        val nearbyPois = if (place.isDroppedPin) {
-            getNearbyPois(place.latitude, place.longitude, limit = 10)
-                .filter { nearby ->
-                    val distanceResults = FloatArray(1)
-                    Location.distanceBetween(
-                        place.latitude,
-                        place.longitude,
-                        nearby.latitude,
-                        nearby.longitude,
-                        distanceResults,
-                    )
-                    distanceResults[0] >= NEARBY_PIN_DEDUP_THRESHOLD_M
-                }
-                .take(2)
-        } else {
-            emptyList()
-        }
-        _uiState.update {
-            it.copy(
-                selectedPoi = place.copy(distanceInMeters = distanceInMeters),
-                nearbyPois = nearbyPois,
-            )
-        }
-        if (place.isDroppedPin) {
-            if (isSavedPlace(place)) {
-                clearCustomPin()
-            } else {
-                placeCustomPin(place.latitude, place.longitude, pending = true)
-            }
-        } else {
-            clearCustomPin()
-        }
-        if (moveCamera) {
-            poiOverlayCoordinator.clearPoiOverlay()
-            if (!place.isDroppedPin && !poiOverlayCoordinator.isPlaceRenderedOnMap(place)) {
-                val enriched = place.copy(
-                    poiSource = place.poiSource.ifBlank { POI_SOURCE_SEARCH },
-                    category = place.category.ifBlank { normalizeOvertureCategory(place.category) },
-                )
-                encounteredPlaces?.upsertAll(listOf(enriched), POI_SOURCE_SEARCH)
-                encounteredPlaces?.pruneToMaxRecords()
-                poiOverlayCoordinator.mergeIntoPoiCache(listOf(enriched))
-                poiOverlayCoordinator.showForcedPreviewPoi(enriched)
-            }
-            focusOnLocation(place.latitude, place.longitude)
-        }
-    }
+    override fun focusOnPoi(place: SearchResultPlace, moveCamera: Boolean) =
+        poiSelectionController.focusOnPoi(place, moveCamera)
 
     override fun onMapHostLayoutChanged() {
         val map = mapLibreMap ?: return
@@ -1033,55 +963,16 @@ class MapLibreEngineImpl(
         navigationCamera.enterTopDownExploreView()
     }
 
-    override fun setSavedPlaces(places: List<SearchResultPlace>) {
-        savedPlacesCache = places
-        savedPlacesKeys = places.map { savedPlaceKey(it) }.toSet()
-        poiOverlayCoordinator.updatePoiLayerFromCache()
-        poiOverlayCoordinator.updateSavedPlacesLayer(places)
-        val selected = _uiState.value.selectedPoi
-        if (selected != null && selected.isDroppedPin) {
-            if (isSavedPlace(selected)) {
-                clearCustomPin()
-            } else {
-                placeCustomPin(selected.latitude, selected.longitude, pending = true)
-            }
-        }
-    }
-
-    private fun applyFreeDriveToMap(map: MapLibreMap) {
-        if (mapReleased) return
-        applyDrivingViewportPadding(map)
-        withMapStyle { style ->
-            removeRouteLayers(style)
-
-            val target = resolveFreeDriveTarget(map)
-            if (target != null) {
-                snapCameraToGpsIfNeeded(target)
-            } else {
-                activateFreeDriveTrackingMode(map)
-            }
-        }
-    }
-
-    private fun removeRouteLayers(style: Style) {
-        routeRenderer.removeRouteLayers(style)
-    }
-
-    private fun removeAlternateRouteLayers() {
-        val map = mapLibreMap ?: return
-        map.getStyle { style -> routeRenderer.removeAlternateRouteLayers(style) }
-    }
-
-    private fun restackRouteLayersAbove(style: Style, anchorLayerId: String) {
-        routeRenderer.restackRouteLayersAbove(style, anchorLayerId)
-    }
-
-    private fun ensureRouteLayers(style: Style) {
-        routeRenderer.ensureRouteLayers(style)
-    }
+    override fun setSavedPlaces(places: List<SearchResultPlace>) =
+        poiSelectionController.setSavedPlaces(places)
 
     private fun resetRouteProgress() {
         routeRenderer.resetRouteProgress(routeGeometryPoints)
+    }
+
+    private fun drawRoute() {
+        val map = mapLibreMap ?: return
+        routeRenderer.drawRoute(map, routeGeometryPoints)
     }
 
     private fun projectOntoRoute(location: Location): RouteProjection? {
@@ -1096,16 +987,6 @@ class MapLibreEngineImpl(
         routeRenderer.clearTickProjectionCache()
     }
 
-    private fun updateRouteProgress(location: Location) {
-        if (mapReleased || !_uiState.value.isNavigating) return
-        routeRenderer.updateRouteProgress(location, routeGeometryPoints, mapLibreMap)
-    }
-
-    private fun drawRoute() {
-        val map = mapLibreMap ?: return
-        routeRenderer.drawRoute(map, routeGeometryPoints)
-    }
-
     override fun navigateToCoordinates(lat: Double, lng: Double) {
         navigationSessionCoordinator.navigateToCoordinates(lat, lng)
     }
@@ -1118,25 +999,6 @@ class MapLibreEngineImpl(
         navigationSessionCoordinator.clearLighterTrafficAlternate()
     }
 
-    private fun findSavedPlaceAt(lat: Double, lng: Double): SearchResultPlace? {
-        return customPinController.findSavedPlaceAt(savedPlacesCache, lat, lng, NEARBY_PIN_DEDUP_THRESHOLD_M)
-    }
-
-    private fun isSavedPlace(place: SearchResultPlace): Boolean =
-        savedPlacesKeys.contains(savedPlaceKey(place))
-
-    private fun coordinatesNear(
-        lat1: Double,
-        lng1: Double,
-        lat2: Double,
-        lng2: Double,
-        maxM: Float = NEARBY_PIN_DEDUP_THRESHOLD_M,
-    ): Boolean {
-        val distanceResults = FloatArray(1)
-        Location.distanceBetween(lat1, lng1, lat2, lng2, distanceResults)
-        return distanceResults[0] < maxM
-    }
-
     private fun resolveMapOverlayAnchorLayerId(style: Style): String? {
         return when {
             style.getLayer(TRAFFIC_LAYER_ID) != null -> TRAFFIC_LAYER_ID
@@ -1145,17 +1007,6 @@ class MapLibreEngineImpl(
             style.getLayer("road_motorway") != null -> "road_motorway"
             else -> null
         }
-    }
-
-    private fun placeCustomPin(lat: Double, lng: Double, pending: Boolean) {
-        val map = mapLibreMap ?: return
-        val geoJson = buildCustomPinGeoJson(lat, lng, pending)
-        map.getStyle { style -> customPinController.placeCustomPin(style, geoJson) }
-    }
-
-    private fun clearCustomPin() {
-        val map = mapLibreMap ?: return
-        map.getStyle { style -> customPinController.clearCustomPin(style, EMPTY_CUSTOM_PIN_GEOJSON) }
     }
 
     private fun isMapAlive(): Boolean = !mapReleased && mapLibreMap != null
@@ -1190,37 +1041,15 @@ class MapLibreEngineImpl(
 
     private fun maybePrefetchDrivingTiles(displayLocation: Location) {
         val map = mapLibreMap ?: return
-        val context = appContext ?: return
-        val component = map.locationComponent
-        val trackingGps = component.isLocationComponentActivated &&
-            component.isLocationComponentEnabled &&
-            component.cameraMode == CameraMode.TRACKING_GPS
-        val bearing = when {
-            displayLocation.hasBearing() -> displayLocation.bearing
-            bearingEnricher.lastBearing() != null -> bearingEnricher.lastBearing()!!
-            else -> map.cameraPosition.bearing.toFloat()
-        }
-        drivingTilePrefetcher?.maybePrefetch(
-            lat = displayLocation.latitude,
-            lng = displayLocation.longitude,
-            bearingDeg = bearing,
-            zoom = map.cameraPosition.zoom,
-            enabled = useVectorTiles &&
-                trackingGps &&
-                !_uiState.value.isCameraDetached &&
-                !_uiState.value.isInTopDownView &&
-                !routeOverviewController.isRouteOverviewActive() &&
-                isNetworkAvailable(context),
+        drivingTilePrefetcher?.maybePrefetchWhileDriving(
+            displayLocation = displayLocation,
+            map = map,
+            useVectorTiles = useVectorTiles,
+            isCameraDetached = _uiState.value.isCameraDetached,
+            isInTopDownView = _uiState.value.isInTopDownView,
+            isRouteOverviewActive = routeOverviewController.isRouteOverviewActive(),
+            bearingEnricher = bearingEnricher,
         )
-    }
-
-    private fun isNetworkAvailable(context: Context): Boolean {
-        val connectivityManager =
-            context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
-                ?: return true
-        val network = connectivityManager.activeNetwork ?: return false
-        val capabilities = connectivityManager.getNetworkCapabilities(network) ?: return false
-        return capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
     }
 
     private fun resolveInitialLocation(context: Context): ResolvedLocation {
@@ -1257,33 +1086,6 @@ class MapLibreEngineImpl(
             )
         }
     }
-
-    private fun computeDistanceFromReference(lat: Double, lng: Double): Float {
-        val reference = lastKnownLocation ?: return 0f
-        val distanceResults = FloatArray(1)
-        Location.distanceBetween(
-            reference.latitude,
-            reference.longitude,
-            lat,
-            lng,
-            distanceResults,
-        )
-        return distanceResults[0]
-    }
-
-    private fun formatLatLng(lat: Double, lng: Double): String {
-        val latDir = if (lat >= 0) "N" else "S"
-        val lngDir = if (lng >= 0) "E" else "W"
-        return String.format(
-            java.util.Locale.US,
-            "%.5fÂ° %s, %.5fÂ° %s",
-            kotlin.math.abs(lat),
-            latDir,
-            kotlin.math.abs(lng),
-            lngDir,
-        )
-    }
-
 
     private fun animateTopDownCamera(lat: Double, lng: Double, zoom: Double, exploreMode: Boolean = false) {
         navigationCamera.animateTopDownCamera(lat, lng, zoom, exploreMode)

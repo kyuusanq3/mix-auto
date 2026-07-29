@@ -48,7 +48,7 @@ MainActivity (MapHostViewModel — mapEngine, navigationVoice, localPlaces)
 - `MapLibreEngineImpl` is a **facade** — add map/GPS/camera behavior in `data/map/` collaborators (`LocationTrackingController`, `NavigationCameraController`, `MapStyleController`, `RouteRenderer`, etc.); do not grow the facade again
 - Edit the **live owner** of constants — grep all hits first; prefer controllers / `SmoothingLocationEngine` when duplicated; exception: `NAV_TILT_OFFSET` on `MapLibreEngineImpl` companion is live (not stale)
 - Sample / local-LLM patches: **one concern, one file family**, then compile gate (`BUILD SUCCESSFUL`)
-- Soft size: new collaborators prefer **under ~400 lines**; extract only on a clear second responsibility — do **not** blanket-split existing files to a hard 150-line limit
+- Soft size: new collaborators prefer **under ~300 lines**; cohesive ~350 OK if split breaks a bug class — do **not** blanket-split existing files to a hard 150-line limit
 - New `public`/`internal` APIs: prefer explicit return types; skip mass-annotating private helpers
 - Package index: root `llms.txt`; map patterns: golden examples in `mix-auto-map-engine.mdc`
 
@@ -60,7 +60,8 @@ MainActivity (MapHostViewModel — mapEngine, navigationVoice, localPlaces)
 - Inventing shell syntax or skipping `JAVA_HOME` after a known Gradle failure — follow `mix-auto-build-release.mdc` verify gate (`.\scripts\verify-debug.ps1`)
 - Waiting after `BUILD SUCCESSFUL` or `MIXAUTO_VERIFY_DONE` because the tool UI still shows Running — Gradle output / `MIXAUTO_VERIFY_DONE.txt` stamp is authoritative (OpenCode may leave bash stuck `running` with success only in metadata)
 - Using `cd … && .\scripts\verify-debug.ps1` — PowerShell rejects `&&`; run the script alone from repo root
-- Treating `mix-auto-driving.json` as binary because it is one minified line — rewrite with Python/`ConvertFrom-Json` or `python tools/fix_driving_text_pitch.py`; do not leave `*.backup` / `temp_fix.py`
+- `python -c "..."` one-liners on PowerShell for style JSON — use `.\scripts\run-tool.ps1 <recipe>` instead
+- Treating `mix-auto-driving.json` as binary because it is one minified line — use run-tool; do not leave `*.backup` / `temp_fix.py`
 - Setting `text-pitch-alignment` on the **layer root** — MapLibre ignores it; must be under `layout` (root-level write is a silent no-op)
 - Pretty-printing the driving style with `indent=2` — keep the asset minified
 - Increasing MapLibre tilt degrees when the user asks for overhead / flatter look-ahead — **0° = overhead**, higher = more pitched; decrease tilt or `NAV_TILT_OFFSET` for overhead

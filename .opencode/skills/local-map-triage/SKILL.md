@@ -68,31 +68,30 @@ Do **not** adopt or execute plans that:
 - Change mix text pitch/rotation from **`VIEWPORT` to `MAP`** — golden example requires **VIEWPORT** for MapLibre #2788 streaks; MAP is the wrong direction
 - Raise `EXTRAPOLATION_MAX_MS`, `EXTRAPOLATION_MAX_M`, or `EXTRAPOLATION_SNAP_BACK_MAX_M` as a first rubber-band fix — high-speed bounce is often display ran **ahead** via extrapolation then snapped in `resolveBlendStart`; increasing ahead limits usually **worsens** bounce
 - Mass-edit 3+ `SmoothingLocationEngine` companion constants in one patch
-- Treat `mix-auto-driving.json` as “binary” / uneditable because it is **one minified line** — it is normal JSON; rewrite with Python/`ConvertFrom-Json` (or run **`python tools/fix_driving_text_pitch.py`**), do not give up or leave `*.backup` / `temp_fix.py` in repo root
+- Treat `mix-auto-driving.json` as “binary” / uneditable because it is **one minified line** — use **`.\scripts\run-tool.ps1`** (never `python -c` one-liners on PowerShell); do not leave `*.backup` / `temp_fix.py`
 - Hand-edit via Read line offsets on the minified style (offsets fail on a 1-line file)
 - Set `layer["text-pitch-alignment"]` on the **layer root** — MapLibre ignores it; must be `layer["layout"]["text-pitch-alignment"]`
-- `json.dump(..., indent=2)` the driving style (explodes a 1-line asset into thousands of lines) — keep minified (`separators=(",", ":")`) or use the tools script
+- `json.dump(..., indent=2)` the driving style (explodes a 1-line asset into thousands of lines) — keep minified or use run-tool fix recipe
 
-**DO (label artifact when pitch missing):** put `"text-pitch-alignment": "viewport"` under **`layout`** on every `symbol` layer that has `text-field` in `mix-auto-driving.json` — do not set MAP; do not edit mix `poiTextOnly*` for nav-mode stretch. Prefer:
+**DO (label artifact when pitch missing):** put `"text-pitch-alignment": "viewport"` under **`layout`** on every `symbol` layer that has `text-field`. Prefer run-tool (Windows):
 
 ```powershell
-python tools/fix_driving_text_pitch.py
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\run-tool.ps1 check_driving_text_pitch
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\run-tool.ps1 fix_driving_text_pitch
 ```
+
+Linux/macOS: `./scripts/run-tool.sh check_driving_text_pitch` then `fix_driving_text_pitch`.
 
 Golden rewrite (layout only — never root):
 
 ```python
-# DO
 layout = layer.setdefault("layout", {})
 if layer.get("type") == "symbol" and "text-field" in layout:
     layout["text-pitch-alignment"] = "viewport"
-layer.pop("text-pitch-alignment", None)  # strip mistaken root key
-
-# DON'T — MapLibre ignores root-level pitch; no-op "fix"
-# layer["text-pitch-alignment"] = "viewport"
+layer.pop("text-pitch-alignment", None)
 ```
 
-Confirm: every `symbol`+`text-field` has `layout["text-pitch-alignment"]=="viewport"`; root key count is 0. Then `.\scripts\verify-debug.ps1`.
+Confirm: `check_driving_text_pitch` exits 0. Then `.\scripts\verify-debug.ps1`.
 
 ---
 
@@ -103,7 +102,12 @@ Examples (grep to confirm, read ≤3 files total before editing):
 | Symptom | Owner files |
 |---------|-------------|
 | Rubber-band puck | `SmoothingLocationEngine.kt`, `LocationTrackingController.kt`, `OffRouteDetector.kt` |
-| Streaked labels (nav / tilted driving) | **First:** `mix-auto-driving.json` / `MapStyleController.kt` (`text-pitch-alignment` on style symbol layers). **Detached pan only:** `PoiOverlayRenderer.kt` (`poiTextOnly*` = VIEWPORT). Not `MapLibreEngineImpl` facade dump |
+| GPS acquisition / no fix / permission retry | `LocationAcquisitionHelper.kt` |
+| Nav step / arrival / off-route tick | `NavigationProgressEvaluator.kt`, `OffRouteDetector.kt` |
+| Camera padding / lookahead | `DrivingViewportPaddingController.kt` |
+| Top-down / POI preview camera | `TopDownPoiCameraController.kt` |
+| Free drive / recenter | `FreeDriveSessionCoordinator.kt` |
+| Streaked labels (nav / tilted driving) | **First:** `.\scripts\run-tool.ps1` → `check_driving_text_pitch` / `fix_driving_text_pitch` on `mix-auto-driving.json`. **Detached pan only:** `PoiOverlayRenderer.kt` (`poiTextOnly*` = VIEWPORT). Not `MapLibreEngineImpl` facade dump |
 | Driving / nav tilt | **Edit:** `MapLibreEngineImpl` companion `NAV_TILT_OFFSET` + `setDrivingTilt()`. **Apply:** `NavigationCameraController.navTilt()` callback only. **Pref:** `LauncherPreferences.driving_tilt` = free-drive only (not nav delta) |
 
 **Wrong owners (reject):**
@@ -119,7 +123,7 @@ Also skim **Golden examples** in `.cursor/rules/mix-auto-map-engine.mdc` (puck v
 
 ---
 
-## Step 3b — Skeleton / signature skim (files >~400 lines)
+## Step 3b — Skeleton / signature skim (files >~300 lines)
 
 Large owners (`MapLibreEngineImpl`, camera/location controllers, big UI) burn local-model attention if fully dumped.
 
@@ -190,7 +194,7 @@ $env:Path = "$env:JAVA_HOME\bin;$env:Path"
 ## Owner files (≤3)
 - ...
 
-## Skeleton skim (if any file >~400 lines)
+## Skeleton skim (if any file >~300 lines)
 - grepped: …
 - full-read only: …
 

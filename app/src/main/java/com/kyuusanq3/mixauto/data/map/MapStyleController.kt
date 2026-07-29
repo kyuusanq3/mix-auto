@@ -25,7 +25,7 @@ import org.maplibre.android.style.sources.TileSet
  * `layout["text-pitch-alignment"]` = `"viewport"` in mix-auto-driving.json — not the layer root
  * (MapLibre ignores root-level pitch), not Compose, not mix-poi-label VIEWPORT→MAP flips in
  * [PoiOverlayRenderer] (mix labels hidden while navigating). Prefer
- * `python tools/fix_driving_text_pitch.py` (keeps minified JSON; strips mistaken root keys).
+ * `powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\run-tool.ps1 fix_driving_text_pitch`.
  *
  * This is a stateless helper extracted from [MapLibreEngineImpl] — it does not own any of the
  * `useVectorTiles`/`show3dBuildings`/`trafficEnabled`/`tomTomApiKey` flags (those stay on the

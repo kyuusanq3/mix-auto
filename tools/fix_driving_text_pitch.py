@@ -2,11 +2,13 @@
 """Set layout text-pitch-alignment=viewport on driving-style text symbols.
 
 Nav label stretch under tilted camera: MapLibre reads pitch from layer["layout"],
-NOT the layer root. Prefer this script over ad-hoc one-liners / temp_fix.py.
+NOT the layer root. Use run-tool — never python -c or temp_fix.py.
 
 Usage (repo root):
-  python tools/fix_driving_text_pitch.py
-Then: .\\scripts\\verify-debug.ps1
+  powershell -NoProfile -ExecutionPolicy Bypass -File .\\scripts\\run-tool.ps1 fix_driving_text_pitch
+  # Linux/macOS: ./scripts/run-tool.sh fix_driving_text_pitch
+Then:
+  .\\scripts\\verify-debug.ps1
 """
 from __future__ import annotations
 

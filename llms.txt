@@ -1,6 +1,6 @@
 # MixAuto package map (one line each — open topic rule / skill before deep reads)
 
-Root guide: AGENTS.md | Verify: .\scripts\verify-debug.ps1 (see mix-auto-build-release.mdc)
+Root guide: AGENTS.md | Verify: .\scripts\verify-debug.ps1 | Tools: .\scripts\run-tool.ps1 (never python -c on Windows)
 OpenCode cold start: skill local-opencode-loop first; map bugs → local-map-triage; map features → local-map-feature; short prompts OK — no ask-loops
 Commands: /map-bug <symptom> (build) | /map-plan <symptom> (plan only)
 Map triage (bugs): .opencode/skills/local-map-triage | Map feature (implement): .opencode/skills/local-map-feature | OpenCode loop: .opencode/skills/local-opencode-loop | GitHub release (not debug): .opencode/skills/local-apk | Debug verify: .\scripts\verify-debug.ps1
@@ -30,38 +30,52 @@ service/ — notification listener, offline map download service
 
 ## data/map owners (do not grow MapLibreEngineImpl)
 
-MapLibreEngineImpl.kt — facade / wiring only (~1.3k; prefer collaborators); still owns NAV_TILT_OFFSET companion (live)
+MapLibreEngineImpl.kt — facade / wiring only (~1.1k; prefer collaborators); still owns NAV_TILT_OFFSET companion (live)
 RouteModels.kt — LegStep, RouteResult, route layer/progress constants
 PoiOverlayCoordinator.kt — POI cache, mix overlay refresh, preview layers, native poi_* visibility
+PoiSelectionController.kt — POI focus/dismiss, saved pins, custom pin, formatLatLng
+FreeDriveSessionCoordinator.kt — startFreeDrive, recenterCamera, applyFreeDriveToMap sequencing
 RouteOverviewController.kt — route overview bounds/hold timer, then nav camera dive
 DestinationSearchCoordinator.kt — destination search merge (local/cache/Photon)
 SearchOriginResolver.kt — search origin resolution (GPS / map center / PH fallback)
 PhotonSearchClient.kt — Photon HTTP fetch for destination + nearby POI
 PoiQueryCoordinator.kt — POI cache search, tile query, nearby merge, viewport seed
 LighterTrafficHelper.kt — TomTom alternate scoring / route conversion (pure)
+TomTomTrafficClient.kt — thin facade delegating to TomTom* split below
+TomTomTrafficModels.kt — traffic models + shared level/street/haversine formatters
+TomTomApiKeyVerifier.kt — TomTom API key probe
+TomTomIncidentHeadlines.kt — nearby incident headlines + TTL cache
+TomTomRouteJamFinder.kt — route-corridor jam lookup
 MapInteractionController.kt — map tap/long-press, custom pin draft, reverse geocode
 NavigationSessionCoordinator.kt — navigate, startNavigation, reroute, lighter-traffic alternate
 OfflineRegionCatalog.kt — offline_regions.json catalog load
 OfflineRegionMetadata.kt — offline region SDK metadata parse / resumability
-SmoothingLocationEngine.kt — puck blend + extrapolation
-LocationTrackingController.kt — GPS tick, road-snap display, padding push
+OfflineProgressFormatting.kt — offline progress/size formatters + OfflineRegionInstallState, PendingOfflineResume
+OfflineRegionDownloadSession.kt — offline create/observe/prepare/stall-kick (internal)
+SmoothingLocationEngine.kt — puck blend + extrapolation (do not split frame loop)
+LocationTrackingController.kt — GPS tick chain, applyAndroidLocation, puck force
+LocationAcquisitionHelper.kt — permission/retry/poll GPS acquisition
+NavigationProgressEvaluator.kt — step advance / arrival / off-route tick (OffRouteDetector injected)
 NavigationCameraController.kt — free-drive / nav dive / cameraSessionId / zoomWhileTracking apply
+DrivingViewportPaddingController.kt — driving padding compute/apply + dedup caches
+TopDownPoiCameraController.kt — POI preview / top-down explore camera
 NavigationZoom.kt — maneuver-distance follow zoom math (pure); extend here for new zoom formulas + tests
+DrivingTilePrefetcher.kt — tile prefetch while driving + network gate
 PoiOverlayRenderer.kt — mix POI icon/text layers, native poi_* visibility; mix poiTextOnly* = VIEWPORT (detached pan only — hidden while navigating)
-MapStyleController.kt — style load, traffic, 3D buildings, road boost; nav label stretch → layout text-pitch-alignment via tools/fix_driving_text_pitch.py (never layer root / mix-poi-label MAP flip)
+MapStyleController.kt — style load, traffic, 3D buildings, road boost; nav label stretch → run-tool check_driving_text_pitch / fix_driving_text_pitch (layout pitch; never layer root)
 RouteRenderer.kt — route GeoJSON greying (not puck motion)
 OffRouteDetector.kt — parallel-street off-route confirms
 ConventionalRouteSelector.kt / NavigationRouteFetcher.kt — OSRM conventional + fetch
-OfflineMapRepository.kt — offline tile download/observe (catalog + metadata extracted)
+OfflineMapRepository.kt — offline tile catalog + public download/pause/delete API (session extracted)
 
 ## Agent habits
 
 - Load one topic rule or skill per task (OpenCode: open .mdc by path; globs may not auto-load)
-- Files >~400 lines: grep / signature skim first; full-read only the edit target
-- New collaborators: prefer <~400 lines; extract on clear second responsibility — no hard 150-line rewrite of existing debt
+- Files >~300 lines: grep / signature skim first; full-read only the edit target
+- New collaborators: prefer <~300 lines; cohesive ~350 OK if split breaks a bug class — no hard 150-line rewrite of existing debt
 - Explicit return types on new public/internal APIs; no mass-annotate private helpers
 - Never claim success without BUILD SUCCESSFUL or MIXAUTO_VERIFY_DONE exit=0
 - Gradle done = done: BUILD SUCCESSFUL / BUILD FAILED / MIXAUTO_VERIFY_DONE in stream/metadata OR repo-root MIXAUTO_VERIFY_DONE.txt means finished even if bash UI still shows Running — do not re-run
 - Verify command: .\scripts\verify-debug.ps1 alone (no cd, no &&); stamp file is gitignored
-- mix-auto-driving.json is one minified JSON line (not binary) — pitch must be layout["text-pitch-alignment"]="viewport" (never layer root); prefer python tools/fix_driving_text_pitch.py; no indent=2 / *.backup / temp_fix.py
+- Label pitch recipes: .\scripts\run-tool.ps1 check_driving_text_pitch / fix_driving_text_pitch — never python -c / temp_fix.py / indent=2 on driving JSON
 - MapLibre tilt: 0° = overhead; higher = more pitched; overhead request → decrease tilt or NAV_TILT_OFFSET; more nav pitch → increase NAV_TILT_OFFSET; report nav = freeDriveTilt + NAV_TILT_OFFSET (not free-drive alone)

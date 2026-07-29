@@ -26,7 +26,7 @@ alwaysApply: false
 | MapLibre #2788 streaks | icon+text on one `SymbolLayer` under tilt | `PoiOverlayRenderer` (`poiIconOnly*` / `poiTextOnly*`), Liberty `poi_r*` hide path |
 | Labels wrongly visible in nav | mix labels gated by `shouldShowMixPoiLabels()`; native POI hide must stay sticky | `PoiOverlayCoordinator`, `PoiOverlayRenderer.syncNativePoiLayerVisibility` |
 
-**Nav-mode label stretch:** `shouldShowMixPoiLabels()` is false while `isNavigating` — mix `poiTextOnly*` (VIEWPORT) does not render during nav. Fix style symbol `text-pitch-alignment` in `mix-auto-driving.json` / `MapStyleController`, not a VIEWPORT→MAP flip on mix labels. Bundled style is **one minified JSON line** — prefer `python tools/fix_driving_text_pitch.py`; do not treat as binary, leave `*.backup`, or `indent=2` dump.
+**Nav-mode label stretch:** `shouldShowMixPoiLabels()` is false while `isNavigating` — mix `poiTextOnly*` (VIEWPORT) does not render during nav. Fix style symbol `text-pitch-alignment` in `mix-auto-driving.json` / `MapStyleController`, not a VIEWPORT→MAP flip on mix labels. Use **`.\scripts\run-tool.ps1`** (`check_driving_text_pitch` / `fix_driving_text_pitch`); never `python -c`; do not treat as binary, leave `*.backup`, or `indent=2` dump.
 
 **Style text pitch (nav stretch) — golden:**
 
@@ -37,8 +37,9 @@ if layer.get("type") == "symbol" and "text-field" in layout:
     layout["text-pitch-alignment"] = "viewport"
 layer.pop("text-pitch-alignment", None)  # root key is ignored / no-op
 
-# Prefer: python tools/fix_driving_text_pitch.py  (keeps minified JSON)
-# DON'T — layer["text-pitch-alignment"] = "viewport"  (wrong level → silent no-op)
+# Prefer run-tool (Windows):
+# powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\run-tool.ps1 fix_driving_text_pitch
+# DON'T — python -c one-liners on PowerShell; layer["text-pitch-alignment"] at root
 # DON'T — json.dump(..., indent=2) on this asset
 # DON'T — MAP; don't flip mix poiTextOnly VIEWPORT→MAP
 ```
