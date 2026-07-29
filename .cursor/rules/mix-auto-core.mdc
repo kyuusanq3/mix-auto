@@ -60,7 +60,9 @@ MainActivity (MapHostViewModel — mapEngine, navigationVoice, localPlaces)
 - Inventing shell syntax or skipping `JAVA_HOME` after a known Gradle failure — follow `mix-auto-build-release.mdc` verify gate (`.\scripts\verify-debug.ps1`)
 - Waiting after `BUILD SUCCESSFUL` or `MIXAUTO_VERIFY_DONE` because the tool UI still shows Running — Gradle output / `MIXAUTO_VERIFY_DONE.txt` stamp is authoritative (OpenCode may leave bash stuck `running` with success only in metadata)
 - Using `cd … && .\scripts\verify-debug.ps1` — PowerShell rejects `&&`; run the script alone from repo root
-- Treating `mix-auto-driving.json` as binary because it is one minified line — rewrite with Python/`ConvertFrom-Json`; do not leave `*.backup`
+- Treating `mix-auto-driving.json` as binary because it is one minified line — rewrite with Python/`ConvertFrom-Json` or `python tools/fix_driving_text_pitch.py`; do not leave `*.backup` / `temp_fix.py`
+- Setting `text-pitch-alignment` on the **layer root** — MapLibre ignores it; must be under `layout` (root-level write is a silent no-op)
+- Pretty-printing the driving style with `indent=2` — keep the asset minified
 - Increasing MapLibre tilt degrees when the user asks for overhead / flatter look-ahead — **0° = overhead**, higher = more pitched; decrease tilt or `NAV_TILT_OFFSET` for overhead
 - Diagnosing map label stretch as Compose / `MapHostViewModel` font sizing — map labels are MapLibre symbol layers under tilt, not dashboard Compose text
 - Calling `/local-apk` (or publish) while still planning / diagnosing — release only after verified fix (`assembleDebug` gate)

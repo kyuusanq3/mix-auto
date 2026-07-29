@@ -22,9 +22,10 @@ import org.maplibre.android.style.sources.TileSet
  * prefetch/ambient-cache setup.
  *
  * Nav-mode stretched/streaked map labels under tilted camera: fix bundled driving style symbol
- * `text-pitch-alignment` (viewport) in mix-auto-driving.json — not Compose, not mix-poi-label
- * VIEWPORT→MAP flips in [PoiOverlayRenderer] (mix labels hidden while navigating). The asset is
- * one minified JSON line — rewrite with a script (not "binary"); do not leave `*.backup` copies.
+ * `layout["text-pitch-alignment"]` = `"viewport"` in mix-auto-driving.json — not the layer root
+ * (MapLibre ignores root-level pitch), not Compose, not mix-poi-label VIEWPORT→MAP flips in
+ * [PoiOverlayRenderer] (mix labels hidden while navigating). Prefer
+ * `python tools/fix_driving_text_pitch.py` (keeps minified JSON; strips mistaken root keys).
  *
  * This is a stateless helper extracted from [MapLibreEngineImpl] — it does not own any of the
  * `useVectorTiles`/`show3dBuildings`/`trafficEnabled`/`tomTomApiKey` flags (those stay on the

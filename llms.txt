@@ -48,7 +48,7 @@ LocationTrackingController.kt — GPS tick, road-snap display, padding push
 NavigationCameraController.kt — free-drive / nav dive / cameraSessionId / zoomWhileTracking apply
 NavigationZoom.kt — maneuver-distance follow zoom math (pure); extend here for new zoom formulas + tests
 PoiOverlayRenderer.kt — mix POI icon/text layers, native poi_* visibility; mix poiTextOnly* = VIEWPORT (detached pan only — hidden while navigating)
-MapStyleController.kt — style load, traffic, 3D buildings, road boost; nav label stretch → style text-pitch-alignment / mix-auto-driving.json (not mix-poi-label MAP flip)
+MapStyleController.kt — style load, traffic, 3D buildings, road boost; nav label stretch → layout text-pitch-alignment via tools/fix_driving_text_pitch.py (never layer root / mix-poi-label MAP flip)
 RouteRenderer.kt — route GeoJSON greying (not puck motion)
 OffRouteDetector.kt — parallel-street off-route confirms
 ConventionalRouteSelector.kt / NavigationRouteFetcher.kt — OSRM conventional + fetch
@@ -63,5 +63,5 @@ OfflineMapRepository.kt — offline tile download/observe (catalog + metadata ex
 - Never claim success without BUILD SUCCESSFUL or MIXAUTO_VERIFY_DONE exit=0
 - Gradle done = done: BUILD SUCCESSFUL / BUILD FAILED / MIXAUTO_VERIFY_DONE in stream/metadata OR repo-root MIXAUTO_VERIFY_DONE.txt means finished even if bash UI still shows Running — do not re-run
 - Verify command: .\scripts\verify-debug.ps1 alone (no cd, no &&); stamp file is gitignored
-- mix-auto-driving.json is one minified JSON line (not binary) — rewrite with Python for text-pitch-alignment; no *.backup
+- mix-auto-driving.json is one minified JSON line (not binary) — pitch must be layout["text-pitch-alignment"]="viewport" (never layer root); prefer python tools/fix_driving_text_pitch.py; no indent=2 / *.backup / temp_fix.py
 - MapLibre tilt: 0° = overhead; higher = more pitched; overhead request → decrease tilt or NAV_TILT_OFFSET; more nav pitch → increase NAV_TILT_OFFSET; report nav = freeDriveTilt + NAV_TILT_OFFSET (not free-drive alone)

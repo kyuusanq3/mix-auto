@@ -68,10 +68,31 @@ Do **not** adopt or execute plans that:
 - Change mix text pitch/rotation from **`VIEWPORT` to `MAP`** — golden example requires **VIEWPORT** for MapLibre #2788 streaks; MAP is the wrong direction
 - Raise `EXTRAPOLATION_MAX_MS`, `EXTRAPOLATION_MAX_M`, or `EXTRAPOLATION_SNAP_BACK_MAX_M` as a first rubber-band fix — high-speed bounce is often display ran **ahead** via extrapolation then snapped in `resolveBlendStart`; increasing ahead limits usually **worsens** bounce
 - Mass-edit 3+ `SmoothingLocationEngine` companion constants in one patch
-- Treat `mix-auto-driving.json` as “binary” / uneditable because it is **one minified line** — it is normal JSON; rewrite with Python/`ConvertFrom-Json` (or extend `tools/gen_mix_auto_driving_style.py`), do not give up or leave `*.backup` files
+- Treat `mix-auto-driving.json` as “binary” / uneditable because it is **one minified line** — it is normal JSON; rewrite with Python/`ConvertFrom-Json` (or run **`python tools/fix_driving_text_pitch.py`**), do not give up or leave `*.backup` / `temp_fix.py` in repo root
 - Hand-edit via Read line offsets on the minified style (offsets fail on a 1-line file)
+- Set `layer["text-pitch-alignment"]` on the **layer root** — MapLibre ignores it; must be `layer["layout"]["text-pitch-alignment"]`
+- `json.dump(..., indent=2)` the driving style (explodes a 1-line asset into thousands of lines) — keep minified (`separators=(",", ":")`) or use the tools script
 
-**DO (label artifact when pitch missing):** add `"text-pitch-alignment": "viewport"` on style text symbol layers in `mix-auto-driving.json` — do not set MAP; do not edit mix `poiTextOnly*` for nav-mode stretch (`shouldShowMixPoiLabels` is off while navigating). Use a JSON rewrite script; confirm with `python -c "import json; …"` that every `symbol`+`text-field` layer has pitch set.
+**DO (label artifact when pitch missing):** put `"text-pitch-alignment": "viewport"` under **`layout`** on every `symbol` layer that has `text-field` in `mix-auto-driving.json` — do not set MAP; do not edit mix `poiTextOnly*` for nav-mode stretch. Prefer:
+
+```powershell
+python tools/fix_driving_text_pitch.py
+```
+
+Golden rewrite (layout only — never root):
+
+```python
+# DO
+layout = layer.setdefault("layout", {})
+if layer.get("type") == "symbol" and "text-field" in layout:
+    layout["text-pitch-alignment"] = "viewport"
+layer.pop("text-pitch-alignment", None)  # strip mistaken root key
+
+# DON'T — MapLibre ignores root-level pitch; no-op "fix"
+# layer["text-pitch-alignment"] = "viewport"
+```
+
+Confirm: every `symbol`+`text-field` has `layout["text-pitch-alignment"]=="viewport"`; root key count is 0. Then `.\scripts\verify-debug.ps1`.
 
 ---
 
