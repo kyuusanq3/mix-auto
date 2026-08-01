@@ -4,8 +4,12 @@ import kotlin.math.abs
 import kotlin.math.ln
 
 /**
- * Maps distance-to-next-maneuver to navigation follow zoom so the puck and upcoming turn
- * stay visible on the tilted driving viewport.
+ * Pure follow-zoom math for driving camera.
+ *
+ * **Extend here (Turn A):** append new formulas (e.g. `targetZoomForSpeed`) **after**
+ * [shouldApplyZoomChange] — never nest inside [targetZoomForManeuverDistance].
+ * Unit-test first; apply via [NavigationCameraController.updateDrivingZoomForSpeed] /
+ * [NavigationCameraController.updateNavigationZoomForDistance] (GPS tick already wired).
  */
 internal object NavigationZoom {
     const val DYNAMIC_ZOOM_MIN = 15.0
@@ -30,5 +34,25 @@ internal object NavigationZoom {
     ): Boolean {
         if (lastApplied == null) return true
         return abs(target - lastApplied) >= hysteresis
+    }
+
+    fun targetZoomForSpeed(speedMps: Double, maxZoom: Double): Double {
+        val ceiling = maxZoom.coerceAtLeast(DYNAMIC_ZOOM_MIN)
+        val mid = (ceiling + DYNAMIC_ZOOM_MIN) / 2.0
+        val speed = speedMps.coerceAtLeast(0.0)
+
+        return when {
+            speed <= 2.0 -> ceiling
+            speed >= 20.0 -> DYNAMIC_ZOOM_MIN
+            speed <= 8.0 -> {
+                val progress = (speed - 2.0) / (8.0 - 2.0)
+                ceiling - progress * (ceiling - mid)
+            }
+            speed <= 12.0 -> mid
+            else -> {
+                val progress = (speed - 12.0) / (20.0 - 12.0)
+                mid - progress * (mid - DYNAMIC_ZOOM_MIN)
+            }
+        }
     }
 }

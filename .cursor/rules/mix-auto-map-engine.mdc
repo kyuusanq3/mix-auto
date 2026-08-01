@@ -26,7 +26,7 @@ alwaysApply: false
 | MapLibre #2788 streaks | icon+text on one `SymbolLayer` under tilt | `PoiOverlayRenderer` (`poiIconOnly*` / `poiTextOnly*`), Liberty `poi_r*` hide path |
 | Labels wrongly visible in nav | mix labels gated by `shouldShowMixPoiLabels()`; native POI hide must stay sticky | `PoiOverlayCoordinator`, `PoiOverlayRenderer.syncNativePoiLayerVisibility` |
 
-**Nav-mode label stretch:** `shouldShowMixPoiLabels()` is false while `isNavigating` — mix `poiTextOnly*` (VIEWPORT) does not render during nav. Fix style symbol `text-pitch-alignment` in `mix-auto-driving.json` / `MapStyleController`, not a VIEWPORT→MAP flip on mix labels. Use **`.\scripts\run-tool.ps1`** (`check_driving_text_pitch` / `fix_driving_text_pitch`); never `python -c`; do not treat as binary, leave `*.backup`, or `indent=2` dump.
+**Nav-mode label stretch:** `shouldShowMixPoiLabels()` is false while `isNavigating` — mix `poiTextOnly*` (VIEWPORT) does not render during nav. Fix style symbol `text-pitch-alignment` in `mix-auto-driving.json` / `MapStyleController`, not a VIEWPORT→MAP flip on mix labels. Use **`./scripts/run-tool.ps1`** (`check_driving_text_pitch` / `fix_driving_text_pitch`); bash/Zed: `powershell.exe -NoProfile -ExecutionPolicy Bypass -File "./scripts/run-tool.ps1" …` (never `.\scripts\…` — Git Bash eats `\s`/`\r`); never `python -c`; do not treat as binary, leave `*.backup`, or `indent=2` dump.
 
 **Style text pitch (nav stretch) — golden:**
 
@@ -37,9 +37,10 @@ if layer.get("type") == "symbol" and "text-field" in layout:
     layout["text-pitch-alignment"] = "viewport"
 layer.pop("text-pitch-alignment", None)  # root key is ignored / no-op
 
-# Prefer run-tool (Windows):
-# powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\run-tool.ps1 fix_driving_text_pitch
-# DON'T — python -c one-liners on PowerShell; layer["text-pitch-alignment"] at root
+# Prefer run-tool (bash-safe for Zed Git Bash + PowerShell):
+# powershell.exe -NoProfile -ExecutionPolicy Bypass -File "./scripts/run-tool.ps1" fix_driving_text_pitch
+# DON'T — .\scripts\ backslash paths in Git Bash (become .scripts…)
+# DON'T — python -c one-liners; layer["text-pitch-alignment"] at root
 # DON'T — json.dump(..., indent=2) on this asset
 # DON'T — MAP; don't flip mix poiTextOnly VIEWPORT→MAP
 ```
@@ -111,19 +112,20 @@ poiTextOnlyLayerProperties()           // separate mix-poi-label-layer; textPitc
 // DON'T — full-read the ~1.3k facade; grep navTilt / NAV_TILT_OFFSET / setDrivingTilt first
 ```
 
-**Extend follow zoom (new feature — see `.opencode/skills/local-map-feature`):**
+**Extend follow zoom (new feature — see `.opencode/skills/local-map-feature` staged Turns A→B→C):**
 
 ```kotlin
-// DO — discover NavigationZoom + existing maneuver curve before adding speed/other terms
-// Pure math + unit tests in NavigationZoom.kt (or small data/map helper)
-// Apply in NavigationCameraController via zoomWhileTracking when TRACKING_GPS
-// GPS tick → narrow callback from LocationTrackingController (same pattern as updateNavigationZoomForDistance)
-// Free-drive and nav need separate apply guards — not the same canApply* helper
+// DO — Turn A: append pure math AFTER shouldApplyZoomChange in NavigationZoom.kt + tests
+// DO — Turn B: fill updateDrivingZoomForSpeed body → applyFollowZoom (GPS callback already wired)
+// DO — Turn C: min(speedZoom, targetZoomForManeuverDistance) in updateNavigationZoomForDistance
+// DO — free-drive guards: canApplyFreeDriveFollowZoom; nav: canApplyDynamicNavigationZoom
 
+// DON'T — nest a new function inside targetZoomForManeuverDistance
 // DON'T — replace targetZoomForManeuverDistance with ad-hoc boost math
-// DON'T — reuse canApplyDynamicNavigationZoom() (isNavigating) for free-drive zoom
-// DON'T — add MapLibreEngineImpl named arg without matching LocationTrackingController ctor param
-// DON'T — rewrite onDrivingTiltChanged / dive session while adding zoom
+// DON'T — reuse canApplyDynamicNavigationZoom() for free-drive zoom
+// DON'T — re-add updateDrivingZoomForSpeed ctor wiring (already in LocationTrackingController + facade)
+// DON'T — rewrite onDrivingTiltChanged / dive session / SmoothingLocationEngine while adding zoom
+// DON'T — A+B+C in one unattended local-LLM session
 ```
 
 ## Map engine architecture
@@ -180,7 +182,8 @@ MainActivity (mapEngine = MapLibreEngineImpl())
 - After OSRM route draw, `RouteOverviewController.showRouteThenDive()` shows a 2 s `LatLngBounds` overview then dives to `CameraMode.TRACKING_GPS` (zoom 17.5, tilt 55°) — do not set `TRACKING` immediately after route draw or it snaps back before the dive
 - `startFreeDrive()` removes route layer/source, resets `MapUiState`, snaps once via `snapCameraToGpsIfNeeded()` — do not re-snap on every GPS fix (causes camera twitching)
 - Free drive camera: `FREE_DRIVE_ZOOM` 17.5 / default tilt **40°** (`driving_tilt` pref, slider 20–60°) / `CameraMode.TRACKING_GPS`; full nav uses zoom 18.5 / tilt **free-drive + NAV_TILT_OFFSET** (default 40° + 15° = **55°**)
-- **Dynamic nav zoom:** while `isNavigating` and following (`!isCameraDetached`, not route overview / nav dive transition), `NavigationZoom.targetZoomForManeuverDistance()` maps puck→next-maneuver distance to zoom in `[15, navZoom]` (log curve; ≤80 m = ceiling, ≥1.5 km = floor); applied via `LocationComponent.zoomWhileTracking()` from `evaluateStepAdvancement()` — **not** during `enterNavigationCamera()` handshake; 0.2 zoom hysteresis; `setDrivingZoom()` updates ceiling only; reset in `startFreeDrive()` via `resetDynamicNavigationZoom()`
+- **Dynamic nav zoom:** while `isNavigating` and following (`!isCameraDetached`, not route overview / nav dive transition), `NavigationZoom.targetZoomForManeuverDistance()` maps puck→next-maneuver distance to zoom in `[15, navZoom]` (log curve; ≤80 m = ceiling, ≥1.5 km = floor); applied via `NavigationCameraController.applyFollowZoom()` → `zoomWhileTracking` from `evaluateStepAdvancement()` — **not** during `enterNavigationCamera()` handshake; 0.2 zoom hysteresis; `setDrivingZoom()` updates ceiling only; reset in `startFreeDrive()` via `resetDynamicNavigationZoom()`
+- **Speed follow-zoom hook (scaffold):** `LocationTrackingController` calls `updateDrivingZoomForSpeed` each GPS tick (next to lookahead padding); body stores speed + free-drive guard — **no speed curve until Turn A/B**; use `canApplyFreeDriveFollowZoom` (not nav-only helper)
 - One-time snap: `hasSnappedCameraToGps` gates `snapCameraToGpsIfNeeded()`; use `moveCamera` then `TRACKING_GPS` — do not loop animated `setCameraMode` or stale-target checks on GPS updates
 - Style-load callback calls `startFreeDrive()` after `activateLocationTracking()`; `retryLocationActivation()` must NOT call `startFreeDrive()` again (duplicate snap/twitch)
 - Enabling `CameraMode.TRACKING` at wide fallback zoom (6) locks the visual view zoomed out even when `cameraPosition.zoom` reports 14–16 — snap after location component is active

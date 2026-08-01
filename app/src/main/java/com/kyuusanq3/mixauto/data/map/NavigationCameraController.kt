@@ -3,6 +3,7 @@ package com.kyuusanq3.mixauto.data.map
 import android.content.Context
 import android.util.Log
 import com.kyuusanq3.mixauto.domain.map.MapUiState
+import com.kyuusanq3.mixauto.ui.settings.DeveloperSettings
 import com.kyuusanq3.mixauto.domain.map.SearchResultPlace
 import kotlin.math.abs
 import org.maplibre.android.camera.CameraPosition
@@ -17,7 +18,6 @@ import org.maplibre.android.maps.Style
 
 private const val TAG = "NavigationCameraController"
 private const val NAV_CAMERA_DURATION_MS = 2500
-private const val POI_PREVIEW_ZOOM = 15.5
 private const val TOP_DOWN_EXPLORE_ZOOM = 15.0
 private const val POI_PREVIEW_MAX_RETRIES = 8
 private const val POI_PREVIEW_RETRY_DELAY_MS = 50L
@@ -78,6 +78,11 @@ internal class NavigationCameraController(
 
     private var lastAppliedDynamicNavZoom: Double? = null
     private var lastDistToManeuverM: Float? = null
+    /**
+     * Last GPS speed for follow-zoom combine (Turn C); updated every tick via
+     * [updateDrivingZoomForSpeed]. Read when [NavigationZoom] gains `targetZoomForSpeed`.
+     */
+    private var lastSpeedMpsForZoom: Float = 0f
 
     private lateinit var viewportPadding: DrivingViewportPaddingController
     private lateinit var topDownPoi: TopDownPoiCameraController
@@ -121,6 +126,7 @@ internal class NavigationCameraController(
     fun resetDynamicNavigationZoom() {
         lastAppliedDynamicNavZoom = null
         lastDistToManeuverM = null
+        lastSpeedMpsForZoom = 0f
     }
 
     fun onNavZoomCeilingChanged() {
@@ -157,20 +163,40 @@ internal class NavigationCameraController(
         )
     }
 
+    /**
+     * GPS-tick entry for speed-based follow zoom (wired from [LocationTrackingController]).
+     * Stores [speedMps] for nav combine; free-drive applies [NavigationZoom.targetZoomForSpeed].
+     */
+    fun updateDrivingZoomForSpeed(speedMps: Float) {
+        lastSpeedMpsForZoom = speedMps
+        if (!canApplyFreeDriveFollowZoom()) return
+        applyFollowZoom(NavigationZoom.targetZoomForSpeed(speedMps.toDouble(), freeDriveZoom()))
+    }
+
     fun updateNavigationZoomForDistance(distanceM: Float) {
         lastDistToManeuverM = distanceM
         if (!canApplyDynamicNavigationZoom()) return
 
-        val target = NavigationZoom.targetZoomForManeuverDistance(distanceM, navZoom())
-        if (!NavigationZoom.shouldApplyZoomChange(lastAppliedDynamicNavZoom, target)) return
+        val maneuverZoom = NavigationZoom.targetZoomForManeuverDistance(distanceM, navZoom())
+        val speedZoom = NavigationZoom.targetZoomForSpeed(lastSpeedMpsForZoom.toDouble(), navZoom())
+        val target = minOf(speedZoom, maneuverZoom)
+        applyFollowZoom(target)
+    }
 
-        val map = mapLibreMap() ?: return
+    /**
+     * Single apply path for follow-mode [LocationComponent.zoomWhileTracking].
+     * Callers must already pass mode guards ([canApplyDynamicNavigationZoom] /
+     * [canApplyFreeDriveFollowZoom]).
+     */
+    private fun applyFollowZoom(target: Double): Boolean {
+        if (!NavigationZoom.shouldApplyZoomChange(lastAppliedDynamicNavZoom, target)) return false
+        val map = mapLibreMap() ?: return false
         val component = map.locationComponent
-        if (!component.isLocationComponentActivated || !component.isLocationComponentEnabled) return
-        if (component.cameraMode != CameraMode.TRACKING_GPS) return
-
+        if (!component.isLocationComponentActivated || !component.isLocationComponentEnabled) return false
+        if (component.cameraMode != CameraMode.TRACKING_GPS) return false
         component.zoomWhileTracking(target)
         lastAppliedDynamicNavZoom = target
+        return true
     }
 
     private fun canApplyDynamicNavigationZoom(): Boolean {
@@ -181,19 +207,23 @@ internal class NavigationCameraController(
             !navigationCameraTransitionActive
     }
 
+    /** Free-drive follow zoom — never reuse [canApplyDynamicNavigationZoom] (requires navigating). */
+    private fun canApplyFreeDriveFollowZoom(): Boolean {
+        if (DeveloperSettings.MANUAL_DRIVING_ZOOM) return false
+        val state = uiState()
+        return !state.isNavigating &&
+            !state.isCameraDetached &&
+            !state.isInTopDownView &&
+            !isRouteOverviewActive() &&
+            !navigationCameraTransitionActive
+    }
+
     private fun resolveNavigationZoomTarget(): Double =
         lastAppliedDynamicNavZoom ?: navZoom()
 
     private fun applyNavigationZoomCeiling() {
         if (!canApplyDynamicNavigationZoom()) return
-        val map = mapLibreMap() ?: return
-        val component = map.locationComponent
-        if (!component.isLocationComponentActivated || !component.isLocationComponentEnabled) return
-        if (component.cameraMode != CameraMode.TRACKING_GPS) return
-        val target = navZoom()
-        if (!NavigationZoom.shouldApplyZoomChange(lastAppliedDynamicNavZoom, target)) return
-        component.zoomWhileTracking(target)
-        lastAppliedDynamicNavZoom = target
+        applyFollowZoom(navZoom())
     }
 
     fun resetTopDownExploreUserAdjusted() = topDownPoi.resetTopDownExploreUserAdjusted()

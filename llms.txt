@@ -1,9 +1,11 @@
 # MixAuto package map (one line each — open topic rule / skill before deep reads)
 
-Root guide: AGENTS.md | Verify: .\scripts\verify-debug.ps1 | Tools: .\scripts\run-tool.ps1 (never python -c on Windows)
-OpenCode cold start: skill local-opencode-loop first; map bugs → local-map-triage; map features → local-map-feature; short prompts OK — no ask-loops
-Commands: /map-bug <symptom> (build) | /map-plan <symptom> (plan only)
-Map triage (bugs): .opencode/skills/local-map-triage | Map feature (implement): .opencode/skills/local-map-feature | OpenCode loop: .opencode/skills/local-opencode-loop | GitHub release (not debug): .opencode/skills/local-apk | Debug verify: .\scripts\verify-debug.ps1
+Root guide: AGENTS.md | Verify: powershell.exe -File "./scripts/verify-debug.ps1" | Tools: powershell.exe -File "./scripts/run-tool.ps1" (never python -c; never .\scripts\ in Git Bash/Zed)
+Local agent cold start: /local-opencode-loop first; map bugs → /local-map-triage or /map-bug; plan only → /map-plan (Zed Ask profile); OpenCode also uses opencode.json + .opencode/commands/
+Zed skills: .agents/skills/ (junctions to .opencode/skills/) | Slash: /map-bug /map-plan /local-map-triage /local-map-feature /local-apk
+Zed: profile MixAuto Write/Ask (no list_directory) + mixauto-qwen3-coder:30b/:14b (tools/ollama; <tool_call><function=…>) | create: .\scripts\create-mixauto-ollama-models.ps1 | notes: .zed/README.md
+Never list_directory on . (empty → stall); skill-first then grep/read_file/terminal
+OpenCode skills (same bodies): .opencode/skills/local-map-triage | local-map-feature | local-opencode-loop | local-apk
 
 ## Packages
 
@@ -21,7 +23,7 @@ data/weather/ — weather fetch (if used by HUD/settings)
 ui/map/ — MapHostViewModel (activity-scoped engine holder; keep thin)
 ui/dashboard/ — DashboardScreen, MediaPlayerPane, dock layouts (mix-auto-dashboard-ui.mdc)
 ui/components/ — map container, search, POI drawer, settings panels, overlays
-ui/settings/ — LauncherViewModel, preferences, MapDataViewModel
+ui/settings/ — LauncherViewModel, preferences, MapDataViewModel, DeveloperSettings.kt (hardcoded compile-time toggles)
 ui/theme/ — Color, CarDimensions, Type, MixAutoTheme
 ui/onboarding/ — first-run permission wizard
 ui/status/ — status bar pieces
@@ -30,7 +32,10 @@ service/ — notification listener, offline map download service
 
 ## data/map owners (do not grow MapLibreEngineImpl)
 
-MapLibreEngineImpl.kt — facade / wiring only (~1.1k; prefer collaborators); still owns NAV_TILT_OFFSET companion (live)
+MapLibreEngineImpl.kt — facade / wiring only (~1k; prefer collaborators); still owns NAV_TILT_OFFSET companion (live)
+MapOverlayIds.kt — POI/traffic/custom-pin layer IDs + resolveMapOverlayAnchorLayerId (shared constants)
+MapViewHostCoordinator.kt — MapView create/reuse, lifecycle forwards, style-load orchestration
+InitialLocationResolver.kt — cold-start GPS bootstrap before first style load
 RouteModels.kt — LegStep, RouteResult, route layer/progress constants
 PoiOverlayCoordinator.kt — POI cache, mix overlay refresh, preview layers, native poi_* visibility
 PoiSelectionController.kt — POI focus/dismiss, saved pins, custom pin, formatLatLng
@@ -56,10 +61,10 @@ SmoothingLocationEngine.kt — puck blend + extrapolation (do not split frame lo
 LocationTrackingController.kt — GPS tick chain, applyAndroidLocation, puck force
 LocationAcquisitionHelper.kt — permission/retry/poll GPS acquisition
 NavigationProgressEvaluator.kt — step advance / arrival / off-route tick (OffRouteDetector injected)
-NavigationCameraController.kt — free-drive / nav dive / cameraSessionId / zoomWhileTracking apply
+NavigationCameraController.kt — free-drive / nav dive / cameraSessionId; applyFollowZoom; updateDrivingZoomForSpeed (GPS wired; fill body for speed zoom); updateNavigationZoomForDistance
 DrivingViewportPaddingController.kt — driving padding compute/apply + dedup caches
 TopDownPoiCameraController.kt — POI preview / top-down explore camera
-NavigationZoom.kt — maneuver-distance follow zoom math (pure); extend here for new zoom formulas + tests
+NavigationZoom.kt — maneuver-distance follow zoom math (pure); append new formulas AFTER shouldApplyZoomChange + tests (Turn A); never nest inside targetZoomForManeuverDistance
 DrivingTilePrefetcher.kt — tile prefetch while driving + network gate
 PoiOverlayRenderer.kt — mix POI icon/text layers, native poi_* visibility; mix poiTextOnly* = VIEWPORT (detached pan only — hidden while navigating)
 MapStyleController.kt — style load, traffic, 3D buildings, road boost; nav label stretch → run-tool check_driving_text_pitch / fix_driving_text_pitch (layout pitch; never layer root)
@@ -68,14 +73,30 @@ OffRouteDetector.kt — parallel-street off-route confirms
 ConventionalRouteSelector.kt / NavigationRouteFetcher.kt — OSRM conventional + fetch
 OfflineMapRepository.kt — offline tile catalog + public download/pause/delete API (session extracted)
 
+## ui/components (destination search)
+
+NavigationSearchOverlay.kt — NavigationSearchContent panel shell (query, lists, loading)
+VoiceDestinationSearch.kt — SpeechRecognizer + mic permission + rememberVoiceSearch
+SearchPlaceHelpers.kt — SearchResultRow, distance/dedup helpers, saved-place filter
+
+## ui/dashboard (media / album art)
+
+MediaPlayerPane.kt — now-playing shell + album-art gestures (pointerInput stays here)
+MediaPlayerIdleArt.kt — idle manual-link / default-player art + launchManualFallbackLink
+MediaTransportControls.kt — SourceAppButton, MediaControlButton, GestureHintDialog
+AlbumArtDisplay.kt — AlbumArtMode enum, PlainAlbumArt, AlbumArtModePicker router
+AlbumArtVinyl.kt — VinylAlbumArt spinning record overlay
+AlbumArtVisualizer.kt — VisualizerAlbumArt, DockMiniVisualizer, spectrum bar math
+
 ## Agent habits
 
-- Load one topic rule or skill per task (OpenCode: open .mdc by path; globs may not auto-load)
+- Load one topic rule or skill per task (OpenCode/Zed: open .mdc by path; globs may not auto-load; re-read line ranges if outline-only)
 - Files >~300 lines: grep / signature skim first; full-read only the edit target
 - New collaborators: prefer <~300 lines; cohesive ~350 OK if split breaks a bug class — no hard 150-line rewrite of existing debt
 - Explicit return types on new public/internal APIs; no mass-annotate private helpers
 - Never claim success without BUILD SUCCESSFUL or MIXAUTO_VERIFY_DONE exit=0
 - Gradle done = done: BUILD SUCCESSFUL / BUILD FAILED / MIXAUTO_VERIFY_DONE in stream/metadata OR repo-root MIXAUTO_VERIFY_DONE.txt means finished even if bash UI still shows Running — do not re-run
-- Verify command: .\scripts\verify-debug.ps1 alone (no cd, no &&); stamp file is gitignored
-- Label pitch recipes: .\scripts\run-tool.ps1 check_driving_text_pitch / fix_driving_text_pitch — never python -c / temp_fix.py / indent=2 on driving JSON
+- Verify: powershell.exe -File "./scripts/verify-debug.ps1" (Zed/Git Bash) or ./scripts/verify-debug.ps1 (native PowerShell); never .\scripts\ under bash; stamp file is gitignored
+- Label pitch: powershell.exe -File "./scripts/run-tool.ps1" check_driving_text_pitch / fix_driving_text_pitch — never python -c / temp_fix.py / indent=2 on driving JSON
 - MapLibre tilt: 0° = overhead; higher = more pitched; overhead request → decrease tilt or NAV_TILT_OFFSET; more nav pitch → increase NAV_TILT_OFFSET; report nav = freeDriveTilt + NAV_TILT_OFFSET (not free-drive alone)
+- Follow zoom (speed + nearer turn): stage Turns A→B→C via local-map-feature recipe; GPS already calls updateDrivingZoomForSpeed; free-drive guards = canApplyFreeDriveFollowZoom (not canApplyDynamicNavigationZoom)

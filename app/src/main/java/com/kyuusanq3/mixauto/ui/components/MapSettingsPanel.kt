@@ -26,6 +26,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.kyuusanq3.mixauto.domain.map.CarMapEngine
 import com.kyuusanq3.mixauto.ui.settings.LauncherPreferences
+import com.kyuusanq3.mixauto.ui.settings.DeveloperSettings
 import com.kyuusanq3.mixauto.ui.settings.LauncherViewModel
 import com.kyuusanq3.mixauto.ui.settings.MapDataViewModel
 import com.kyuusanq3.mixauto.ui.theme.CarBodyText
@@ -342,27 +343,29 @@ private fun DrivingViewSettingsSection(
             )
         }
 
-        Column(
-            modifier = Modifier.fillMaxWidth(),
-            verticalArrangement = Arrangement.spacedBy(4.dp),
-        ) {
-            CarBodyText(
-                text = "Zoom",
-                style = MaterialTheme.typography.bodyLarge,
-            )
-            Slider(
-                value = drivingZoom.coerceIn(MIN_DRIVING_ZOOM_SLIDER, MAX_DRIVING_ZOOM_SLIDER),
-                onValueChange = onDrivingZoomChange,
-                valueRange = MIN_DRIVING_ZOOM_SLIDER..MAX_DRIVING_ZOOM_SLIDER,
-                steps = DRIVING_ZOOM_SLIDER_STEPS,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(CarDimensions.MinTapTarget),
-            )
-            CarLabelText(
-                text = "Zoom ${"%.1f".format(drivingZoom)}",
-                style = MaterialTheme.typography.labelMedium,
-            )
+        if (DeveloperSettings.MANUAL_DRIVING_ZOOM) {
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                CarBodyText(
+                    text = "Zoom",
+                    style = MaterialTheme.typography.bodyLarge,
+                )
+                Slider(
+                    value = drivingZoom.coerceIn(MIN_DRIVING_ZOOM_SLIDER, MAX_DRIVING_ZOOM_SLIDER),
+                    onValueChange = onDrivingZoomChange,
+                    valueRange = MIN_DRIVING_ZOOM_SLIDER..MAX_DRIVING_ZOOM_SLIDER,
+                    steps = DRIVING_ZOOM_SLIDER_STEPS,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(CarDimensions.MinTapTarget),
+                )
+                CarLabelText(
+                    text = "Zoom ${"%.1f".format(drivingZoom)}",
+                    style = MaterialTheme.typography.labelMedium,
+                )
+            }
         }
 
         Column(

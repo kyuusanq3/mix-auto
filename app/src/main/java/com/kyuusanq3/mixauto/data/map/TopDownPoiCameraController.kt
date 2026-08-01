@@ -10,7 +10,6 @@ import org.maplibre.android.maps.MapLibreMap
 import org.maplibre.android.maps.MapView
 import org.maplibre.android.maps.Style
 
-private const val POI_PREVIEW_ZOOM = 15.5
 private const val TOP_DOWN_EXPLORE_ZOOM = 15.0
 private const val POI_PREVIEW_MAX_RETRIES = 8
 private const val POI_PREVIEW_RETRY_DELAY_MS = 50L

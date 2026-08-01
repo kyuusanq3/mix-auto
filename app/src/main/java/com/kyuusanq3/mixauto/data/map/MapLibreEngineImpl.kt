@@ -93,12 +93,6 @@ import kotlin.math.min
 import kotlin.math.roundToInt
 import kotlin.math.sin
 
-private data class ResolvedLocation(
-    val latLng: LatLng,
-    val zoom: Double,
-    val fromGps: Boolean,
-)
-
 class MapLibreEngineImpl(
     private val localPlaces: LocalPlacesRepository? = null,
     private val encounteredPlaces: EncounteredPlacesRepository? = null,
@@ -156,12 +150,12 @@ class MapLibreEngineImpl(
         savedPlacesLayerId = SAVED_PLACES_LAYER_ID,
         vectorPoiLayerIds = VECTOR_POI_LAYER_IDS,
         minPoiZoom = MIN_POI_ZOOM,
-        resolveAnchorLayerId = { style -> resolveMapOverlayAnchorLayerId(style) },
+        resolveAnchorLayerId = ::resolveMapOverlayAnchorLayerId,
     )
 
     private val routeRenderer by lazy {
         RouteRenderer(
-            resolveAnchorLayerId = { style -> resolveMapOverlayAnchorLayerId(style) },
+            resolveAnchorLayerId = ::resolveMapOverlayAnchorLayerId,
             ensurePuckAboveOverlays = { locationTracking.ensurePuckAboveOverlays() },
         )
     }
@@ -172,7 +166,7 @@ class MapLibreEngineImpl(
         savedPlacesLayerId = SAVED_PLACES_LAYER_ID,
         poiLayerId = POI_LAYER_ID,
         pinHitRadiusDp = MAP_PIN_ICON_HIT_RADIUS_DP,
-        resolveAnchorLayerId = { style -> resolveMapOverlayAnchorLayerId(style) },
+        resolveAnchorLayerId = ::resolveMapOverlayAnchorLayerId,
     )
 
     private var mapView: MapView? = null
@@ -270,9 +264,9 @@ class MapLibreEngineImpl(
             setLastKnownLocation = { lastKnownLocation = it },
             mapLibreMap = { mapLibreMap },
             appContext = { appContext },
-            hasLocationPermission = ::hasLocationPermission,
-            readLastKnownLocation = ::readLastKnownLocation,
-            refreshLocationOnly = ::refreshLocationOnly,
+            hasLocationPermission = { ctx -> locationTracking.hasLocationPermission(ctx) },
+            readLastKnownLocation = { ctx -> locationTracking.readLastKnownLocation(ctx) },
+            refreshLocationOnly = { ctx -> locationTracking.refreshLocationOnly(ctx) },
         )
     }
 
@@ -312,18 +306,21 @@ class MapLibreEngineImpl(
             getLastKnownLocation = { lastKnownLocation },
             setLastKnownLocation = { lastKnownLocation = it },
             resolveMapViewOrigin = ::resolveMapViewOrigin,
-            beginLocationAcquisition = ::beginLocationAcquisition,
-            readLastKnownLocation = ::readLastKnownLocation,
-            hasLocationPermission = ::hasLocationPermission,
+            beginLocationAcquisition = { ctx -> locationTracking.beginLocationAcquisition(ctx) },
+            readLastKnownLocation = { ctx -> locationTracking.readLastKnownLocation(ctx) },
+            hasLocationPermission = { ctx -> locationTracking.hasLocationPermission(ctx) },
             updateLocationEngineInterval = ::updateLocationEngineInterval,
             clearForcedPreviewPoi = poiOverlayCoordinator::clearForcedPreviewPoi,
             clearPoiLayer = poiOverlayCoordinator::clearPoiLayer,
             clearCustomPin = { poiSelectionController.clearCustomPin() },
-            clearRoutePreviewState = ::clearRoutePreviewState,
+            clearRoutePreviewState = {
+                navigationCamera.clearPoiPreviewState()
+                navigationCamera.cancelTopDownViewportSync()
+            },
             hideNativeVectorPoiLayers = poiOverlayCoordinator::hideNativeVectorPoiLayers,
             drawRoute = ::drawRoute,
             showRouteThenDive = routeOverviewController::showRouteThenDive,
-            enterNavigationCamera = ::enterNavigationCamera,
+            enterNavigationCamera = navigationCamera::enterNavigationCamera,
         )
     }
 
@@ -340,7 +337,7 @@ class MapLibreEngineImpl(
             focusOnPoi = ::focusOnPoi,
             switchToLighterTrafficAlternate = ::switchToLighterTrafficAlternate,
             placeCustomPin = poiSelectionController::placeCustomPin,
-            animateTopDownCamera = ::animateTopDownCamera,
+            animateTopDownCamera = navigationCamera::animateTopDownCamera,
             clearPoiOverlay = poiOverlayCoordinator::clearPoiOverlay,
             mergeIntoPoiCache = poiOverlayCoordinator::mergeIntoPoiCache,
             trimPoiCacheToMax = poiOverlayCoordinator::trimPoiCacheToMax,
@@ -409,7 +406,7 @@ class MapLibreEngineImpl(
             savedPlacesKeys = { savedPlacesKeys },
             poiOverlayRenderer = poiOverlayRenderer,
             poiQueryCoordinator = { poiQueryRef!! },
-            resolveMapOverlayAnchorLayerId = ::resolveMapOverlayAnchorLayerId,
+            resolveMapOverlayAnchorLayerId = ::resolveMapOverlayAnchorLayerId, // MapOverlayIds.kt
             poiLayerId = POI_LAYER_ID,
             poiLabelLayerId = POI_LABEL_LAYER_ID,
             savedPlacesLayerId = SAVED_PLACES_LAYER_ID,
@@ -459,7 +456,10 @@ class MapLibreEngineImpl(
             clearNavigationCameraTransitionActive = { navRef!!.clearNavigationCameraTransitionActive() },
             setNavigationCameraTransitionActive = { navRef!!.setNavigationCameraTransitionActive(it) },
             enterNavigationCamera = { navRef!!.enterNavigationCamera() },
-            clearRoutePreviewState = ::clearRoutePreviewState,
+            clearRoutePreviewState = {
+                navRef!!.clearPoiPreviewState()
+                navRef!!.cancelTopDownViewportSync()
+            },
             cancelDrivingTilePrefetch = { drivingTilePrefetcher?.cancel() },
             routeOverviewAnimationMs = ROUTE_OVERVIEW_ANIMATION_MS,
             routeOverviewHoldMs = ROUTE_OVERVIEW_HOLD_MS,
@@ -553,6 +553,9 @@ class MapLibreEngineImpl(
             updateNavigationZoomForDistance = { distanceM ->
                 navRef!!.updateNavigationZoomForDistance(distanceM)
             },
+            updateDrivingZoomForSpeed = { speedMps ->
+                navRef!!.updateDrivingZoomForSpeed(speedMps)
+            },
         )
         routeOverviewController = routeOverviewRef!!
         navigationCamera = navRef!!
@@ -572,7 +575,7 @@ class MapLibreEngineImpl(
             setSavedPlacesCache = { savedPlacesCache = it },
             setSavedPlacesKeys = { savedPlacesKeys = it },
             lastKnownLocation = { lastKnownLocation },
-            animateTopDownCamera = ::animateTopDownCamera,
+            animateTopDownCamera = navigationCamera::animateTopDownCamera,
             emptyCustomPinGeoJson = EMPTY_CUSTOM_PIN_GEOJSON,
             nearbyPinDedupThresholdM = NEARBY_PIN_DEDUP_THRESHOLD_M,
             poiPreviewZoom = POI_PREVIEW_ZOOM,
@@ -606,60 +609,87 @@ class MapLibreEngineImpl(
                 navigationSessionCoordinator.clearLighterTrafficAlternate()
             },
             clearCustomPin = { poiSelectionController.clearCustomPin() },
-            clearRoutePreviewState = ::clearRoutePreviewState,
+            clearRoutePreviewState = {
+                navigationCamera.clearPoiPreviewState()
+                navigationCamera.cancelTopDownViewportSync()
+            },
             stopDeadReckoning = ::stopDeadReckoning,
             updateLocationEngineInterval = ::updateLocationEngineInterval,
             withMapStyle = { block -> withMapStyle(block) },
-            enterNavigationCamera = ::enterNavigationCamera,
+            enterNavigationCamera = navigationCamera::enterNavigationCamera,
             isNavigating = { _uiState.value.isNavigating },
         )
     }
 
-    override fun createMapView(context: Context): View {
-        mapView?.let { existing ->
-            mapReleased = false
-            (existing.parent as? ViewGroup)?.removeView(existing)
-            return existing
-        }
-
-        if (!mapLibreInitialized) {
-            MapLibreAppBootstrap.ensureInitialized(context)
-            mapLibreInitialized = true
-        }
-
-        appContext = context.applicationContext
-        drivingTilePrefetcher = DrivingTilePrefetcher(context.applicationContext, engineScope)
-        resolveInitialLocation(context)
-
-        return MapView(context).also { view ->
-            mapReleased = false
-            view.onCreate(null)
-            view.onStart()
-            view.onResume()
-            view.addOnLayoutChangeListener { v, _, _, _, _, _, _, _, _ ->
-                if (v.width <= 0 || v.height <= 0) return@addOnLayoutChangeListener
-                mapLibreMap?.let { map ->
-                    view.post { navigationCamera.handleMapLayoutChange(map) }
-                }
-            }
-            view.getMapAsync { map ->
-                mapLibreMap = map
-                mapStyleController.configureMapUiChrome(map, context)
-                map.addOnCameraMoveStartedListener { reason ->
-                    if (reason == MapLibreMap.OnCameraMoveStartedListener.REASON_API_GESTURE) {
-                        _uiState.update { it.copy(isCameraDetached = true) }
-                        navigationCamera.onCameraGestureStarted(map)
-                        stopDeadReckoning()
-                        locationTracking.resetSmoothingMotion()
-                        withMapStyle { poiOverlayCoordinator.syncPoiOverlayVisibility(it) }
+    private val mapViewHost by lazy {
+        MapViewHostCoordinator(
+            getMapView = { mapView },
+            setMapView = { mapView = it },
+            getMapLibreMap = { mapLibreMap },
+            setMapLibreMap = { mapLibreMap = it },
+            isMapReleased = { mapReleased },
+            setMapReleased = { mapReleased = it },
+            isMapLibreInitialized = { mapLibreInitialized },
+            setMapLibreInitialized = { mapLibreInitialized = it },
+            useVectorTiles = { useVectorTiles },
+            show3dBuildings = { show3dBuildings },
+            trafficEnabled = { trafficEnabled },
+            tomTomApiKey = { tomTomApiKey },
+            getPendingLocationActivation = { pendingLocationActivation },
+            setPendingLocationActivation = { pendingLocationActivation = it },
+            getHasSnappedCameraToGps = { hasSnappedCameraToGps },
+            setHasSnappedCameraToGps = { hasSnappedCameraToGps = it },
+            savedPlacesCache = { savedPlacesCache },
+            onPrepareHost = { context ->
+                appContext = context.applicationContext
+                drivingTilePrefetcher = DrivingTilePrefetcher(context.applicationContext, engineScope)
+                InitialLocationResolver.applyBootstrapLocation(
+                    context = context,
+                    freeDriveZoom = freeDriveZoom,
+                    hasLocationPermission = { ctx -> locationTracking.hasLocationPermission(ctx) },
+                    readLastKnownLocation = { ctx -> locationTracking.readLastKnownLocation(ctx) },
+                    onGpsFix = { location ->
+                        lastKnownLocation = location
+                        _uiState.update {
+                            it.copy(
+                                streetName = "Locating...",
+                                currentLat = location.latitude,
+                                currentLng = location.longitude,
+                            )
+                        }
+                    },
+                )
+            },
+            onCameraGestureStarted = { map ->
+                _uiState.update { it.copy(isCameraDetached = true) }
+                navigationCamera.onCameraGestureStarted(map)
+                stopDeadReckoning()
+                locationTracking.resetSmoothingMotion()
+                withMapStyle { poiOverlayCoordinator.syncPoiOverlayVisibility(it) }
+            },
+            configureMapUiChrome = mapStyleController::configureMapUiChrome,
+            registerPoiInteractions = mapInteractionController::registerPoiInteractions,
+            activateLocationTracking = locationTracking::activateLocationTracking,
+            hasLocationPermission = locationTracking::hasLocationPermission,
+            beginLocationAcquisition = locationTracking::beginLocationAcquisition,
+            configureDrivingTilePrefetch = mapStyleController::configureDrivingTilePrefetch,
+            startFreeDrive = ::startFreeDrive,
+            applyAutomotiveRoadBoost = mapStyleController::applyAutomotiveRoadBoost,
+            applyTrafficOverlay = mapStyleController::applyTrafficOverlay,
+            apply3dBuildingVisibility = mapStyleController::apply3dBuildingVisibility,
+            updateSavedPlacesLayer = poiOverlayCoordinator::updateSavedPlacesLayer,
+            handleMapLayoutChange = navigationCamera::handleMapLayoutChange,
+            refreshLocationOnResume = {
+                appContext?.let { context ->
+                    if (locationTracking.hasLocationPermission(context)) {
+                        locationTracking.refreshLocationOnly(context)
                     }
                 }
-                mapInteractionController.registerPoiInteractions(map)
-                applyMapStyle(map, context)
-            }
-            mapView = view
-        }
+            },
+        )
     }
+
+    override fun createMapView(context: Context): View = mapViewHost.createMapView(context)
 
     override fun setMapStyle(useVectorTiles: Boolean) {
         val map = mapLibreMap ?: return
@@ -668,7 +698,7 @@ class MapLibreEngineImpl(
         this.useVectorTiles = useVectorTiles
 
         drivingTilePrefetcher?.cancel()
-        resetSmoothingMotion()
+        locationTracking.resetSmoothingMotion()
         poiRefreshJob?.cancel()
         poiRefreshJob = null
         encounteredPlacesSampler.cancel()
@@ -691,7 +721,7 @@ class MapLibreEngineImpl(
             )
         }
 
-        applyMapStyle(map, ctx)
+        mapViewHost.applyMapStyle(map, ctx)
     }
 
     override fun setShow3dBuildings(show: Boolean) {
@@ -780,73 +810,13 @@ class MapLibreEngineImpl(
         mapTapDismissHandler = handler
     }
 
-    /**
-     * Push puck position when it materially moved. LocationComponent already receives engine
-     * updates in free drive â€” extra forceLocationUpdate calls race MapLibre's RenderThread and
-     * can SIGSEGV on the emulator (fault addr 0x30 in MapRenderer::render).
-     */
-    private fun pushPuckLocationIfNeeded(location: Location, force: Boolean = false) {
-        locationTracking.pushPuckLocationIfNeeded(location, force)
-    }
+    override fun onStart() = mapViewHost.onStart()
 
-    private fun forceLocationUpdateForImmediateRender(
-        map: MapLibreMap,
-        bypassThrottle: Boolean = false,
-        allowDuringSmoothing: Boolean = false,
-    ) {
-        locationTracking.forceLocationUpdateForImmediateRender(map, bypassThrottle, allowDuringSmoothing)
-    }
+    override fun onResume() = mapViewHost.onResume()
 
-    private fun resetSmoothingMotion() {
-        locationTracking.resetSmoothingMotion()
-    }
+    override fun onPause() = mapViewHost.onPause()
 
-    private fun applyMapStyle(map: MapLibreMap, context: Context) {
-        val builder = if (useVectorTiles) {
-            Style.Builder().fromUri(MapStyleConstants.VECTOR_STYLE_URI)
-        } else {
-            Style.Builder().fromJson(MapStyleConstants.OSM_STYLE_JSON)
-        }
-
-        map.setStyle(builder) { style ->
-            PoiIconFactory.createAllIcons(context).forEach { (id, bitmap) ->
-                style.addImage(id, bitmap)
-            }
-            locationTracking.activateLocationTracking(map, style)
-            mapStyleController.configureDrivingTilePrefetch(map, context, useVectorTiles)
-            if (pendingLocationActivation && locationTracking.hasLocationPermission(context)) {
-                locationTracking.beginLocationAcquisition(context)
-                pendingLocationActivation = false
-            }
-            hasSnappedCameraToGps = false
-            startFreeDrive()
-            mapStyleController.applyAutomotiveRoadBoost(style, useVectorTiles)
-            mapStyleController.applyTrafficOverlay(style, trafficEnabled, tomTomApiKey)
-            mapStyleController.apply3dBuildingVisibility(style, show3dBuildings)
-            poiOverlayCoordinator.updateSavedPlacesLayer(savedPlacesCache)
-        }
-    }
-
-    override fun onStart() {
-        mapView?.onStart()
-    }
-
-    override fun onResume() {
-        mapView?.onResume()
-        appContext?.let { context ->
-            if (hasLocationPermission(context)) {
-                refreshLocationOnly(context)
-            }
-        }
-    }
-
-    override fun onPause() {
-        mapView?.onPause()
-    }
-
-    override fun onStop() {
-        mapView?.onStop()
-    }
+    override fun onStop() = mapViewHost.onStop()
 
     override fun onDestroy() {
         mapReleased = true
@@ -863,9 +833,7 @@ class MapLibreEngineImpl(
         locationTracking.onDestroy()
         drivingTilePrefetcher?.cancel()
         drivingTilePrefetcher = null
-        mapView?.onDestroy()
-        mapView = null
-        mapLibreMap = null
+        mapViewHost.destroyMapView()
         hasSnappedCameraToGps = false
         appContext = null
     }
@@ -919,9 +887,9 @@ class MapLibreEngineImpl(
             return
         }
         val ctx = appContext ?: return
-        if (!hasLocationPermission(ctx)) return
+        if (!locationTracking.hasLocationPermission(ctx)) return
 
-        refreshLocationOnly(ctx)
+        locationTracking.refreshLocationOnly(ctx)
 
         val map = mapLibreMap
         if (map != null) {
@@ -999,23 +967,6 @@ class MapLibreEngineImpl(
         navigationSessionCoordinator.clearLighterTrafficAlternate()
     }
 
-    private fun resolveMapOverlayAnchorLayerId(style: Style): String? {
-        return when {
-            style.getLayer(TRAFFIC_LAYER_ID) != null -> TRAFFIC_LAYER_ID
-            style.getLayer(RASTER_BASE_LAYER_ID) != null -> RASTER_BASE_LAYER_ID
-            style.getLayer("poi_transit") != null -> "poi_transit"
-            style.getLayer("road_motorway") != null -> "road_motorway"
-            else -> null
-        }
-    }
-
-    private fun isMapAlive(): Boolean = !mapReleased && mapLibreMap != null
-
-    private inline fun runIfMapAlive(block: () -> Unit) {
-        if (!isMapAlive()) return
-        block()
-    }
-
     private inline fun withMapStyle(crossinline block: (Style) -> Unit) {
         val map = mapLibreMap ?: return
         if (mapReleased) return
@@ -1052,106 +1003,8 @@ class MapLibreEngineImpl(
         )
     }
 
-    private fun resolveInitialLocation(context: Context): ResolvedLocation {
-        if (!hasLocationPermission(context)) {
-            Log.d(TAG, "Location permission not granted; using Philippines fallback")
-            return ResolvedLocation(
-                latLng = SEARCH_DEFAULT_LOCATION,
-                zoom = DEFAULT_ZOOM_FALLBACK,
-                fromGps = false,
-            )
-        }
-
-        val location = readLastKnownLocation(context)
-        return if (location != null) {
-            lastKnownLocation = location
-            _uiState.update {
-                it.copy(
-                    streetName = "Locating...",
-                    currentLat = location.latitude,
-                    currentLng = location.longitude,
-                )
-            }
-            ResolvedLocation(
-                latLng = location,
-                zoom = freeDriveZoom,
-                fromGps = true,
-            )
-        } else {
-            Log.d(TAG, "No last known location; using Philippines fallback until GPS fix")
-            ResolvedLocation(
-                latLng = SEARCH_DEFAULT_LOCATION,
-                zoom = DEFAULT_ZOOM_FALLBACK,
-                fromGps = false,
-            )
-        }
-    }
-
-    private fun animateTopDownCamera(lat: Double, lng: Double, zoom: Double, exploreMode: Boolean = false) {
-        navigationCamera.animateTopDownCamera(lat, lng, zoom, exploreMode)
-    }
-
-    private fun clearRoutePreviewState() {
-        navigationCamera.clearPoiPreviewState()
-        navigationCamera.cancelTopDownViewportSync()
-    }
-
-    private fun applyPuckPaddingUpdate(map: MapLibreMap, bypassRenderThrottle: Boolean = false) {
-        navigationCamera.applyPuckPaddingUpdate(map, bypassRenderThrottle)
-    }
-
-    private fun clearViewportPaddingForPreview(map: MapLibreMap) =
-        navigationCamera.clearViewportPaddingForPreview(map)
-
-    private fun scheduleFreeDrivePaddingRestore(map: MapLibreMap) =
-        navigationCamera.scheduleFreeDrivePaddingRestore(map)
-
-    private fun resolveFreeDriveTarget(map: MapLibreMap): LatLng? =
-        navigationCamera.resolveFreeDriveTarget(map)
-
-    private fun activateFreeDriveTrackingMode(map: MapLibreMap) =
-        navigationCamera.activateFreeDriveTrackingMode(map)
-
-    private fun snapCameraToGpsIfNeeded(latLng: LatLng) = navigationCamera.snapCameraToGpsIfNeeded(latLng)
-
-    private fun enterNavigationCamera() = navigationCamera.enterNavigationCamera()
-
-    private fun invalidateDrivingPaddingCache() = navigationCamera.invalidateDrivingPaddingCache()
-
-    private fun applyDrivingViewportPadding(map: MapLibreMap) = navigationCamera.applyDrivingViewportPadding(map)
-
-    private fun applyDrivingTrackingPadding(map: MapLibreMap) = navigationCamera.applyDrivingTrackingPadding(map)
-
-    private fun shouldSmoothPuckMotion(): Boolean = locationTracking.shouldSmoothPuckMotion()
-
-    private fun beginLocationAcquisition(context: Context) = locationTracking.beginLocationAcquisition(context)
-
-    private fun refreshLocationOnly(context: Context) = locationTracking.refreshLocationOnly(context)
-
-    private fun hasLocationPermission(context: Context): Boolean =
-        locationTracking.hasLocationPermission(context)
-
-    private fun readLastKnownLocation(context: Context): LatLng? =
-        locationTracking.readLastKnownLocation(context)
-
     companion object {
-        private const val TAG = "MapLibreEngineImpl"
-        /** Every layer id the LocationComponent (puck) can render, used to keep overlays below it. */
-        private val PUCK_LAYER_IDS = setOf(
-            LocationComponentConstants.SHADOW_LAYER,
-            LocationComponentConstants.BACKGROUND_LAYER,
-            LocationComponentConstants.FOREGROUND_LAYER,
-            LocationComponentConstants.BEARING_LAYER,
-            LocationComponentConstants.ACCURACY_LAYER,
-            LocationComponentConstants.PULSING_CIRCLE_LAYER,
-        )
-        private const val MAP_UI_MARGIN_DP = 8f
-        /** MapLibre logo width (~92 dp) plus a small gap before the â„¹ button. */
-        private const val ATTRIBUTION_LEFT_MARGIN_DP = 98f
-        private const val DEFAULT_ZOOM = 15.0
-        private const val DEFAULT_ZOOM_FALLBACK = 6.0
         private const val ROUTING_MIN_ZOOM = 10.0
-        private const val NAV_CAMERA_DURATION_MS = 2500
         /**
          * Live owner: nav-vs-freeDrive pitch delta. Formula:
          * `navTilt = freeDriveTilt + NAV_TILT_OFFSET` (wired in [setDrivingTilt] and init).
@@ -1159,63 +1012,7 @@ class MapLibreEngineImpl(
          * (it only applies the injected [navTilt] callback).
          */
         private const val NAV_TILT_OFFSET = 15.0
-        private const val POI_PREVIEW_ZOOM = 15.5
-        /** Top-down explore view centered on puck (CropFree button). */
-        private const val TOP_DOWN_EXPLORE_ZOOM = 15.0
-        private const val POI_PREVIEW_MAX_RETRIES = 8
-        private const val POI_PREVIEW_RETRY_DELAY_MS = 50L
-        private const val NEARBY_PIN_DEDUP_THRESHOLD_M = 50f
-        private const val RASTER_BASE_LAYER_ID = "osm"
-        private const val TRAFFIC_SOURCE_ID = "mix-traffic-source"
-        private const val TRAFFIC_LAYER_ID = "mix-traffic-layer"
-        private const val OFF_ROUTE_GRACE_AFTER_MANEUVER_MS = 8_000L
         private const val ROUTE_OVERVIEW_ANIMATION_MS = 2000
         private const val ROUTE_OVERVIEW_HOLD_MS = 10_000L
-        private const val FRESH_LOCATION_MIN_TIME_MS = 500L
-        private const val LOCATION_FIX_DEDUP_TIME_MS = 50L
-        private const val PUCK_PUSH_MIN_DIST_M = 3f
-        private const val FORCE_PUCK_RENDER_MIN_MS = 400L
-        private const val UI_STATE_COORD_THROTTLE_MS = 1000L
-        private const val UI_STATE_COORD_MIN_MOVE_M = 20f
-        private const val LOCATION_POLL_INTERVAL_MS = 1000L
-        private const val LOCATION_POLL_ATTEMPTS = 15
-        private const val LOCATION_ACQUIRE_TIMEOUT_MS = 8000L
-        private val LOCATION_RETRY_DELAYS_MS = longArrayOf(1_000L, 3_000L, 8_000L)
-        private val VECTOR_POI_LAYER_IDS = arrayOf("poi_r1", "poi_r7", "poi_r20", "poi_transit")
-        private const val POI_SOURCE_ID = "mix-poi-source"
-        private const val POI_LAYER_ID = "mix-poi-layer"
-        private const val POI_LABEL_LAYER_ID = "mix-poi-label-layer"
-        private const val PREVIEW_POI_SOURCE_ID = "mix-preview-poi-source"
-        private const val PREVIEW_POI_LAYER_ID = "mix-preview-poi-layer"
-        private const val PREVIEW_POI_LABEL_LAYER_ID = "mix-preview-poi-label-layer"
-        private const val CUSTOM_PIN_SOURCE_ID = "mix-custom-pin-source"
-        private const val CUSTOM_PIN_LAYER_ID = "mix-custom-pin-layer"
-        private const val SAVED_PLACES_SOURCE_ID = "mix-saved-source"
-        private const val SAVED_PLACES_LAYER_ID = "mix-saved-layer"
-        private const val MIN_POI_ZOOM = 13.0
-        private const val MAX_POI_PINS = 100
-        private const val POI_CACHE_SEARCH_LIMIT = 15
-        private const val NEARBY_POI_SUGGESTION_LIMIT = 20
-        private const val POI_DEBOUNCE_MS = 400L
-        private const val ENCOUNTER_NEARBY_RADIUS_M = 10_000f
-        private const val NEARBY_SEARCH_BBOX_DELTA = 0.5 // aligned with LocalPlacesRepository text-search bbox
-        private const val BBOX_PADDING_FACTOR = 1.5
-        private const val PHOTON_MOVE_THRESHOLD_M = 300f
-        private const val MAP_TAP_NEAREST_POI_MAX_M = 500f
-        /** Screen-space hit radius for compact 24 dp circular POI icons. */
-        private const val MAP_PIN_ICON_HIT_RADIUS_DP = 20f
-        private const val EMPTY_POI_GEOJSON = """{"type":"FeatureCollection","features":[]}"""
-        private const val EMPTY_CUSTOM_PIN_GEOJSON = """{"type":"FeatureCollection","features":[]}"""
-        private const val METERS_PER_DEGREE_LAT = 111_320.0
-        private const val STEP_ADVANCE_THRESHOLD_M = 25f
-        private const val ARRIVAL_THRESHOLD_M = 15f
-        private const val DEDUP_THRESHOLD_M = 50f
-        private const val MAX_SEARCH_RADIUS_M = 500_000f
-        private const val ARRIVAL_FREE_DRIVE_DELAY_MS = 5_000L
-        private const val DRIVING_PREFETCH_ZOOM_DELTA = 3
-        private const val AMBIENT_CACHE_MAX_BYTES = 256L * 1024L * 1024L
-        private const val LOCATION_ENGINE_INTERVAL_MS = 750L
-        private const val LOCATION_ENGINE_FASTEST_INTERVAL_MS = 500L
-        private const val DRIVING_ANIMATION_FPS = 60
     }
 }

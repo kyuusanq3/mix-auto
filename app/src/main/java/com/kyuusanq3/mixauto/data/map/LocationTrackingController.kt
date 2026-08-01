@@ -35,7 +35,6 @@ import org.maplibre.android.maps.MapLibreMap
 import org.maplibre.android.maps.Style
 
 private const val TAG = "LocationTrackingController"
-private const val TRAFFIC_LAYER_ID = "mix-traffic-layer"
 private const val FRESH_LOCATION_MIN_TIME_MS = 500L
 private const val LOCATION_FIX_DEDUP_TIME_MS = 50L
 private const val PUCK_PUSH_MIN_DIST_M = 3f
@@ -110,6 +109,7 @@ internal class LocationTrackingController(
     private val ensureTopDownCameraDetached: (MapLibreMap) -> Unit,
     private val maybePrefetchDrivingTiles: (Location) -> Unit,
     private val updateNavigationZoomForDistance: (Float) -> Unit,
+    private val updateDrivingZoomForSpeed: (Float) -> Unit,
 ) {
     private var locationEngine: LocationEngine? = null
     private var rawLocationEngine: LocationEngine? = null
@@ -460,6 +460,7 @@ internal class LocationTrackingController(
         val newSpeedMps = if (displayLocation.hasSpeed()) displayLocation.speed else lastDrivingSpeedMps
         updateLookaheadPaddingState(newSpeedMps)
         lastDrivingSpeedMps = newSpeedMps
+        updateDrivingZoomForSpeed(newSpeedMps)
         mapLibreMap()?.let { map ->
             if (!uiState().isCameraDetached) {
                 maybeApplyDrivingPaddingForSpeedChange(map)
