@@ -87,4 +87,5 @@ internal data class RouteResult(
     val durationSeconds: Double = 0.0,
     val distanceMeters: Double = 0.0,
     val trafficDelaySeconds: Int = 0,
+    val trafficSections: List<TomTomTrafficSection> = emptyList(),
 )

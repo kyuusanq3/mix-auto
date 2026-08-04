@@ -47,6 +47,7 @@ internal object LighterTrafficHelper {
             durationSeconds = tt.travelTimeSeconds.toDouble(),
             distanceMeters = tt.distanceMeters,
             trafficDelaySeconds = tt.trafficDelaySeconds,
+            trafficSections = tt.trafficSections,
         )
     }
 

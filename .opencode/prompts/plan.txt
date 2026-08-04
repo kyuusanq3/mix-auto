@@ -5,6 +5,7 @@ FIRST tool calls:
 If map/puck/label/tilt/nav camera symptoms:
   skill({ name: "local-map-triage" })
 Then grep/read ≤3 owners (hit context; line ranges if outline-only). Do NOT ask the user which file/area to check.
+Owner paths from grep / llms.txt / AGENTS.md only — never invent package folders.
 
 ONE primary class. If user listed two bugs, pick one and mark the other deferred in Hypothesis.
 

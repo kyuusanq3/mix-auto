@@ -32,6 +32,7 @@ internal class NavigationSessionCoordinator(
     private val navigationVoice: () -> NavigationVoiceController?,
     private val getRouteGeometryPoints: () -> List<LatLng>,
     private val setRouteGeometryPoints: (List<LatLng>) -> Unit,
+    private val setRouteTrafficSections: (List<TomTomTrafficSection>) -> Unit,
     private val getFullRouteSteps: () -> List<LegStep>,
     private val setFullRouteSteps: (List<LegStep>) -> Unit,
     private val getCurrentStepIndex: () -> Int,
@@ -67,6 +68,7 @@ internal class NavigationSessionCoordinator(
     private val drawRoute: () -> Unit,
     private val showRouteThenDive: (LatLng, LatLng) -> Unit,
     private val enterNavigationCamera: () -> Unit,
+    private val refreshTrafficOverlay: () -> Unit,
 ) {
 
     fun navigateToCoordinates(lat: Double, lng: Double) {
@@ -154,6 +156,7 @@ internal class NavigationSessionCoordinator(
                 isInTopDownView = if (isReroute) it.isInTopDownView else false,
             )
         }
+        refreshTrafficOverlay()
 
         engineScope.launch {
             try {
@@ -203,6 +206,7 @@ internal class NavigationSessionCoordinator(
                     } else {
                         offRouteDetector().isRerouteInProgress = false
                         updateUiState { it.copy(isNavigating = false, streetName = "Route not found") }
+                        refreshTrafficOverlay()
                     }
                     return@launch
                 }
@@ -231,6 +235,7 @@ internal class NavigationSessionCoordinator(
 
                 if (conventional == null) {
                     updateUiState { it.copy(isNavigating = false, streetName = "Route not found") }
+                    refreshTrafficOverlay()
                     return@launch
                 }
 
@@ -255,6 +260,7 @@ internal class NavigationSessionCoordinator(
                 offRouteDetector().isRerouteInProgress = false
                 Log.w(TAG, "Route fetch failed: ${e.message}", e)
                 updateUiState { it.copy(isNavigating = false, streetName = "Routing failed") }
+                refreshTrafficOverlay()
             }
         }
     }
@@ -326,6 +332,7 @@ internal class NavigationSessionCoordinator(
 
     private fun applyActiveRoute(route: RouteResult) {
         setRouteGeometryPoints(route.geometryPoints)
+        setRouteTrafficSections(route.trafficSections)
         setFullRouteSteps(route.steps)
         setCurrentStepIndex(0)
         drawRoute()

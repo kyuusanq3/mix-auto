@@ -54,10 +54,38 @@ Package index: **`llms.txt`** at repo root — do not dump full trees.
 - Change only constants tied to the hypothesis — no companion carpet bombing.
 - Edit the **live owner** (grep all hits; prefer controllers when duplicated).
 - Exception: `NAV_TILT_OFFSET` on `MapLibreEngineImpl` companion is live.
+- **Paths:** never invent package folders — use prompt / grep / `llms.txt` / AGENTS.md only.
+- **UI gates:** wrap only the named widget; do not wrap the parent section/call site.
+- **AGENTS.md tables:** add one data row under the existing header — never a second `| Symptom / area |` header.
+
+### Step 3a — Edit-fail contract
+
+If any `Edit` fails (`oldString` mismatch / file not found):
+
+1. Do **not** run verify yet; do **not** claim done.
+2. Re-read the exact window; retry **once** with a smaller unique needle (or the prompt’s exact current→new snippet).
+3. Second fail → **STOP and report** — do not widen the gate, guess another path, or wrap a different parent.
+
+If `Edit` “succeeds” but the hunk is **invalid Kotlin/Compose** (e.g. `"$a" · "$b"` with an operator between two string literals, `Unexpected tokens`):
+
+1. Treat as Edit-fail — do **not** claim done; do **not** start a second unrelated concern.
+2. Prefer fixing via the prompt’s **exact** valid snippet (ASCII separator or `a + " · " + b` concat) or stop for conductor script fallback — do not invent a third string shape.
+
+**Unicode in Edit bodies:** avoid embedding middle-dots / fancy punctuation inside `"$a · $b"`. Prefer `"$a | $b"` or `a + " · " + b`. Local models often split the interpolating string and break compile.
+
+### Step 3b — Proof before verify (required)
+
+`BUILD SUCCESSFUL` alone ≠ feature landed.
+
+1. Grep / `Select-String` each **goal symbol** in each owner file.
+2. Paste 2–3 matching lines into the final report (Output template **Proof** section).
+3. If a goal symbol is missing → treat as failure; fix or stop — **do not** run verify and claim success.
 
 ---
 
 ## Step 4 — Verify (required)
+
+Only after Step 3b proof symbols exist.
 
 From repo root — **one command, no `&&`**. Prefer bash-safe form (Zed Git Bash eats `.\scripts\…` backslashes):
 
@@ -87,7 +115,8 @@ $env:Path = "$env:JAVA_HOME\bin;$env:Path"
 - Never bare `./gradlew.bat` without JAVA_HOME when the script is available
 - **Gradle done = done** — do not wait if agent UI still shows Running after those lines.
 - **Stuck-running terminals:** OpenCode/Zed bash may stay `running` even after success — treat **any** streamed/metadata chunk containing `MIXAUTO_VERIFY_DONE exit=0` or `BUILD SUCCESSFUL` as finished. Fallback: **Read** repo-root `MIXAUTO_VERIFY_DONE.txt`; if `exit=0`, **STOP**.
-- Never claim success after Gradle failure, a failed `Edit`/`oldString` mismatch, or when the goal symbol is missing from the file (false success).
+- Never claim success after Gradle failure, a failed `Edit`/`oldString` mismatch, when the goal symbol is missing from the file (false success), or when verify shows `BUILD FAILED` / `Unexpected tokens` on the edit target.
+- Never run verify to “prove” a turn after a failed Edit or missing proof symbol.
 - No **`local-apk`** until verify passes **and** the user explicitly asks to ship a **GitHub release** / signed release APK — local-apk is never a debug build (use `verify-debug.ps1` for that)
 
 ---
@@ -130,6 +159,9 @@ After constant edits, sync docs that hardcode the old value (or reference the co
 - **`local-apk`** during diagnosis (that skill is GitHub release/publish + `assembleRelease` only — not `assembleDebug`)
 - Wrong owners: `MapHostViewModel` for map labels; `RouteRenderer` for puck glide
 - Leaving `*.backup` / `*.json.backup` of assets in the tree
+- Inventing file paths (wrong package) after a failed Edit
+- Wrapping an entire settings section when only one slider/widget was named
+- Claiming feature success from verify alone without grepped proof symbols
 
 ---
 
@@ -145,8 +177,12 @@ After constant edits, sync docs that hardcode the old value (or reference the co
 ## Patch
 <one-line summary>
 
+## Proof
+<2–3 grepped lines showing goal symbols in owners; or "FAILED: Edit/proof missing">
+
 ## Verify
 BUILD SUCCESSFUL / MIXAUTO_VERIFY_DONE exit=0
+(only after Proof)
 
 ## Impact
 <formula-based, e.g. nav 50° → 55°; free-drive unchanged at 40°>

@@ -47,7 +47,7 @@ MainActivity (MapHostViewModel — mapEngine, navigationVoice, localPlaces)
 
 - `MapLibreEngineImpl` is a **facade** — add map/GPS/camera behavior in `data/map/` collaborators (`LocationTrackingController`, `NavigationCameraController`, `MapStyleController`, `RouteRenderer`, etc.); do not grow the facade again
 - Edit the **live owner** of constants — grep all hits first; prefer controllers / `SmoothingLocationEngine` when duplicated; exception: `NAV_TILT_OFFSET` on `MapLibreEngineImpl` companion is live (not stale)
-- Sample / local-LLM patches: **one concern, one file family**, then compile gate (`BUILD SUCCESSFUL`)
+- Sample / local-LLM patches: **one concern, one file family**, then **proof-grep goal symbols**, then compile gate (`BUILD SUCCESSFUL`) — verify alone ≠ feature landed
 - Soft size: new collaborators prefer **under ~300 lines**; cohesive ~350 OK if split breaks a bug class — do **not** blanket-split existing files to a hard 150-line limit
 - New `public`/`internal` APIs: prefer explicit return types; skip mass-annotating private helpers
 - Package index: root `llms.txt`; map patterns: golden examples in `mix-auto-map-engine.mdc`
@@ -68,6 +68,10 @@ MainActivity (MapHostViewModel — mapEngine, navigationVoice, localPlaces)
 - Diagnosing map label stretch as Compose / `MapHostViewModel` font sizing — map labels are MapLibre symbol layers under tilt, not dashboard Compose text
 - Calling `/local-apk` (or publish) while still planning / diagnosing — release only after verified fix (`assembleDebug` gate)
 - Retuning `blendDurationForSpeed` or other `SmoothingLocationEngine` companions without a logged hypothesis — use `.opencode/skills/local-map-triage` first
+- Claiming success after `Edit`/`oldString` failure or when greppable goal symbols are missing — `BUILD SUCCESSFUL` is not proof the patch landed
+- Embedding Unicode punctuation inside `"$a · $b"` Edit bodies for local LLMs — prefer ASCII / `a + " · " + b`; treat `"$a" · "$b"` / `Unexpected tokens` after Edit as fail → script fallback with `\u`/regex needles (not literal `·` in `.ps1`)
+- Inventing package paths after a failed Edit (e.g. `ui/settings/MapSettingsPanel` — live file is `ui/components/`)
+- Widening a UI `if`/gate to wrap a whole settings section when only one widget was named
 
 ## Shortcut packages (Eonon / AOSP)
 

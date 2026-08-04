@@ -4,6 +4,7 @@ import android.location.Location
 import org.maplibre.android.geometry.LatLng
 import org.maplibre.android.maps.MapLibreMap
 import org.maplibre.android.maps.Style
+import org.maplibre.android.style.expressions.Expression
 import org.maplibre.android.style.layers.LineLayer
 import org.maplibre.android.style.layers.Property
 import org.maplibre.android.style.layers.PropertyFactory
@@ -75,6 +76,7 @@ internal class RouteRenderer(
     private var lastRouteProgressMapUpdateM = 0f
     private var cachedTickProjection: RouteProjection? = null
     private var cachedTickProjectionKey: Long = Long.MIN_VALUE
+    private var trafficSections: List<TomTomTrafficSection> = emptyList()
 
     fun removeRouteLayers(style: Style) {
         runCatching { style.removeLayer(ROUTE_TRAVELED_LAYER_ID) }
@@ -166,7 +168,12 @@ internal class RouteRenderer(
             PropertyFactory.lineOpacity(1f),
         )
         val remainingLine = LineLayer(ROUTE_REMAINING_LAYER_ID, ROUTE_REMAINING_SOURCE_ID).withProperties(
-            PropertyFactory.lineColor(ROUTE_COLOR),
+            PropertyFactory.lineColor(
+                Expression.coalesce(
+                    Expression.toColor(Expression.get("congestionColor")),
+                    Expression.toColor(Expression.literal(ROUTE_COLOR)),
+                ),
+            ),
             PropertyFactory.lineWidth(ROUTE_WIDTH),
             PropertyFactory.lineCap(Property.LINE_CAP_ROUND),
             PropertyFactory.lineJoin(Property.LINE_JOIN_ROUND),
@@ -186,16 +193,25 @@ internal class RouteRenderer(
         }
     }
 
-    fun drawRoute(map: MapLibreMap, routeGeometryPoints: List<LatLng>) {
+    fun drawRoute(
+        map: MapLibreMap,
+        routeGeometryPoints: List<LatLng>,
+        sections: List<TomTomTrafficSection> = emptyList(),
+    ) {
+        trafficSections = sections
         resetRouteProgress(routeGeometryPoints)
         map.getStyle { style ->
             ensureRouteLayers(style)
-            val remainingJson = buildLineStringFeatureJson(routeGeometryPoints)
+            val remainingJson = buildCongestionFeatureCollectionJson(routeGeometryPoints, trafficSections)
             val emptyJson = buildLineStringFeatureJson(emptyList())
             (style.getSource(ROUTE_TRAVELED_SOURCE_ID) as? GeoJsonSource)?.setGeoJson(emptyJson)
             (style.getSource(ROUTE_REMAINING_SOURCE_ID) as? GeoJsonSource)?.setGeoJson(remainingJson)
             ensurePuckAboveOverlays()
         }
+    }
+
+    fun clearTrafficSections() {
+        trafficSections = emptyList()
     }
 
     fun resetRouteProgress(routeGeometryPoints: List<LatLng>) {
@@ -237,7 +253,14 @@ internal class RouteRenderer(
             (style.getSource(ROUTE_TRAVELED_SOURCE_ID) as? GeoJsonSource)
                 ?.setGeoJson(buildLineStringFeatureJson(traveled))
             (style.getSource(ROUTE_REMAINING_SOURCE_ID) as? GeoJsonSource)
-                ?.setGeoJson(buildLineStringFeatureJson(remaining))
+                ?.setGeoJson(
+                    buildRemainingCongestionFeatureCollectionJson(
+                        fullPoints = points,
+                        sections = trafficSections,
+                        remainingPoints = remaining,
+                        remainingStartSegmentIndex = routeProgressSegmentIndex,
+                    ),
+                )
         }
     }
 

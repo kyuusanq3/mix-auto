@@ -17,6 +17,14 @@ data class TomTomRouteStep(
     val distanceMeters: Double = 0.0,
 )
 
+/** Congestion slice along TomTom route geometry (Calculate Route sections TRAFFIC). */
+data class TomTomTrafficSection(
+    val startPointIndex: Int,
+    val endPointIndex: Int,
+    /** TomTom magnitudeOfDelay: 0 unknown, 1 minor, 2 moderate, 3 major, 4 undefined. */
+    val magnitudeOfDelay: Int,
+)
+
 data class TomTomRouteResult(
     val geometryPoints: List<Pair<Double, Double>>,
     val travelTimeSeconds: Int,
@@ -24,6 +32,7 @@ data class TomTomRouteResult(
     val trafficDelaySeconds: Int,
     val steps: List<TomTomRouteStep>,
     val primaryStreet: String,
+    val trafficSections: List<TomTomTrafficSection> = emptyList(),
 )
 
 object TomTomRoutingClient {
@@ -50,7 +59,7 @@ object TomTomRoutingClient {
         )
         val query =
             "traffic=true&routeType=fastest&travelMode=car" +
-                "&instructionsType=text&language=en-US"
+                "&instructionsType=text&language=en-US&sectionType=traffic"
         val url = URL(
             "https://api.tomtom.com/routing/1/calculateRoute/$locations/json" +
                 "?key=$trimmedKey&$query",
@@ -66,7 +75,7 @@ object TomTomRoutingClient {
                 return null
             }
             val body = connection.inputStream.bufferedReader().readText()
-            parseResponse(body)
+            parseCalculateRouteJson(body)
         } catch (e: Exception) {
             Log.w(TAG, "fetchRoute failed: ${e.message}")
             null
@@ -75,7 +84,8 @@ object TomTomRoutingClient {
         }
     }
 
-    private fun parseResponse(body: String): TomTomRouteResult? {
+    /** Visible for unit tests â€” parses Calculate Route JSON including TRAFFIC sections. */
+    internal fun parseCalculateRouteJson(body: String): TomTomRouteResult? {
         val root = JSONObject(body)
         if (root.has("detailedError")) {
             Log.w(TAG, "TomTom route error: ${root.optJSONObject("detailedError")?.optString("message")}")
@@ -95,6 +105,7 @@ object TomTomRoutingClient {
         val steps = parseGuidanceSteps(route, geometryPoints)
         val primaryStreet = steps.firstOrNull()?.streetName?.takeIf { it.isNotBlank() }
             ?: "On route"
+        val trafficSections = parseTrafficSections(route)
 
         return TomTomRouteResult(
             geometryPoints = geometryPoints,
@@ -103,9 +114,30 @@ object TomTomRoutingClient {
             trafficDelaySeconds = trafficDelaySeconds,
             steps = steps,
             primaryStreet = primaryStreet,
+            trafficSections = trafficSections,
         )
     }
 
+    internal fun parseTrafficSections(route: JSONObject): List<TomTomTrafficSection> {
+        val sections = route.optJSONArray("sections") ?: return emptyList()
+        return buildList {
+            for (i in 0 until sections.length()) {
+                val section = sections.optJSONObject(i) ?: continue
+                val type = section.optString("sectionType", "")
+                if (!type.equals("TRAFFIC", ignoreCase = true)) continue
+                val start = section.optInt("startPointIndex", -1)
+                val end = section.optInt("endPointIndex", -1)
+                if (start < 0 || end < start) continue
+                add(
+                    TomTomTrafficSection(
+                        startPointIndex = start,
+                        endPointIndex = end,
+                        magnitudeOfDelay = section.optInt("magnitudeOfDelay", 0),
+                    ),
+                )
+            }
+        }
+    }
     private fun parseGeometryPoints(route: JSONObject): List<Pair<Double, Double>> {
         val legs = route.optJSONArray("legs") ?: return emptyList()
         return buildList {

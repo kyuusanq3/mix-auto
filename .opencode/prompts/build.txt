@@ -10,6 +10,12 @@ If implementing NEW map/camera behavior (not a bug):
 
 ONE class only per turn. If the user listed two bugs, pick one, state the other deferred, patch only the chosen one — do not start the deferred bug after verify.
 
+PATHS: never invent package folders. Owner paths come from prompt / grep / llms.txt / AGENTS.md Where to edit only (e.g. MapSettingsPanel is ui/components/, not ui/settings/).
+
+SCOPE GATES: if told to hide/gate widget X, wrap ONLY that widget. Do not wrap the parent section/call site. Outer call must stay ungated unless the prompt says otherwise.
+
+DOCS TABLES: when adding an AGENTS.md Where-to-edit row, insert ONE data row under the existing header — never paste a second `| Symptom / area |` header block.
+
 Label artifact (nav stretch): use run-tool recipes only — NEVER python -c, temp_fix.py, or indent=2 on mix-auto-driving.json.
   powershell.exe -NoProfile -ExecutionPolicy Bypass -File "./scripts/run-tool.ps1" check_driving_text_pitch
   powershell.exe -NoProfile -ExecutionPolicy Bypass -File "./scripts/run-tool.ps1" fix_driving_text_pitch
@@ -18,13 +24,21 @@ Never use backslash paths like .\scripts\… in Git Bash/Zed (they become .scrip
 
 Rubber-band: change at most ONE SmoothingLocationEngine companion constant with a logged hypothesis; do not raise EXTRAPOLATION_MAX_*.
 
-Then from repo root run ONLY:
+EDIT-FAIL CONTRACT:
+- Any `Edit … failed` / `oldString` mismatch → do NOT run verify yet; do NOT claim done.
+- Re-read the exact window; retry ONCE with a smaller unique needle (or exact current→new snippet from the prompt).
+- Second fail → STOP and report failure (do not widen the gate, invent a different wrap, or guess another path).
+- Edit “succeeded” but invalid syntax (`Unexpected tokens`, split strings like `"$a" · "$b"`) → treat as Edit-fail; fix with exact valid snippet or STOP (conductor script fallback). Do not claim done.
+- Unicode in locked snippets: prefer ASCII (`|`) or concat `a + " · " + b` — do not embed middle-dots inside `"$a · $b"` (14B often splits the string).
+
+PROOF BEFORE VERIFY (required):
+- Grep/Select-String each goal symbol in each owner file; paste 2–3 matching lines in the final report.
+- `BUILD SUCCESSFUL` alone ≠ feature landed. Missing goal symbol = turn failed.
+- Only after proof symbols exist, from repo root run:
   powershell.exe -NoProfile -ExecutionPolicy Bypass -File "./scripts/verify-debug.ps1"
 If you edited app/src/test/** or map-feature Turn A, add -UnitTestCompile (assembleDebug misses broken *Test.kt).
 (no cd, no &&, no &). Never bare gradlew without JAVA_HOME — use the script.
 
-VERIFY DONE CONTRACT: if output/stream/metadata OR repo-root MIXAUTO_VERIFY_DONE.txt shows MIXAUTO_VERIFY_DONE exit=0 / BUILD SUCCESSFUL — STOP immediately even if bash UI still says Running. Do not re-run. Do not continue to the deferred bug.
+VERIFY DONE CONTRACT: if output/stream/metadata OR repo-root MIXAUTO_VERIFY_DONE.txt shows MIXAUTO_VERIFY_DONE exit=0 / BUILD SUCCESSFUL — STOP immediately even if bash UI still says Running. Do not re-run. Do not continue to the deferred bug. (Still only claim feature success if proof symbols were grepped.)
 
-If any Edit failed / oldString mismatch: do NOT claim the turn done; re-read the file and retry or report failure. Goal symbols must exist in the tree (verify alone ≠ feature landed).
-
-Never: ask-loops; multi-bug one patch; python -c one-liners; MapStyleConstants/GPU/prefs plans; claim success without BUILD SUCCESSFUL or after failed Edit; wait forever on stuck-running bash; layer-root text-pitch-alignment; stop after file outline without line-range read.
+Never: ask-loops; multi-bug one patch; python -c one-liners; MapStyleConstants/GPU/prefs plans; claim success without BUILD SUCCESSFUL or after failed Edit; claim success when goal symbols are missing or compile failed on the edit target; wait forever on stuck-running bash; layer-root text-pitch-alignment; stop after file outline without line-range read; invent file paths; wrap a whole settings section when only one slider/widget was named; embed Unicode punctuation inside `"$a · $b"` Edit bodies.

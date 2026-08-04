@@ -114,8 +114,15 @@ internal fun SearchResultRow(
                 )
             }
         }
+        val distanceLabel = place.distanceInMeters.formatSearchDistance()
+        val sourceLabel = place.poiSource.trim()
+        val trailingLabel = if (sourceLabel.isNotEmpty()) {
+            "$distanceLabel · $sourceLabel"
+        } else {
+            distanceLabel
+        }
         CarLabelText(
-            text = place.distanceInMeters.formatSearchDistance(),
+            text = trailingLabel,
             style = MaterialTheme.typography.labelMedium.copy(
                 color = ElectricCyan,
             ),

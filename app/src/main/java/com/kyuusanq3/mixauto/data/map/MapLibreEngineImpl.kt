@@ -1,4 +1,4 @@
-﻿package com.kyuusanq3.mixauto.data.map
+package com.kyuusanq3.mixauto.data.map
 
 import android.Manifest
 import android.content.Context
@@ -187,6 +187,7 @@ class MapLibreEngineImpl(
     private var savedPlacesKeys = emptySet<String>()
     private var savedPlacesCache = emptyList<SearchResultPlace>()
     private var routeGeometryPoints: List<LatLng> = emptyList()
+    private var routeTrafficSections: List<TomTomTrafficSection> = emptyList()
     private val offRouteDetector = OffRouteDetector(
         projectionForLocation = ::projectionForLocation,
         onReroute = { origin, destLat, destLng ->
@@ -283,6 +284,7 @@ class MapLibreEngineImpl(
             navigationVoice = { navigationVoice },
             getRouteGeometryPoints = { routeGeometryPoints },
             setRouteGeometryPoints = { routeGeometryPoints = it },
+            setRouteTrafficSections = { routeTrafficSections = it },
             getFullRouteSteps = { fullRouteSteps },
             setFullRouteSteps = { fullRouteSteps = it },
             getCurrentStepIndex = { currentStepIndex },
@@ -321,6 +323,7 @@ class MapLibreEngineImpl(
             drawRoute = ::drawRoute,
             showRouteThenDive = routeOverviewController::showRouteThenDive,
             enterNavigationCamera = navigationCamera::enterNavigationCamera,
+            refreshTrafficOverlay = ::refreshTrafficOverlay,
         )
     }
 
@@ -603,6 +606,8 @@ class MapLibreEngineImpl(
                 destinationLatLng = null
                 navigationArrivalTriggered = false
                 routeGeometryPoints = emptyList()
+                routeTrafficSections = emptyList()
+                routeRenderer.clearTrafficSections()
                 routeRenderer.resetRouteProgress(routeGeometryPoints)
                 offRouteDetector.reset()
                 hasSnappedCameraToGps = false
@@ -633,7 +638,7 @@ class MapLibreEngineImpl(
             setMapLibreInitialized = { mapLibreInitialized = it },
             useVectorTiles = { useVectorTiles },
             show3dBuildings = { show3dBuildings },
-            trafficEnabled = { trafficEnabled },
+            trafficEnabled = { effectiveTrafficVisible() },
             tomTomApiKey = { tomTomApiKey },
             getPendingLocationActivation = { pendingLocationActivation },
             setPendingLocationActivation = { pendingLocationActivation = it },
@@ -733,9 +738,16 @@ class MapLibreEngineImpl(
     override fun setTrafficEnabled(enabled: Boolean, apiKey: String) {
         trafficEnabled = enabled
         tomTomApiKey = apiKey.trim()
+        refreshTrafficOverlay()
+    }
+
+    private fun effectiveTrafficVisible(): Boolean =
+        trafficEnabled && !_uiState.value.isNavigating
+
+    private fun refreshTrafficOverlay() {
         val map = mapLibreMap ?: return
         val style = map.style ?: return
-        mapStyleController.applyTrafficOverlay(style, trafficEnabled, tomTomApiKey)
+        mapStyleController.applyTrafficOverlay(style, effectiveTrafficVisible(), tomTomApiKey)
     }
 
     override fun setNavigationVoiceEnabled(enabled: Boolean) {
@@ -910,7 +922,10 @@ class MapLibreEngineImpl(
 
     override fun recenterCamera() = freeDriveSessionCoordinator.recenterCamera()
 
-    override fun startFreeDrive() = freeDriveSessionCoordinator.startFreeDrive()
+    override fun startFreeDrive() {
+        freeDriveSessionCoordinator.startFreeDrive()
+        refreshTrafficOverlay()
+    }
 
     override fun dismissSelectedPoi() = poiSelectionController.dismissSelectedPoi()
 
@@ -940,7 +955,7 @@ class MapLibreEngineImpl(
 
     private fun drawRoute() {
         val map = mapLibreMap ?: return
-        routeRenderer.drawRoute(map, routeGeometryPoints)
+        routeRenderer.drawRoute(map, routeGeometryPoints, routeTrafficSections)
     }
 
     private fun projectOntoRoute(location: Location): RouteProjection? {
