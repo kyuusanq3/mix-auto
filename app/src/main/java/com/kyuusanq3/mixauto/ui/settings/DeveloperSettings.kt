@@ -11,4 +11,19 @@ object DeveloperSettings {
      * false = dynamic free-drive zoom (hide slider; NavigationZoom.targetZoomForSpeed)
      */
     const val MANUAL_DRIVING_ZOOM: Boolean = false
+
+    /**
+     * true  = append poiSource next to distance in destination-search rows (debug)
+     * false = distance only (default)
+     */
+    const val SHOW_POI_SOURCE: Boolean = false
+
+    /**
+     * true  = drop Overture rows with confidence below [MIN_POI_CONFIDENCE] (default)
+     * false = return all Overture rows regardless of confidence
+     */
+    const val FILTER_LOW_CONFIDENCE_POIS: Boolean = true
+
+    /** Minimum Overture places.confidence (0..1) when [FILTER_LOW_CONFIDENCE_POIS] is true. */
+    const val MIN_POI_CONFIDENCE: Float = 0.5f
 }

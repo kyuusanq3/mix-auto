@@ -7,6 +7,7 @@ import android.net.Uri
 import android.provider.OpenableColumns
 import android.util.Log
 import com.kyuusanq3.mixauto.domain.map.SearchResultPlace
+import com.kyuusanq3.mixauto.ui.settings.DeveloperSettings
 import java.io.File
 import java.io.InputStream
 
@@ -403,6 +404,7 @@ class LocalPlacesRepository(context: Context) {
             FROM places
             WHERE lat BETWEEN ? AND ?
               AND lng BETWEEN ? AND ?
+              ${confidenceSqlPredicate()}
             LIMIT ?
         """.trimIndent()
 
@@ -445,6 +447,7 @@ class LocalPlacesRepository(context: Context) {
             WHERE places_fts MATCH ?
               AND p.lat BETWEEN ? AND ?
               AND p.lng BETWEEN ? AND ?
+              ${confidenceSqlPredicate("p")}
             LIMIT ?
         """.trimIndent()
 
@@ -488,6 +491,7 @@ class LocalPlacesRepository(context: Context) {
             WHERE (name LIKE ? OR address LIKE ? OR city LIKE ?)
               AND lat BETWEEN ? AND ?
               AND lng BETWEEN ? AND ?
+              ${confidenceSqlPredicate()}
             LIMIT ?
         """.trimIndent()
 
@@ -540,6 +544,16 @@ class LocalPlacesRepository(context: Context) {
             .filter { it.length >= 2 }
         if (tokens.isEmpty()) return null
         return tokens.joinToString(" ") { "$it*" }
+    }
+
+    private fun confidenceSqlPredicate(tableAlias: String = ""): String {
+        if (!DeveloperSettings.FILTER_LOW_CONFIDENCE_POIS) return ""
+        val column = if (tableAlias.isBlank()) {
+            "confidence"
+        } else {
+            "$tableAlias.confidence"
+        }
+        return " AND $column >= ${DeveloperSettings.MIN_POI_CONFIDENCE}"
     }
 
     private fun android.database.Cursor.toSearchResultPlace(): SearchResultPlace {

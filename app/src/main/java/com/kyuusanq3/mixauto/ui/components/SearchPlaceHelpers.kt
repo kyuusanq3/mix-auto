@@ -20,6 +20,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import com.kyuusanq3.mixauto.domain.map.SearchResultPlace
+import com.kyuusanq3.mixauto.ui.settings.DeveloperSettings
 import com.kyuusanq3.mixauto.ui.theme.CarBodyText
 import com.kyuusanq3.mixauto.ui.theme.CarDimensions
 import com.kyuusanq3.mixauto.ui.theme.CarLabelText
@@ -115,9 +116,13 @@ internal fun SearchResultRow(
             }
         }
         val distanceLabel = place.distanceInMeters.formatSearchDistance()
-        val sourceLabel = place.poiSource.trim()
-        val trailingLabel = if (sourceLabel.isNotEmpty()) {
-            "$distanceLabel · $sourceLabel"
+        val trailingLabel = if (DeveloperSettings.SHOW_POI_SOURCE) {
+            val sourceLabel = place.poiSource.trim()
+            if (sourceLabel.isNotEmpty()) {
+                distanceLabel + " | " + sourceLabel
+            } else {
+                distanceLabel
+            }
         } else {
             distanceLabel
         }
