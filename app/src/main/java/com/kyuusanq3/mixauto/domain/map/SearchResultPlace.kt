@@ -10,4 +10,8 @@ data class SearchResultPlace(
     val isDroppedPin: Boolean = false,
     /** Provenance for map-pin merge priority: overture | vector | photon | search */
     val poiSource: String = "",
+    /** Overture places.confidence when known; null for Photon/vector/saved. */
+    val confidence: Float? = null,
+    /** True when Overture freeform address is present and not equal to city. */
+    val hasStreetAddress: Boolean = false,
 )

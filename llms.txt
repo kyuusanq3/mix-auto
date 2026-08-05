@@ -45,14 +45,14 @@ DestinationSearchCoordinator.kt — destination search merge (local/cache/Photon
 SearchOriginResolver.kt — search origin resolution (GPS / map center / PH fallback)
 PhotonSearchClient.kt — Photon HTTP fetch for destination + nearby POI
 PoiQueryCoordinator.kt — POI cache search, tile query, nearby merge, viewport seed
-LighterTrafficHelper.kt — TomTom alternate scoring / route conversion (pure)
+LighterTrafficHelper.kt — TomTom alternate scoring / route conversion (pure); passes trafficSections
 TomTomTrafficClient.kt — thin facade delegating to TomTom* split below
 TomTomTrafficModels.kt — traffic models + shared level/street/haversine formatters
 TomTomApiKeyVerifier.kt — TomTom API key probe
 TomTomIncidentHeadlines.kt — nearby incident headlines + TTL cache
 TomTomRouteJamFinder.kt — route-corridor jam lookup
 MapInteractionController.kt — map tap/long-press, custom pin draft, reverse geocode
-NavigationSessionCoordinator.kt — navigate, startNavigation, reroute, lighter-traffic alternate
+NavigationSessionCoordinator.kt — navigate, startNavigation, reroute, lighter-traffic alternate; routeTrafficSections on applyActiveRoute
 OfflineRegionCatalog.kt — offline_regions.json catalog load
 OfflineRegionMetadata.kt — offline region SDK metadata parse / resumability
 OfflineProgressFormatting.kt — offline progress/size formatters + OfflineRegionInstallState, PendingOfflineResume
@@ -68,7 +68,8 @@ NavigationZoom.kt — maneuver-distance follow zoom math (pure); append new form
 DrivingTilePrefetcher.kt — tile prefetch while driving + network gate
 PoiOverlayRenderer.kt — mix POI icon/text layers, native poi_* visibility; mix poiTextOnly* = VIEWPORT (detached pan only — hidden while navigating)
 MapStyleController.kt — style load, traffic, 3D buildings, road boost; nav label stretch → run-tool check_driving_text_pitch / fix_driving_text_pitch (layout pitch; never layer root)
-RouteRenderer.kt — route GeoJSON greying (not puck motion)
+RouteCongestion.kt — TomTom magnitude→color + congestion FeatureCollection for remaining route
+RouteRenderer.kt — route GeoJSON greying + data-driven congestionColor when sections present (not puck motion)
 OffRouteDetector.kt — parallel-street off-route confirms
 ConventionalRouteSelector.kt / NavigationRouteFetcher.kt — OSRM conventional + fetch
 OfflineMapRepository.kt — offline tile catalog + public download/pause/delete API (session extracted)

@@ -82,5 +82,15 @@ internal fun mergeAndDeduplicate(
             seen.add(place.latitude to place.longitude)
         }
     }
-    return merged.sortedBy { it.distanceInMeters }
+    return rankSearchResults(merged)
 }
+
+/**
+ * Search list ranking: street address first, then higher confidence, then nearer.
+ */
+internal fun rankSearchResults(places: List<SearchResultPlace>): List<SearchResultPlace> =
+    places.sortedWith(
+        compareByDescending<SearchResultPlace> { it.hasStreetAddress }
+            .thenByDescending { it.confidence ?: 0f }
+            .thenBy { it.distanceInMeters },
+    )

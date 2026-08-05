@@ -62,6 +62,8 @@ internal fun preferPoiEntry(existing: SearchResultPlace, incoming: SearchResultP
         },
         latitude = winner.latitude,
         longitude = winner.longitude,
+        confidence = winner.confidence ?: loser.confidence,
+        hasStreetAddress = winner.hasStreetAddress || loser.hasStreetAddress,
     )
 }
 

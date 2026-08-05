@@ -239,13 +239,11 @@ private fun PoiDetailCardContent(
                     ),
                 )
             }
-            if (poi.subTitle.isNotBlank()) {
-                CarBodyText(
-                    text = poi.subTitle,
-                    style = MaterialTheme.typography.bodyMedium,
-                    maxLines = 2,
-                )
-            }
+            PlaceSubTitleWithApproximateIcon(
+                place = poi,
+                textStyle = MaterialTheme.typography.bodyMedium,
+                useBodyText = true,
+            )
             if (poi.distanceInMeters > 0f) {
                 CarLabelText(
                     text = poi.distanceInMeters.formatDistance(),
@@ -327,12 +325,10 @@ private fun NearbyPoiRow(
                 style = MaterialTheme.typography.bodyLarge,
                 maxLines = 1,
             )
-            if (place.subTitle.isNotBlank()) {
-                CarLabelText(
-                    text = place.subTitle,
-                    style = MaterialTheme.typography.labelMedium,
-                )
-            }
+            PlaceSubTitleWithApproximateIcon(
+                place = place,
+                textStyle = MaterialTheme.typography.labelMedium,
+            )
         }
         CarLabelText(
             text = place.distanceInMeters.formatDistance(),

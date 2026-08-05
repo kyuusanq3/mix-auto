@@ -26,4 +26,10 @@ object DeveloperSettings {
 
     /** Minimum Overture places.confidence (0..1) when [FILTER_LOW_CONFIDENCE_POIS] is true. */
     const val MIN_POI_CONFIDENCE: Float = 0.5f
+
+    /**
+     * Overture rows with confidence below this ceiling (or without a street address)
+     * show the approximate-location icon in search/detail UI.
+     */
+    const val APPROXIMATE_POI_CONFIDENCE_CEILING: Float = 0.7f
 }

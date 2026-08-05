@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.automirrored.outlined.NotListedLocation
 import androidx.compose.material.icons.outlined.Star
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -19,6 +20,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.unit.dp
 import com.kyuusanq3.mixauto.domain.map.SearchResultPlace
 import com.kyuusanq3.mixauto.ui.settings.DeveloperSettings
 import com.kyuusanq3.mixauto.ui.theme.CarBodyText
@@ -62,6 +65,54 @@ internal fun isWithinDedupThreshold(a: SearchResultPlace, b: SearchResultPlace):
     return distanceResults[0] < SEARCH_DEDUP_THRESHOLD_M
 }
 
+internal fun SearchResultPlace.shouldShowApproximateIcon(): Boolean {
+    val conf = confidence ?: return false
+    return !hasStreetAddress || conf < DeveloperSettings.APPROXIMATE_POI_CONFIDENCE_CEILING
+}
+
+@Composable
+internal fun PlaceSubTitleWithApproximateIcon(
+    place: SearchResultPlace,
+    textStyle: TextStyle,
+    useBodyText: Boolean = false,
+) {
+    if (place.subTitle.isBlank() && !place.shouldShowApproximateIcon()) return
+    val mutedCyan = ElectricCyan.copy(alpha = 0.75f)
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        if (place.subTitle.isNotBlank()) {
+            if (useBodyText) {
+                CarBodyText(
+                    text = place.subTitle,
+                    style = textStyle,
+                    maxLines = 2,
+                )
+            } else {
+                CarLabelText(
+                    text = place.subTitle,
+                    style = textStyle,
+                )
+            }
+        }
+        if (place.shouldShowApproximateIcon()) {
+            if (place.subTitle.isNotBlank()) {
+                CarLabelText(
+                    text = "\u00B7",
+                    style = textStyle.copy(color = mutedCyan),
+                )
+            }
+            Icon(
+                imageVector = Icons.AutoMirrored.Outlined.NotListedLocation,
+                contentDescription = "Approximate location",
+                modifier = Modifier.size(14.dp),
+                tint = mutedCyan,
+            )
+        }
+    }
+}
+
 internal fun filterSavedPlaces(
     places: List<SearchResultPlace>,
     query: String,
@@ -100,12 +151,10 @@ internal fun SearchResultRow(
                 style = MaterialTheme.typography.bodyLarge,
                 maxLines = 1,
             )
-            if (place.subTitle.isNotBlank()) {
-                CarLabelText(
-                    text = place.subTitle,
-                    style = MaterialTheme.typography.labelMedium,
-                )
-            }
+            PlaceSubTitleWithApproximateIcon(
+                place = place,
+                textStyle = MaterialTheme.typography.labelMedium,
+            )
             if (badge != null) {
                 CarLabelText(
                     text = badge,

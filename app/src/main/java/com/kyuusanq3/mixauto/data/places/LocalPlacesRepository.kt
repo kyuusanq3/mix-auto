@@ -6,6 +6,7 @@ import android.location.Location
 import android.net.Uri
 import android.provider.OpenableColumns
 import android.util.Log
+import com.kyuusanq3.mixauto.data.map.rankSearchResults
 import com.kyuusanq3.mixauto.domain.map.SearchResultPlace
 import com.kyuusanq3.mixauto.ui.settings.DeveloperSettings
 import java.io.File
@@ -370,8 +371,8 @@ class LocalPlacesRepository(context: Context) {
                 searchWithLike(db, query, minLat, maxLat, minLng, maxLng)
             }
 
-            results
-                .map { row ->
+            rankSearchResults(
+                results.map { row ->
                     val distanceResults = FloatArray(1)
                     Location.distanceBetween(
                         currentLat,
@@ -381,9 +382,8 @@ class LocalPlacesRepository(context: Context) {
                         distanceResults,
                     )
                     row.copy(distanceInMeters = distanceResults[0])
-                }
-                .sortedBy { it.distanceInMeters }
-                .take(LOCAL_RESULT_LIMIT)
+                },
+            ).take(LOCAL_RESULT_LIMIT)
         }.getOrElse { error ->
             Log.w(TAG, "Search failed: ${error.message}")
             emptyList()
@@ -400,7 +400,7 @@ class LocalPlacesRepository(context: Context) {
         if (!ensureDatabaseOpen()) return emptyList()
         val db = readableDatabase() ?: return emptyList()
         val sql = """
-            SELECT name, address, city, lat, lng, category
+            SELECT name, address, city, lat, lng, category, confidence
             FROM places
             WHERE lat BETWEEN ? AND ?
               AND lng BETWEEN ? AND ?
@@ -441,7 +441,7 @@ class LocalPlacesRepository(context: Context) {
     ): List<SearchResultPlace> {
         val ftsQuery = buildFtsQuery(query) ?: return emptyList()
         val sql = """
-            SELECT p.name, p.address, p.city, p.lat, p.lng, p.category
+            SELECT p.name, p.address, p.city, p.lat, p.lng, p.category, p.confidence
             FROM places p
             JOIN places_fts fts ON p.rowid = fts.rowid
             WHERE places_fts MATCH ?
@@ -486,7 +486,7 @@ class LocalPlacesRepository(context: Context) {
     ): List<SearchResultPlace> {
         val likePattern = "%${query.trim()}%"
         val sql = """
-            SELECT name, address, city, lat, lng, category
+            SELECT name, address, city, lat, lng, category, confidence
             FROM places
             WHERE (name LIKE ? OR address LIKE ? OR city LIKE ?)
               AND lat BETWEEN ? AND ?
@@ -564,6 +564,13 @@ class LocalPlacesRepository(context: Context) {
         val lng = getDouble(4)
         val categoryIndex = getColumnIndex("category")
         val category = if (categoryIndex >= 0) getString(categoryIndex).orEmpty() else ""
+        val confidenceIndex = getColumnIndex("confidence")
+        val confidence = if (confidenceIndex >= 0 && !isNull(confidenceIndex)) {
+            getFloat(confidenceIndex)
+        } else {
+            null
+        }
+        val hasStreet = address.isNotBlank() && !address.equals(city, ignoreCase = true)
         val subTitle = listOf(address, city)
             .filter { it.isNotBlank() && !it.equals(name, ignoreCase = true) }
             .joinToString(", ")
@@ -573,6 +580,8 @@ class LocalPlacesRepository(context: Context) {
             latitude = lat,
             longitude = lng,
             category = category,
+            confidence = confidence,
+            hasStreetAddress = hasStreet,
         )
     }
 
