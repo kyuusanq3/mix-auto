@@ -67,6 +67,7 @@ import com.kyuusanq3.mixauto.ui.components.PanelHeaderIconButton
 import com.kyuusanq3.mixauto.ui.components.canLaunchApp
 import com.kyuusanq3.mixauto.ui.components.launchAppByPackage
 import com.kyuusanq3.mixauto.ui.components.rememberAppIcon
+import com.kyuusanq3.mixauto.ui.settings.DeveloperSettings
 import com.kyuusanq3.mixauto.ui.settings.LauncherViewModel
 import com.kyuusanq3.mixauto.ui.theme.CarBodyText
 import com.kyuusanq3.mixauto.ui.theme.CarDimensions
@@ -121,6 +122,21 @@ fun MediaPlayerPane(
     val showIdleDefaultPlayerFallback = !mediaState.hasActiveSession &&
         fallbackResumeLink == null &&
         defaultAudioPackage.isNotBlank()
+
+    if (!DeveloperSettings.USE_LEGACY_MEDIA_PLAYER_LAYOUT) {
+        ImmersiveMediaPlayerContent(
+            mediaState = mediaState,
+            defaultAudioPackage = defaultAudioPackage,
+            onSetDefaultAudioPackage = onSetDefaultAudioPackage,
+            onPlayPause = onPlayPause,
+            onSkipPrevious = onSkipPrevious,
+            onSkipNext = onSkipNext,
+            onToggleLike = onToggleLike,
+            reduceTopInset = reduceTopInset,
+            modifier = modifier,
+        )
+        return
+    }
 
     ElevatedCard(
         modifier = modifier.padding(

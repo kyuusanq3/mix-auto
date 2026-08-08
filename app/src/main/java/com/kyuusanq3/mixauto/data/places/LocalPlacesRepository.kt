@@ -366,9 +366,9 @@ class LocalPlacesRepository(context: Context) {
             val maxLng = currentLng + BBOX_DELTA
 
             val results = if (fts5Available) {
-                searchWithFts5(db, query, minLat, maxLat, minLng, maxLng)
+                searchWithFts5(db, query, currentLat, currentLng, minLat, maxLat, minLng, maxLng)
             } else {
-                searchWithLike(db, query, minLat, maxLat, minLng, maxLng)
+                searchWithLike(db, query, currentLat, currentLng, minLat, maxLat, minLng, maxLng)
             }
 
             rankSearchResults(
@@ -434,6 +434,8 @@ class LocalPlacesRepository(context: Context) {
     private fun searchWithFts5(
         db: SQLiteDatabase,
         query: String,
+        currentLat: Double,
+        currentLng: Double,
         minLat: Double,
         maxLat: Double,
         minLng: Double,
@@ -448,6 +450,7 @@ class LocalPlacesRepository(context: Context) {
               AND p.lat BETWEEN ? AND ?
               AND p.lng BETWEEN ? AND ?
               ${confidenceSqlPredicate("p")}
+            ORDER BY ((p.lat - ?) * (p.lat - ?) + (p.lng - ?) * (p.lng - ?))
             LIMIT ?
         """.trimIndent()
 
@@ -460,6 +463,10 @@ class LocalPlacesRepository(context: Context) {
                     maxLat.toString(),
                     minLng.toString(),
                     maxLng.toString(),
+                    currentLat.toString(),
+                    currentLat.toString(),
+                    currentLng.toString(),
+                    currentLng.toString(),
                     LOCAL_RESULT_LIMIT.toString(),
                 ),
             ).use { cursor ->
@@ -472,13 +479,15 @@ class LocalPlacesRepository(context: Context) {
         }.getOrElse { error ->
             Log.w(TAG, "FTS5 search failed, falling back to LIKE: ${error.message}")
             fts5Available = false
-            searchWithLike(db, query, minLat, maxLat, minLng, maxLng)
+            searchWithLike(db, query, currentLat, currentLng, minLat, maxLat, minLng, maxLng)
         }
     }
 
     private fun searchWithLike(
         db: SQLiteDatabase,
         query: String,
+        currentLat: Double,
+        currentLng: Double,
         minLat: Double,
         maxLat: Double,
         minLng: Double,
@@ -492,6 +501,7 @@ class LocalPlacesRepository(context: Context) {
               AND lat BETWEEN ? AND ?
               AND lng BETWEEN ? AND ?
               ${confidenceSqlPredicate()}
+            ORDER BY ((lat - ?) * (lat - ?) + (lng - ?) * (lng - ?))
             LIMIT ?
         """.trimIndent()
 
@@ -506,6 +516,10 @@ class LocalPlacesRepository(context: Context) {
                     maxLat.toString(),
                     minLng.toString(),
                     maxLng.toString(),
+                    currentLat.toString(),
+                    currentLat.toString(),
+                    currentLng.toString(),
+                    currentLng.toString(),
                     LOCAL_RESULT_LIMIT.toString(),
                 ),
             ).use { cursor ->

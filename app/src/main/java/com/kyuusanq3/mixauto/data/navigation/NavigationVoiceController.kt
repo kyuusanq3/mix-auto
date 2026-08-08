@@ -33,7 +33,7 @@ class NavigationVoiceController(context: Context) {
     /** When true, temporarily raises system guidance stream volume while speaking. */
     var boostEnabled: Boolean = false
 
-    /** Utterance volume scale (1.0–10.0); applied via [TextToSpeech.Engine.KEY_PARAM_VOLUME]. */
+    /** Utterance volume scale (0.5-1.0); applied via [TextToSpeech.Engine.KEY_PARAM_VOLUME] (Android caps at 1.0). */
     var volume: Float = DEFAULT_VOLUME
         set(value) {
             field = value.coerceIn(MIN_VOLUME, MAX_VOLUME)
@@ -415,7 +415,7 @@ class NavigationVoiceController(context: Context) {
         val manager = audioManager ?: return
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             if (audioFocusRequest == null) {
-                audioFocusRequest = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK)
+                audioFocusRequest = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT)
                     .setAudioAttributes(audioAttributes)
                     .build()
             }
@@ -425,7 +425,7 @@ class NavigationVoiceController(context: Context) {
             manager.requestAudioFocus(
                 null,
                 AudioManager.STREAM_MUSIC,
-                AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK,
+                AudioManager.AUDIOFOCUS_GAIN_TRANSIENT,
             )
         }
     }
@@ -451,8 +451,8 @@ class NavigationVoiceController(context: Context) {
         private const val MIN_SPEED_MPS = 1.4f
         private const val MIN_MANEUVER_PHRASE_GAP_MS = 6_000L
         private const val REROUTE_TTS_MIN_INTERVAL_MS = 30_000L
-        const val MIN_VOLUME = 1.0f
-        const val MAX_VOLUME = 10.0f
+        const val MIN_VOLUME = 0.5f
+        const val MAX_VOLUME = 1.0f
         const val DEFAULT_VOLUME = 1.0f
     }
 }

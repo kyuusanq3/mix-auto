@@ -24,6 +24,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.kyuusanq3.mixauto.ui.components.canLaunchApp
+import com.kyuusanq3.mixauto.ui.settings.DeveloperSettings
 import com.kyuusanq3.mixauto.ui.components.launchAppByPackage
 import com.kyuusanq3.mixauto.ui.components.rememberAppIcon
 import com.kyuusanq3.mixauto.ui.theme.CarBodyText
@@ -34,7 +35,7 @@ import com.kyuusanq3.mixauto.ui.theme.ElectricCyan
 import com.kyuusanq3.mixauto.ui.theme.OledBlack
 
 @Composable
-internal fun GestureHintDialog(
+fun GestureHintDialog(
     supportsLike: Boolean,
     onDismiss: () -> Unit,
 ) {
@@ -55,7 +56,14 @@ internal fun GestureHintDialog(
                 if (supportsLike) {
                     CarBodyText(text = "Swipe up \u2192 Like", style = MaterialTheme.typography.bodyMedium)
                 }
-                CarBodyText(text = "Long-press \u2192 Change album art style", style = MaterialTheme.typography.bodyMedium)
+                CarBodyText(
+                    text = if (DeveloperSettings.USE_LEGACY_MEDIA_PLAYER_LAYOUT) {
+                        "Long-press \u2192 Change album art style"
+                    } else {
+                        "Long-press \u2192 Audio Settings"
+                    },
+                    style = MaterialTheme.typography.bodyMedium,
+                )
                 CarBodyText(
                     text = "Turn these back into on-screen buttons anytime from Audio Settings (\u22ee).",
                     style = MaterialTheme.typography.labelMedium,

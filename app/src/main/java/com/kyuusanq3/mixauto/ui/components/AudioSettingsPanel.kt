@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -29,6 +30,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.kyuusanq3.mixauto.data.media.MediaSessionRepository
+import com.kyuusanq3.mixauto.ui.dashboard.GestureHintDialog
 import com.kyuusanq3.mixauto.ui.settings.LauncherViewModel
 import com.kyuusanq3.mixauto.ui.theme.CarBodyText
 import com.kyuusanq3.mixauto.ui.theme.CarDimensions
@@ -44,6 +46,7 @@ fun AudioSettingsPanelContent(
     val launcherViewModel: LauncherViewModel = viewModel()
     val context = LocalContext.current
     var pendingDefaultApp by remember { mutableStateOf<AudioPlayerApp?>(null) }
+    var showGestureHint by remember { mutableStateOf(false) }
 
     DisposableEffect(Unit) {
         onDispose {
@@ -72,6 +75,13 @@ fun AudioSettingsPanelContent(
                     onClose = onDismiss,
                     closeContentDescription = "Close audio settings",
                     compact = true,
+                    trailingContent = {
+                        PanelHeaderIconButton(
+                            onClick = { showGestureHint = true },
+                            contentDescription = "Playback gesture help",
+                            icon = Icons.Filled.Info,
+                        )
+                    },
                 )
 
                 Box(
@@ -128,6 +138,13 @@ fun AudioSettingsPanelContent(
                         pendingDefaultApp = null
                     },
                     onDismiss = { pendingDefaultApp = null },
+                )
+            }
+
+            if (showGestureHint) {
+                GestureHintDialog(
+                    supportsLike = true,
+                    onDismiss = { showGestureHint = false },
                 )
             }
         }

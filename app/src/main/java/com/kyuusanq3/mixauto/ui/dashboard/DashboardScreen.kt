@@ -1,4 +1,4 @@
-﻿package com.kyuusanq3.mixauto.ui.dashboard
+package com.kyuusanq3.mixauto.ui.dashboard
 
 import android.content.res.Configuration
 import android.speech.SpeechRecognizer
@@ -27,6 +27,7 @@ import com.kyuusanq3.mixauto.domain.media.MediaPlaybackState
 import com.kyuusanq3.mixauto.ui.components.AppUpdatePrompts
 import com.kyuusanq3.mixauto.ui.components.DashboardStatusBar
 import com.kyuusanq3.mixauto.ui.settings.AppUpdateViewModel
+import com.kyuusanq3.mixauto.ui.settings.DeveloperSettings
 import com.kyuusanq3.mixauto.ui.settings.LauncherViewModel
 import com.kyuusanq3.mixauto.ui.settings.MapDataViewModel
 import com.kyuusanq3.mixauto.ui.theme.OledBlack
@@ -340,8 +341,9 @@ fun DashboardScreen(
         onDismissPanel = onDismissPanel,
     )
 
-    val reduceTopInsetBelowStatusStrip = showStatusStrip
-    val reduceMediaTopInsetBelowStatusStrip = showStatusStrip && !isPortrait
+    val statusStripVisible = DeveloperSettings.SHOW_STATUS_STRIP && showStatusStrip
+    val reduceTopInsetBelowStatusStrip = statusStripVisible
+    val reduceMediaTopInsetBelowStatusStrip = statusStripVisible && !isPortrait
 
     val layoutProps = DashboardLayoutProps(
         map = DashboardMapPaneProps(
@@ -465,7 +467,7 @@ fun DashboardScreen(
                 },
             ),
     ) {
-        if (showStatusStrip) {
+        if (statusStripVisible) {
             DashboardStatusBar(
                 mapEngine = mapEngine,
                 showTraffic = showTraffic,

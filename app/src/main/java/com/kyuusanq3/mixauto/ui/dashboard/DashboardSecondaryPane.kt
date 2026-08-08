@@ -1,7 +1,9 @@
 package com.kyuusanq3.mixauto.ui.dashboard
 
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
@@ -364,19 +366,31 @@ private fun MediaOrSettingsPane(
             ActivePanel.MEDIA,
             ActivePanel.HIDDEN,
             -> {
-                MediaPlayerPane(
-                    mediaState = mediaState,
-                    defaultAudioPackage = defaultAudioPackage,
-                    onSetDefaultAudioPackage = onSetDefaultAudioPackage,
-                    albumArtMode = albumArtMode,
-                    onAlbumArtModeChange = onAlbumArtModeChange,
-                    onPlayPause = onMediaPlayPause,
-                    onSkipPrevious = onMediaSkipPrevious,
-                    onSkipNext = onMediaSkipNext,
-                    onToggleLike = onMediaToggleLike,
-                    reduceTopInset = reduceTopInset,
-                    modifier = Modifier.fillMaxSize(),
-                )
+                Column(modifier = Modifier.fillMaxSize()) {
+                    MediaSessionGlanceWidget(
+                        mapEngine = mapEngine,
+                        showTraffic = showTraffic,
+                        tomTomApiKey = tomTomApiKey,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .weight(0.4f),
+                    )
+                    MediaPlayerPane(
+                        mediaState = mediaState,
+                        defaultAudioPackage = defaultAudioPackage,
+                        onSetDefaultAudioPackage = onSetDefaultAudioPackage,
+                        albumArtMode = albumArtMode,
+                        onAlbumArtModeChange = onAlbumArtModeChange,
+                        onPlayPause = onMediaPlayPause,
+                        onSkipPrevious = onMediaSkipPrevious,
+                        onSkipNext = onMediaSkipNext,
+                        onToggleLike = onMediaToggleLike,
+                        reduceTopInset = reduceTopInset,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .weight(0.6f),
+                    )
+                }
             }
         }
     }

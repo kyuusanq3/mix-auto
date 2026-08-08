@@ -32,4 +32,17 @@ object DeveloperSettings {
      * show the approximate-location icon in search/detail UI.
      */
     const val APPROXIMATE_POI_CONFIDENCE_CEILING: Float = 0.7f
+
+    /**
+     * true  = legacy centered album-art tile + long-press mode picker (PLAIN/VINYL/VISUALIZER)
+     * false = immersive layout (opaque album-art background, title/artist top, bar visualizer bottom;
+     *         long-press opens Audio Settings; gesture help Info lives in Audio Settings)
+     */
+    const val USE_LEGACY_MEDIA_PLAYER_LAYOUT: Boolean = false
+
+    /**
+     * true  = show dashboard status strip (time/date/weather/traffic) and its Settings toggle
+     * false = hide strip and toggle (default)
+     */
+    const val SHOW_STATUS_STRIP: Boolean = false
 }

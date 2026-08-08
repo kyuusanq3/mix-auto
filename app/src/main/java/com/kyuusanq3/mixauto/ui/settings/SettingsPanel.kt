@@ -112,15 +112,17 @@ internal fun SettingsContent(
                 )
             }
 
-            SettingsSwitchRow(
-                label = "Status strip (time, date, weather)",
-                checked = showStatusStrip,
-                onCheckedChange = { checked ->
-                    if (checked != showStatusStrip) {
-                        onToggleShowStatusStrip()
-                    }
-                },
-            )
+            if (DeveloperSettings.SHOW_STATUS_STRIP) {
+                SettingsSwitchRow(
+                    label = "Status strip (time, date, weather)",
+                    checked = showStatusStrip,
+                    onCheckedChange = { checked ->
+                        if (checked != showStatusStrip) {
+                            onToggleShowStatusStrip()
+                        }
+                    },
+                )
+            }
 
             SettingsSwitchRow(
                 label = "System status bar",

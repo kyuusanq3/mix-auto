@@ -243,7 +243,7 @@ private fun NavigationVoiceVolumeSection(
             onValueChange = onVolumeChange,
             valueRange = LauncherPreferences.MIN_NAVIGATION_VOICE_VOLUME..
                 LauncherPreferences.MAX_NAVIGATION_VOICE_VOLUME,
-            steps = 8,
+            steps = 4,
             modifier = Modifier
                 .fillMaxWidth()
                 .height(CarDimensions.MinTapTarget),
