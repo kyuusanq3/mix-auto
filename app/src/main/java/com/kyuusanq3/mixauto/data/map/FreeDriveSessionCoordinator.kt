@@ -68,6 +68,7 @@ internal class FreeDriveSessionCoordinator(
 
         val map = mapLibreMap()
         map?.let { navigationCamera().prepareForFreeDriveCamera(it) }
+        setHasSnappedCameraToGps(false)
 
         updateUiState {
             MapUiState(

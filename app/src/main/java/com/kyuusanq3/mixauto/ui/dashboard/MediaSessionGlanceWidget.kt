@@ -100,6 +100,9 @@ fun MediaSessionGlanceWidget(
     val amPmText = remember(now, locale) {
         now.format(DateTimeFormatter.ofPattern("a", locale))
     }
+    val dateText = remember(now, locale) {
+        now.format(DateTimeFormatter.ofPattern("MMM d yyyy", locale))
+    }
     val trafficLevel = overallTrafficLevel(
         showTraffic = showTraffic,
         tomTomApiKey = tomTomApiKey,
@@ -120,6 +123,12 @@ fun MediaSessionGlanceWidget(
     val amPmStyle = MaterialTheme.typography.headlineMedium.copy(
         fontSize = 22.sp,
         lineHeight = 26.sp,
+        color = OnDark.copy(alpha = 0.72f),
+        platformStyle = PlatformTextStyle(includeFontPadding = false),
+    )
+    val dateStyle = MaterialTheme.typography.headlineSmall.copy(
+        fontSize = 16.sp,
+        lineHeight = 20.sp,
         color = OnDark.copy(alpha = 0.72f),
         platformStyle = PlatformTextStyle(includeFontPadding = false),
     )
@@ -162,6 +171,11 @@ fun MediaSessionGlanceWidget(
                 modifier = Modifier.padding(start = 8.dp, bottom = 8.dp),
             )
         }
+        Text(
+            text = dateText,
+            style = dateStyle,
+            maxLines = 1,
+        )
         Spacer(modifier = Modifier.height(10.dp))
         Row(
             modifier = Modifier.fillMaxWidth(),

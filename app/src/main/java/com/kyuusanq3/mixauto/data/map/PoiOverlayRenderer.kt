@@ -73,8 +73,8 @@ internal fun poiIconOnlyLayerProperties(iconImageExpression: Expression): Array<
         PropertyFactory.iconAnchor(Property.ICON_ANCHOR_CENTER),
         PropertyFactory.iconAllowOverlap(true),
         PropertyFactory.iconSize(1f),
-        PropertyFactory.iconPitchAlignment(Property.ICON_PITCH_ALIGNMENT_MAP),
-        PropertyFactory.iconRotationAlignment(Property.ICON_ROTATION_ALIGNMENT_MAP),
+        PropertyFactory.iconPitchAlignment(Property.ICON_PITCH_ALIGNMENT_VIEWPORT),
+        PropertyFactory.iconRotationAlignment(Property.ICON_ROTATION_ALIGNMENT_VIEWPORT),
     )
 }
 

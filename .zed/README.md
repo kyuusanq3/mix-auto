@@ -9,6 +9,7 @@ Agent model/profile settings live in **user** Zed config (`%APPDATA%\Zed\setting
 | Profile | **MixAuto Write** (fixes) or **MixAuto Ask** (plan-only) |
 | Model | `mixauto-qwen3-coder:30b` (or `:14b`) |
 | Slash | `/map-bug …` / `/map-plan …` / `/local-map-triage` |
+| Conductor (optional) | `/local-opencode` — global skill (`~/.agents/skills/`); host must **not** edit app source; spawns OpenCode. Everyday edits: `/local-opencode-loop` |
 
 **MixAuto Write** disables `list_directory` (Zed often returns empty for `.`, which derails local models).
 

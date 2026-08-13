@@ -42,3 +42,6 @@ MIXAUTO_VERIFY_DONE.txt
 # Accidental style/asset backups from local LLM edits
 *.backup
 *.json.backup
+
+# /local-opencode scratch space (patch drafts, prompts, run logs) — never app source
+temp_opencode/
