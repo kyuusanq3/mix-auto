@@ -5,16 +5,16 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.DirectionsCar
-import androidx.compose.material.icons.filled.KeyboardArrowRight
+import androidx.compose.material.icons.filled.KeyboardArrowLeft
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -29,13 +29,14 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.PlatformTextStyle
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.kyuusanq3.mixauto.data.map.TrafficFlowLevel
 import com.kyuusanq3.mixauto.domain.map.CarMapEngine
+import com.kyuusanq3.mixauto.domain.media.MediaPlaybackState
 import com.kyuusanq3.mixauto.ui.status.StatusBarViewModel
 import com.kyuusanq3.mixauto.ui.theme.CarDimensions
 import com.kyuusanq3.mixauto.ui.theme.DeepCharcoal
@@ -50,14 +51,19 @@ import java.time.format.DateTimeFormatter
 import java.util.Locale
 import kotlinx.coroutines.delay
 
-/** Glance strip stacked above MediaPlayerPane; shares StatusBarViewModel with DashboardStatusBar. */
+private const val TRAFFIC_REFRESH_MS = 3 * 60 * 1000L
+
+/** Phase 3 sidebar for the minimized audio player: chevron + time + weather + traffic + visualizer + album art. */
 @Composable
-fun MediaSessionGlanceWidget(
+internal fun AudioPlayerMinimizedSidebar(
+    onToggleMinimized: () -> Unit,
+    chevronAlignment: Alignment = Alignment.TopCenter,
     mapEngine: CarMapEngine,
     showTraffic: Boolean,
     tomTomApiKey: String,
-    onToggleMinimized: (() -> Unit)? = null,
-    chevronAlignment: Alignment = Alignment.TopCenter,
+    mediaState: MediaPlaybackState,
+    albumArtMode: AlbumArtMode,
+    isPortrait: Boolean,
     modifier: Modifier = Modifier,
 ) {
     val statusBarViewModel: StatusBarViewModel = viewModel()
@@ -99,15 +105,13 @@ fun MediaSessionGlanceWidget(
     }
 
     val locale = Locale.getDefault()
-    val timeText = remember(now, locale) {
-        now.format(DateTimeFormatter.ofPattern("h:mm", locale))
-    }
-    val amPmText = remember(now, locale) {
-        now.format(DateTimeFormatter.ofPattern("a", locale))
-    }
-    val dateText = remember(now, locale) {
-        now.format(DateTimeFormatter.ofPattern("MMM d yyyy", locale))
-    }
+    val hourText = remember(now, locale) { now.format(DateTimeFormatter.ofPattern("h", locale)) }
+    val minuteText = remember(now, locale) { now.format(DateTimeFormatter.ofPattern("mm", locale)) }
+    val amPmText = remember(now, locale) { now.format(DateTimeFormatter.ofPattern("a", locale)) }
+    val monthText = remember(now, locale) { now.format(DateTimeFormatter.ofPattern("MMM", locale)) }
+    val dayText = remember(now, locale) { now.format(DateTimeFormatter.ofPattern("d", locale)) }
+    val yearText = remember(now, locale) { now.format(DateTimeFormatter.ofPattern("yyyy", locale)) }
+
     val trafficLevel = overallTrafficLevel(
         showTraffic = showTraffic,
         tomTomApiKey = tomTomApiKey,
@@ -118,22 +122,16 @@ fun MediaSessionGlanceWidget(
     )
     val trafficTint = trafficIconColor(trafficLevel)
 
-    val timeStyle = MaterialTheme.typography.displayLarge.copy(
-        fontSize = 56.sp,
-        lineHeight = 60.sp,
+    val timeStyle = MaterialTheme.typography.headlineMedium.copy(
+        fontSize = 28.sp,
+        lineHeight = 32.sp,
         fontWeight = FontWeight.Bold,
         color = OnDark,
         platformStyle = PlatformTextStyle(includeFontPadding = false),
     )
-    val amPmStyle = MaterialTheme.typography.headlineMedium.copy(
-        fontSize = 22.sp,
-        lineHeight = 26.sp,
-        color = OnDark.copy(alpha = 0.72f),
-        platformStyle = PlatformTextStyle(includeFontPadding = false),
-    )
-    val dateStyle = MaterialTheme.typography.headlineSmall.copy(
-        fontSize = 16.sp,
-        lineHeight = 20.sp,
+    val labelStyle = MaterialTheme.typography.labelMedium.copy(
+        fontSize = 14.sp,
+        lineHeight = 18.sp,
         color = OnDark.copy(alpha = 0.72f),
         platformStyle = PlatformTextStyle(includeFontPadding = false),
     )
@@ -142,9 +140,9 @@ fun MediaSessionGlanceWidget(
         lineHeight = 32.sp,
         platformStyle = PlatformTextStyle(includeFontPadding = false),
     )
-    val weatherTempStyle = MaterialTheme.typography.headlineMedium.copy(
-        fontSize = 24.sp,
-        lineHeight = 28.sp,
+    val weatherTempStyle = MaterialTheme.typography.labelLarge.copy(
+        fontSize = 18.sp,
+        lineHeight = 22.sp,
         color = ElectricCyan,
         platformStyle = PlatformTextStyle(includeFontPadding = false),
     )
@@ -153,86 +151,82 @@ fun MediaSessionGlanceWidget(
         modifier = modifier
             .fillMaxSize()
             .background(DeepCharcoal)
-            .padding(
-                horizontal = CarDimensions.StatusStripPaddingHorizontal,
-                vertical = 12.dp,
-            ),
-        verticalArrangement = Arrangement.Center,
+            .padding(CarDimensions.PaneGap),
+        verticalArrangement = Arrangement.spacedBy(4.dp, Alignment.Top),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        if (onToggleMinimized != null) {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable(onClick = onToggleMinimized)
-                    .padding(bottom = 6.dp),
-                contentAlignment = chevronAlignment,
-            ) {
-                Icon(
-                    imageVector = Icons.Filled.KeyboardArrowRight,
-                    contentDescription = "Minimize audio player",
-                    tint = OnDark,
-                    modifier = Modifier.size(32.dp),
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable(onClick = onToggleMinimized)
+                .padding(bottom = 4.dp),
+            contentAlignment = chevronAlignment,
+        ) {
+            Icon(
+                imageVector = Icons.Filled.KeyboardArrowLeft,
+                contentDescription = "Expand audio player",
+                tint = OnDark,
+                modifier = Modifier.size(32.dp),
+            )
+        }
+        Text(text = hourText, style = timeStyle, maxLines = 1, textAlign = TextAlign.Center)
+        Text(text = minuteText, style = timeStyle, maxLines = 1, textAlign = TextAlign.Center)
+        Text(text = amPmText, style = labelStyle, maxLines = 1, textAlign = TextAlign.Center)
+        Text(text = monthText, style = labelStyle, maxLines = 1, textAlign = TextAlign.Center)
+        Text(text = dayText, style = labelStyle, maxLines = 1, textAlign = TextAlign.Center)
+        Text(text = yearText, style = labelStyle, maxLines = 1, textAlign = TextAlign.Center)
+        when {
+            weatherState.isLoading -> {
+                Text(text = "...", style = weatherTempStyle, maxLines = 1, textAlign = TextAlign.Center)
+            }
+            weatherState.snapshot != null -> {
+                Text(text = weatherState.snapshot!!.symbol, style = weatherIconStyle, maxLines = 1, textAlign = TextAlign.Center)
+            }
+            else -> {
+                Text(text = "--", style = weatherIconStyle, maxLines = 1, textAlign = TextAlign.Center)
+            }
+        }
+        when {
+            weatherState.isLoading -> {
+                Text(text = "...", style = weatherTempStyle, maxLines = 1, textAlign = TextAlign.Center)
+            }
+            weatherState.snapshot != null -> {
+                val snap = weatherState.snapshot!!
+                Text(
+                    text = snap.temperatureC.toString() + "\u00B0C",
+                    style = weatherTempStyle,
+                    maxLines = 1,
+                    textAlign = TextAlign.Center,
                 )
             }
-        }
-        Row(
-            verticalAlignment = Alignment.Bottom,
-            horizontalArrangement = Arrangement.Center,
-        ) {
-            Text(
-                text = timeText,
-                style = timeStyle,
-                maxLines = 1,
-            )
-            Text(
-                text = amPmText,
-                style = amPmStyle,
-                maxLines = 1,
-                modifier = Modifier.padding(start = 8.dp, bottom = 8.dp),
-            )
-        }
-        Text(
-            text = dateText,
-            style = dateStyle,
-            maxLines = 1,
-        )
-        Spacer(modifier = Modifier.height(10.dp))
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(16.dp, Alignment.CenterHorizontally),
-        ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(4.dp),
-            ) {
-                when {
-                    weatherState.isLoading -> {
-                        Text(text = "...", style = weatherTempStyle, maxLines = 1)
-                    }
-                    weatherState.snapshot != null -> {
-                        val snap = weatherState.snapshot!!
-                        Text(text = snap.symbol, style = weatherIconStyle, maxLines = 1)
-                        Text(
-                            text = "${snap.temperatureC}\u00B0C",
-                            style = weatherTempStyle,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                    }
-                    else -> {
-                        Text(text = "--", style = weatherTempStyle, maxLines = 1)
-                    }
-                }
+            else -> {
+                Text(text = "--", style = weatherTempStyle, maxLines = 1, textAlign = TextAlign.Center)
             }
-            Icon(
-                imageVector = Icons.Filled.DirectionsCar,
-                contentDescription = "Traffic",
-                tint = trafficTint,
-                modifier = Modifier.size(36.dp),
-            )
         }
+        Icon(
+            imageVector = Icons.Filled.DirectionsCar,
+            contentDescription = "Traffic",
+            tint = trafficTint,
+            modifier = Modifier.size(32.dp),
+        )
+        if (!isPortrait) {
+            Spacer(modifier = Modifier.weight(1f))
+        }
+        DockMiniVisualizer(
+            isPlaying = mediaState.isPlaying,
+            playbackPositionMs = mediaState.playbackPositionMs,
+            barCount = 5,
+            modifier = Modifier.fillMaxWidth().height(28.dp),
+        )
+        AlbumArtModeContent(
+            mode = AlbumArtMode.PLAIN,
+            albumArt = mediaState.albumArt,
+            isPlaying = mediaState.isPlaying,
+            playbackPositionMs = mediaState.playbackPositionMs,
+            modifier = Modifier
+                .fillMaxWidth(0.8f)
+                .aspectRatio(1f),
+        )
     }
 }
 
@@ -266,5 +260,3 @@ private fun trafficIconColor(level: TrafficFlowLevel?): Color = when (level) {
     TrafficFlowLevel.HEAVY -> TrafficFlowHeavy
     null -> OnDark.copy(alpha = 0.45f)
 }
-
-private const val TRAFFIC_REFRESH_MS = 3 * 60 * 1000L

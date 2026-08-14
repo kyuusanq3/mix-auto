@@ -52,7 +52,9 @@ TomTomApiKeyVerifier.kt — TomTom API key probe
 TomTomIncidentHeadlines.kt — nearby incident headlines + TTL cache
 TomTomRouteJamFinder.kt — route-corridor jam lookup
 MapInteractionController.kt — map tap/long-press, custom pin draft, reverse geocode
-NavigationSessionCoordinator.kt — navigate, startNavigation, reroute, lighter-traffic alternate; routeTrafficSections on applyActiveRoute
+NavigationSessionCoordinator.kt — navigate, startNavigation, reroute, lighter-traffic alternate; routeTrafficSections on applyActiveRoute; maneuver-fork prefetch/adopt
+ManeuverAlternatePlanner.kt — pure per-turn fork math (5 min gate, next-turn pick, adopt)
+ManeuverAlternateCoordinator.kt — stash OSRM forks at Navigate, grey next-turn line, adopt RouteResult
 OfflineRegionCatalog.kt — offline_regions.json catalog load
 OfflineRegionMetadata.kt — offline region SDK metadata parse / resumability
 OfflineProgressFormatting.kt — offline progress/size formatters + OfflineRegionInstallState, PendingOfflineResume

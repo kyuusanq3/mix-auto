@@ -7,7 +7,7 @@
 | `temp_dir` | `%TEMP%\mix-auto-opencode\` |
 | `verify_cmd` | `powershell.exe -NoProfile -ExecutionPolicy Bypass -File "./scripts/verify-debug.ps1"` |
 | `verify_done` | `MIXAUTO_VERIFY_DONE` |
-| `verify_notes` | Gradle may sit silent for minutes — ScriptOnly idle **300s**. After test / Turn A edits add `-UnitTestCompile`. Stale `UP-TO-DATE` after a non-empty owner diff → force `:app:compileDebugKotlin --rerun-tasks`. Never `&&`; never `.\scripts\` under Git Bash. |
+| `verify_notes` | Gradle may sit silent for minutes — ScriptOnly idle **300s**. After test / Turn A edits add `-UnitTestCompile`. Stale `UP-TO-DATE` after a non-empty owner diff → force `:app:compileDebugKotlin --rerun-tasks`. Never `&&`; never `.\scripts\` under Git Bash. Do not delete overlay temp_dir at wrap-up (Zed delete_path confirm stalls queued turns). Kotlin/Compose: `Replace-OnceInRepo` asserts missing imports / Arrangement-vs-Alignment on simulated `.kt` (TSK-016, TSK-025). |
 | `opencode_skills_edit_once` | `local-opencode-loop`; map bugs → `local-map-triage`; map features → `local-map-feature` (Turns A→B→C, one turn per run) |
 | `forbid_skills_script_first` | Edit, Write, triage/feature/apk, pitch tools (unless `-AllowPitchTools`) |
 | `default_apply` | `script-first` for multi-hunk / Compose / EOL; `edit-once` only for narrow body fills |
@@ -26,3 +26,4 @@ Optional: same command + `-UnitTestCompile` when unit tests / Turn A are in scop
 
 - `recommend-model.ps1 -TaskClass <class> -Project mix-auto`
 - Product loop + package map: `AGENTS.md` — do not duplicate here.
+- Conductor Step 3a: one phase per turn (TSK-016 packed the whole minimized pane — split like TSK-017..024). Write ≤2 owners unless the third is a flag/constant + call site. Split extra phases, then still OpenCode phase 1 — do not implement as conductor because it looks “too full-stack for 14B.”

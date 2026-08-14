@@ -45,4 +45,10 @@ object DeveloperSettings {
      * false = hide strip and toggle (default)
      */
     const val SHOW_STATUS_STRIP: Boolean = false
+
+    /**
+     * true  = show the dock music side control (DockMusicSideControl) in the shortcut bar
+     * false = hide dock music side control (default; audio player accessed via other means)
+     */
+    const val SHOW_DOCK_MUSIC_SIDE_CONTROL: Boolean = false
 }

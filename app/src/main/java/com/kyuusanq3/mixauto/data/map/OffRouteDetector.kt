@@ -26,6 +26,8 @@ private const val HIGH_SPEED_SNAP_BLEND_MPS = 15f
 internal class OffRouteDetector(
     private val projectionForLocation: (Location) -> RouteProjection?,
     private val onReroute: (origin: Location, destLat: Double, destLng: Double) -> Unit,
+    private val visibleManeuverAlternateGeometry: () -> List<LatLng> = { emptyList() },
+    private val onAdoptManeuverAlternate: () -> Unit = {},
 ) {
     var offRouteCount: Int = 0
     var isRerouteInProgress: Boolean = false
@@ -53,6 +55,20 @@ internal class OffRouteDetector(
 
         val distToRoute = projectionForLocation(currentLocation)?.distToRouteM
             ?: distanceToRouteMeters(currentLocation, routeGeometryPoints)
+        val altPts = visibleManeuverAlternateGeometry()
+        if (altPts.size >= 2) {
+            val distAlt = distanceToRouteMeters(currentLocation, altPts)
+            if (ManeuverAlternatePlanner.shouldAdoptAlternate(distToRoute, distAlt)) {
+                offRouteCount = 0
+                Log.i(TAG, "Adopting maneuver alternate")
+                onAdoptManeuverAlternate()
+                return
+            }
+            if (distAlt <= ON_ROUTE_PROGRESS_MAX_M) {
+                offRouteCount = 0
+                return
+            }
+        }
         if (distToRoute > REROUTE_THRESHOLD_M) {
             offRouteCount++
             Log.i(TAG, "Off route: ${distToRoute.toInt()}m from path (count=$offRouteCount)")

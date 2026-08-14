@@ -34,6 +34,7 @@ import com.kyuusanq3.mixauto.ui.theme.OledBlack
 import java.io.File
 
 private const val OVERLAY_MAP_MEDIA_RATIO = 0.4f
+private const val AUDIO_PLAYER_MINIMIZED_MEDIA_WEIGHT = 0.06f
 
 private fun dismissToBasePanel(musicPaneEnabled: Boolean): ActivePanel =
     if (musicPaneEnabled) ActivePanel.MEDIA else ActivePanel.HIDDEN
@@ -315,10 +316,16 @@ fun DashboardScreen(
             activePanel == ActivePanel.POI_DETAIL ||
             activePanel == ActivePanel.MAP_DATA ||
             activePanel == ActivePanel.AUDIO_SETTINGS
-    val effectiveMapMediaRatio =
-        if (isSplitLockedForOverlay) OVERLAY_MAP_MEDIA_RATIO else mapMediaRatio
+    val audioPlayerMinimized =
+        launcherViewModel.isAudioPlayerMinimized && activePanel == ActivePanel.MEDIA
+    val effectiveMapMediaRatio = when {
+        isSplitLockedForOverlay -> OVERLAY_MAP_MEDIA_RATIO
+        audioPlayerMinimized -> 1f - AUDIO_PLAYER_MINIMIZED_MEDIA_WEIGHT
+        else -> mapMediaRatio
+    }
     val effectiveMediaWeight = 1f - effectiveMapMediaRatio
-    val showMapMediaDivider = showSecondaryPane && !isSplitLockedForOverlay
+    val showMapMediaDivider =
+        showSecondaryPane && !isSplitLockedForOverlay && !audioPlayerMinimized
     var portraitMapMediaContainerPx by remember { mutableStateOf(0f) }
     var landscapeMapMediaContainerPx by remember { mutableStateOf(0f) }
     var verticalDockRowWidthPx by remember { mutableStateOf(0f) }
@@ -421,6 +428,9 @@ fun DashboardScreen(
             onCheckForUpdate = appUpdateViewModel::checkForUpdate,
             onDownloadUpdate = appUpdateViewModel::downloadUpdate,
             onInstallApk = onInstallApk,
+            isAudioPlayerMinimized = audioPlayerMinimized,
+            onToggleAudioPlayerMinimized = launcherViewModel::toggleAudioPlayerMinimized,
+            isPortrait = isPortrait,
         ),
         dock = DashboardDockProps(
             shortcutIconSize = shortcutIconSize,

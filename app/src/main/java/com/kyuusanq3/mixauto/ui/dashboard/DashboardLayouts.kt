@@ -102,6 +102,9 @@ internal data class DashboardSecondaryPaneProps(
     val onCheckForUpdate: () -> Unit,
     val onDownloadUpdate: () -> Unit,
     val onInstallApk: (File) -> Unit,
+    val isAudioPlayerMinimized: Boolean,
+    val onToggleAudioPlayerMinimized: () -> Unit,
+    val isPortrait: Boolean,
 )
 
 internal data class DashboardDockProps(
@@ -217,6 +220,9 @@ internal fun DashboardSecondaryPaneSlot(
         onCheckForUpdate = props.onCheckForUpdate,
         onDownloadUpdate = props.onDownloadUpdate,
         onInstallApk = props.onInstallApk,
+        isAudioPlayerMinimized = props.isAudioPlayerMinimized,
+        onToggleAudioPlayerMinimized = props.onToggleAudioPlayerMinimized,
+        isPortrait = props.isPortrait,
         modifier = modifier,
     )
 }

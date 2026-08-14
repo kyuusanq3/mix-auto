@@ -188,7 +188,9 @@ class MapLibreEngineImpl(
     private var savedPlacesCache = emptyList<SearchResultPlace>()
     private var routeGeometryPoints: List<LatLng> = emptyList()
     private var routeTrafficSections: List<TomTomTrafficSection> = emptyList()
-    private val offRouteDetector = OffRouteDetector(
+    private var maneuverAltGeometryProvider: () -> List<LatLng> = { emptyList() }
+    private var adoptManeuverAlternateHandler: () -> Unit = {}
+    private val offRouteDetector: OffRouteDetector = OffRouteDetector(
         projectionForLocation = ::projectionForLocation,
         onReroute = { origin, destLat, destLng ->
             lastKnownLocation = LatLng(origin.latitude, origin.longitude)
@@ -200,6 +202,8 @@ class MapLibreEngineImpl(
                 bearing,
             )
         },
+        visibleManeuverAlternateGeometry = { maneuverAltGeometryProvider() },
+        onAdoptManeuverAlternate = { adoptManeuverAlternateHandler() },
     )
     private val encounteredPlacesSampler = EncounteredPlacesSampler(
         engineScope = engineScope,
@@ -324,7 +328,10 @@ class MapLibreEngineImpl(
             showRouteThenDive = routeOverviewController::showRouteThenDive,
             enterNavigationCamera = navigationCamera::enterNavigationCamera,
             refreshTrafficOverlay = ::refreshTrafficOverlay,
-        )
+        ).also { coord ->
+            maneuverAltGeometryProvider = { coord.visibleManeuverAlternateGeometry() }
+            adoptManeuverAlternateHandler = { coord.adoptVisibleManeuverAlternate() }
+        }
     }
 
     private val mapInteractionController by lazy {
@@ -523,7 +530,10 @@ class MapLibreEngineImpl(
             navigationCameraTransitionActive = { navRef!!.navigationCameraTransitionActive },
             fullRouteSteps = { fullRouteSteps },
             currentStepIndex = { currentStepIndex },
-            setCurrentStepIndex = { currentStepIndex = it },
+            setCurrentStepIndex = { idx ->
+                currentStepIndex = idx
+                navigationSessionCoordinator.onManeuverStepChanged(idx)
+            },
             destinationLatLng = { destinationLatLng },
             navigationArrivalTriggered = { navigationArrivalTriggered },
             setNavigationArrivalTriggered = { navigationArrivalTriggered = it },
@@ -612,6 +622,7 @@ class MapLibreEngineImpl(
                 offRouteDetector.reset()
                 hasSnappedCameraToGps = false
                 navigationSessionCoordinator.clearLighterTrafficAlternate()
+                navigationSessionCoordinator.clearManeuverAlternates()
             },
             clearCustomPin = { poiSelectionController.clearCustomPin() },
             clearRoutePreviewState = {

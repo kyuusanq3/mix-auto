@@ -31,6 +31,12 @@ alwaysApply: false
 - Fallback when OSRM empty: TomTom-only route via `tomTomToRouteResult()`
 - Unit tests: `ConventionalRouteSelectorTest.kt`
 
+## In-nav maneuver forks (OSRM per main turn)
+
+- Phase 1 (Navigate): `ManeuverAlternateCoordinator.prefetch` fetches OSRM `alternatives=3` from each upcoming main turn (`turn`/`merge`/`fork`/`roundabout`/`end of road`, remaining ≥ **1500 m**) to the same destination; keep only forks whose duration is within **±5 min** of the original remaining ETA and that are geometrically distinct from the original **suffix** from that maneuver (`remainingGeometryFromManeuver` + `LighterTrafficHelper.routesAreSimilar`)
+- Phase 2 (during nav): grey line via `RouteRenderer.showManeuverAlternate()` (`ROUTE_OSRM_ALT_*`) only for the **next** step (`alternateForNextTurn`); refresh on step advance (`setCurrentStepIndex` → `onManeuverStepChanged`)
+- Driver takes the fork: `OffRouteDetector` treats the grey line as on-route (`distAlt ≤ 25 m` suppresses reroute); adopt when `distToPrimary > 35 m` and `distAlt ≤ 25 m` → `adoptVisibleManeuverAlternate()` applies the stashed `RouteResult` (no overview). Cleared on free-drive / reroute / adopt
+
 ## In-nav lighter-traffic alternate
 
 - When TomTom returns a geometrically distinct route that is ≥**60 s** faster than conventional **or** has `trafficDelaySeconds ≤ 60` and shorter ETA, show grey line (`ROUTE_LIGHTER_TRAFFIC_*` in `RouteRenderer`) + **"Lighter traffic"** chip in `CarMapViewContainer`

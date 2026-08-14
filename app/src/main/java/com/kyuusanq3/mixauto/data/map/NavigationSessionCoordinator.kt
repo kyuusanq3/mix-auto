@@ -71,6 +71,17 @@ internal class NavigationSessionCoordinator(
     private val refreshTrafficOverlay: () -> Unit,
 ) {
 
+    private val maneuverAlts = ManeuverAlternateCoordinator(
+        engineScope = engineScope,
+        mapLibreMap = mapLibreMap,
+        routeRenderer = routeRenderer,
+        getCurrentStepIndex = getCurrentStepIndex,
+        getDestinationLatLng = getDestinationLatLng,
+        fetchOsrmFromBranch = { latA, lngA, latB, lngB ->
+            fetchOsrmRoutesWithAlternatives(lngA, latA, lngB, latB)
+        },
+    )
+
     fun navigateToCoordinates(lat: Double, lng: Double) {
         val ctx = appContext()
         var origin = getLastKnownLocation() ?: ctx?.let { readLastKnownLocation(it) }
@@ -162,6 +173,7 @@ internal class NavigationSessionCoordinator(
             try {
                 if (isReroute) {
                     clearLighterTrafficAlternate()
+                    clearManeuverAlternates()
                     val originRadius = REROUTE_ORIGIN_RADIUS_M
                     val osrmRoutes = withContext(Dispatchers.IO) {
                         fetchOsrmRoutesWithAlternatives(
@@ -337,6 +349,7 @@ internal class NavigationSessionCoordinator(
         setCurrentStepIndex(0)
         drawRoute()
         prefetchNavTrafficHint(route)
+        maneuverAlts.prefetch(route)
     }
 
     private fun prefetchNavTrafficHint(route: RouteResult) {
@@ -410,6 +423,31 @@ internal class NavigationSessionCoordinator(
         originRadiusM,
         originBearingDeg,
     )
+
+    fun visibleManeuverAlternateGeometry(): List<LatLng> = maneuverAlts.visibleGeometry()
+
+    fun onManeuverStepChanged(stepIndex: Int) {
+        maneuverAlts.refreshVisible(stepIndex)
+    }
+
+    fun adoptVisibleManeuverAlternate() {
+        val route = maneuverAlts.visibleRoute() ?: return
+        offRouteDetector().offRouteCount = 0
+        offRouteDetector().offRouteGraceUntilMs = System.currentTimeMillis() + 8_000L
+        clearLighterTrafficAlternate()
+        applyActiveRoute(route)
+        updateUiState {
+            it.copy(
+                streetName = route.streetName,
+                turnInstruction = route.instruction,
+                distanceToNextTurn = route.distance,
+            )
+        }
+    }
+
+    fun clearManeuverAlternates() {
+        maneuverAlts.clear()
+    }
 
     companion object {
         private const val TAG = "NavigationSessionCoordinator"

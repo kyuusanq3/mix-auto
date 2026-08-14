@@ -52,6 +52,7 @@ internal fun decideRouteProgressUpdate(
 
 internal enum class AltRouteStyle {
     LIGHTER_TRAFFIC,
+    MANEUVER,
 }
 
 /**
@@ -117,6 +118,22 @@ internal class RouteRenderer(
 
     fun clearLighterTrafficAlternate(style: Style) {
         clearAltLayer(style, ROUTE_TOMTOM_SOURCE_ID)
+    }
+
+    fun showManeuverAlternate(style: Style, points: List<LatLng>) {
+        ensureRouteLayers(style)
+        setAltRouteGeoJson(
+            style,
+            ROUTE_OSRM_ALT_SOURCE_ID,
+            ROUTE_OSRM_ALT_LAYER_ID,
+            points,
+            AltRouteStyle.MANEUVER,
+        )
+        ensurePuckAboveOverlays()
+    }
+
+    fun clearManeuverAlternate(style: Style) {
+        clearAltLayer(style, ROUTE_OSRM_ALT_SOURCE_ID)
     }
 
     fun restackRouteLayersAbove(style: Style, anchorLayerId: String) {
@@ -358,6 +375,13 @@ internal class RouteRenderer(
                     PropertyFactory.lineColor(ROUTE_LIGHTER_TRAFFIC_COLOR),
                     PropertyFactory.lineWidth(ROUTE_LIGHTER_TRAFFIC_WIDTH),
                     PropertyFactory.lineOpacity(ROUTE_LIGHTER_TRAFFIC_OPACITY),
+                    PropertyFactory.lineCap(Property.LINE_CAP_ROUND),
+                    PropertyFactory.lineJoin(Property.LINE_JOIN_ROUND),
+                )
+                AltRouteStyle.MANEUVER -> LineLayer(layerId, sourceId).withProperties(
+                    PropertyFactory.lineColor(ROUTE_OSRM_ALT_COLOR),
+                    PropertyFactory.lineWidth(ROUTE_OSRM_ALT_WIDTH),
+                    PropertyFactory.lineOpacity(ROUTE_OSRM_ALT_OPACITY),
                     PropertyFactory.lineCap(Property.LINE_CAP_ROUND),
                     PropertyFactory.lineJoin(Property.LINE_JOIN_ROUND),
                 )

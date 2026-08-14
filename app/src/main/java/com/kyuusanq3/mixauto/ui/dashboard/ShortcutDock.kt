@@ -25,6 +25,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.kyuusanq3.mixauto.domain.media.MediaPlaybackState
 import com.kyuusanq3.mixauto.ui.components.loadAudioPlayerPackageNames
+import com.kyuusanq3.mixauto.ui.settings.DeveloperSettings
 import com.kyuusanq3.mixauto.ui.theme.CarDimensions
 import com.kyuusanq3.mixauto.ui.theme.DeepCharcoal
 import com.kyuusanq3.mixauto.ui.theme.ElectricCyan
@@ -166,35 +167,39 @@ fun ShortcutDock(
                                 onVoiceSearch = onVoiceSearch,
                             )
                         }
-                        key(DOCK_MUSIC_CONTROL_KEY) {
-                            Box(modifier = Modifier.align(Alignment.CenterEnd)) {
-                                DockMusicSideControl(
-                                    activePanel = activePanel,
-                                    mediaState = mediaState,
-                                    isHorizontal = true,
-                                    isLeftHandDrive = isLeftHandDrive,
-                                    tapTarget = tapTarget,
-                                    iconSize = iconSize,
-                                    activeIndicatorPlacement = activeIndicatorPlacement,
-                                    edgePadding = 2.dp,
-                                    onToggleMusicPane = { onTogglePanel(ActivePanel.MEDIA) },
-                                )
+                        if (DeveloperSettings.SHOW_DOCK_MUSIC_SIDE_CONTROL) {
+                            key(DOCK_MUSIC_CONTROL_KEY) {
+                                Box(modifier = Modifier.align(Alignment.CenterEnd)) {
+                                    DockMusicSideControl(
+                                        activePanel = activePanel,
+                                        mediaState = mediaState,
+                                        isHorizontal = true,
+                                        isLeftHandDrive = isLeftHandDrive,
+                                        tapTarget = tapTarget,
+                                        iconSize = iconSize,
+                                        activeIndicatorPlacement = activeIndicatorPlacement,
+                                        edgePadding = 2.dp,
+                                        onToggleMusicPane = { onTogglePanel(ActivePanel.MEDIA) },
+                                    )
+                                }
                             }
                         }
                     } else {
-                        key(DOCK_MUSIC_CONTROL_KEY) {
-                            Box(modifier = Modifier.align(Alignment.CenterStart)) {
-                                DockMusicSideControl(
-                                    activePanel = activePanel,
-                                    mediaState = mediaState,
-                                    isHorizontal = true,
-                                    isLeftHandDrive = isLeftHandDrive,
-                                    tapTarget = tapTarget,
-                                    iconSize = iconSize,
-                                    activeIndicatorPlacement = activeIndicatorPlacement,
-                                    edgePadding = 2.dp,
-                                    onToggleMusicPane = { onTogglePanel(ActivePanel.MEDIA) },
-                                )
+                        if (DeveloperSettings.SHOW_DOCK_MUSIC_SIDE_CONTROL) {
+                            key(DOCK_MUSIC_CONTROL_KEY) {
+                                Box(modifier = Modifier.align(Alignment.CenterStart)) {
+                                    DockMusicSideControl(
+                                        activePanel = activePanel,
+                                        mediaState = mediaState,
+                                        isHorizontal = true,
+                                        isLeftHandDrive = isLeftHandDrive,
+                                        tapTarget = tapTarget,
+                                        iconSize = iconSize,
+                                        activeIndicatorPlacement = activeIndicatorPlacement,
+                                        edgePadding = 2.dp,
+                                        onToggleMusicPane = { onTogglePanel(ActivePanel.MEDIA) },
+                                    )
+                                }
                             }
                         }
                         Box(modifier = Modifier.align(Alignment.CenterEnd)) {
@@ -251,18 +256,20 @@ fun ShortcutDock(
                             onSelectAudioSource = onSelectAudioSource,
                         )
                     }
-                    key(DOCK_MUSIC_CONTROL_KEY) {
-                        DockMusicSideControl(
-                            activePanel = activePanel,
-                            mediaState = mediaState,
-                            isHorizontal = false,
-                            isLeftHandDrive = isLeftHandDrive,
-                            tapTarget = tapTarget,
-                            iconSize = iconSize,
-                            activeIndicatorPlacement = activeIndicatorPlacement,
-                            edgePadding = 2.dp,
-                            onToggleMusicPane = { onTogglePanel(ActivePanel.MEDIA) },
-                        )
+                    if (DeveloperSettings.SHOW_DOCK_MUSIC_SIDE_CONTROL) {
+                        key(DOCK_MUSIC_CONTROL_KEY) {
+                            DockMusicSideControl(
+                                activePanel = activePanel,
+                                mediaState = mediaState,
+                                isHorizontal = false,
+                                isLeftHandDrive = isLeftHandDrive,
+                                tapTarget = tapTarget,
+                                iconSize = iconSize,
+                                activeIndicatorPlacement = activeIndicatorPlacement,
+                                edgePadding = 2.dp,
+                                onToggleMusicPane = { onTogglePanel(ActivePanel.MEDIA) },
+                            )
+                        }
                     }
                 }
             }

@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.kyuusanq3.mixauto.domain.map.CarMapEngine
@@ -104,6 +105,9 @@ internal fun DashboardSecondaryPane(
     onCheckForUpdate: () -> Unit,
     onDownloadUpdate: () -> Unit,
     onInstallApk: (File) -> Unit,
+    isAudioPlayerMinimized: Boolean,
+    onToggleAudioPlayerMinimized: () -> Unit,
+    isPortrait: Boolean,
     modifier: Modifier = Modifier,
 ) {
     MediaOrSettingsPane(
@@ -174,6 +178,9 @@ internal fun DashboardSecondaryPane(
         onCheckForUpdate = onCheckForUpdate,
         onDownloadUpdate = onDownloadUpdate,
         onInstallApk = onInstallApk,
+        isAudioPlayerMinimized = isAudioPlayerMinimized,
+        onToggleAudioPlayerMinimized = onToggleAudioPlayerMinimized,
+        isPortrait = isPortrait,
         modifier = modifier,
     )
 }
@@ -247,10 +254,18 @@ private fun MediaOrSettingsPane(
     onCheckForUpdate: () -> Unit,
     onDownloadUpdate: () -> Unit,
     onInstallApk: (File) -> Unit,
+    isAudioPlayerMinimized: Boolean,
+    onToggleAudioPlayerMinimized: () -> Unit,
+    isPortrait: Boolean,
     modifier: Modifier = Modifier,
 ) {
     val mapUiState by mapEngine.uiState.collectAsStateWithLifecycle()
     val selectedPoi = mapUiState.selectedPoi
+    val audioPlayerChevronAlignment = when {
+        isPortrait -> Alignment.TopCenter
+        isLeftHandDrive -> Alignment.TopStart
+        else -> Alignment.TopEnd
+    }
 
     Box(modifier = modifier) {
         when (activePanel) {
@@ -366,30 +381,46 @@ private fun MediaOrSettingsPane(
             ActivePanel.MEDIA,
             ActivePanel.HIDDEN,
             -> {
-                Column(modifier = Modifier.fillMaxSize()) {
-                    MediaSessionGlanceWidget(
+                if (isAudioPlayerMinimized && activePanel == ActivePanel.MEDIA) {
+                    AudioPlayerMinimizedSidebar(
+                        onToggleMinimized = onToggleAudioPlayerMinimized,
+                        chevronAlignment = audioPlayerChevronAlignment,
                         mapEngine = mapEngine,
                         showTraffic = showTraffic,
                         tomTomApiKey = tomTomApiKey,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .weight(0.4f),
-                    )
-                    MediaPlayerPane(
                         mediaState = mediaState,
-                        defaultAudioPackage = defaultAudioPackage,
-                        onSetDefaultAudioPackage = onSetDefaultAudioPackage,
                         albumArtMode = albumArtMode,
-                        onAlbumArtModeChange = onAlbumArtModeChange,
-                        onPlayPause = onMediaPlayPause,
-                        onSkipPrevious = onMediaSkipPrevious,
-                        onSkipNext = onMediaSkipNext,
-                        onToggleLike = onMediaToggleLike,
-                        reduceTopInset = reduceTopInset,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .weight(0.6f),
+                        isPortrait = isPortrait,
+                        modifier = Modifier.fillMaxSize(),
                     )
+                } else {
+                    Column(modifier = Modifier.fillMaxSize()) {
+                        MediaSessionGlanceWidget(
+                            mapEngine = mapEngine,
+                            showTraffic = showTraffic,
+                            tomTomApiKey = tomTomApiKey,
+                            onToggleMinimized = if (activePanel == ActivePanel.MEDIA) onToggleAudioPlayerMinimized else null,
+                            chevronAlignment = audioPlayerChevronAlignment,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .weight(0.4f),
+                        )
+                        MediaPlayerPane(
+                            mediaState = mediaState,
+                            defaultAudioPackage = defaultAudioPackage,
+                            onSetDefaultAudioPackage = onSetDefaultAudioPackage,
+                            albumArtMode = albumArtMode,
+                            onAlbumArtModeChange = onAlbumArtModeChange,
+                            onPlayPause = onMediaPlayPause,
+                            onSkipPrevious = onMediaSkipPrevious,
+                            onSkipNext = onMediaSkipNext,
+                            onToggleLike = onMediaToggleLike,
+                            reduceTopInset = reduceTopInset,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .weight(0.6f),
+                        )
+                    }
                 }
             }
         }

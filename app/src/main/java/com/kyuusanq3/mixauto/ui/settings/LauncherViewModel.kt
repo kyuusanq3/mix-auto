@@ -121,6 +121,9 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     var musicPaneEnabled by mutableStateOf(preferences.musicPaneEnabled)
         private set
 
+    var isAudioPlayerMinimized by mutableStateOf(false)
+        internal set
+
     var rememberEncounteredPlaces by mutableStateOf(preferences.rememberEncounteredPlaces)
         private set
 
@@ -245,6 +248,14 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     fun updateMusicPaneEnabled(enabled: Boolean) {
         musicPaneEnabled = enabled
         preferences.musicPaneEnabled = enabled
+    }
+
+    fun toggleAudioPlayerMinimized() {
+        isAudioPlayerMinimized = !isAudioPlayerMinimized
+    }
+
+    fun setAudioPlayerMinimized(value: Boolean) {
+        isAudioPlayerMinimized = value
     }
 
     fun toggleLimitSearchDistance() {
