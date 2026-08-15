@@ -27,3 +27,4 @@ Optional: same command + `-UnitTestCompile` when unit tests / Turn A are in scop
 - `recommend-model.ps1 -TaskClass <class> -Project mix-auto`
 - Product loop + package map: `AGENTS.md` — do not duplicate here.
 - Conductor Step 3a: one phase per turn (TSK-016 packed the whole minimized pane — split like TSK-017..024). Write ≤2 owners unless the third is a flag/constant + call site. Split extra phases, then still OpenCode phase 1 — do not implement as conductor because it looks “too full-stack for 14B.”
+- T1A/T0 spawn: `.agents/skills` product skills are junctions to `.opencode/skills`. OpenCode `duplicate skill name` ×4 is noise (one body kept), not doubled prefill. On launcher kill 56, Read `OPENCODE_STDERR_LOG` before concluding the junior produced nothing.

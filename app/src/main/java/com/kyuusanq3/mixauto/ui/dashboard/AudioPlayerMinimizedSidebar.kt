@@ -4,6 +4,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.aspectRatio
@@ -15,6 +16,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.DirectionsCar
 import androidx.compose.material.icons.filled.KeyboardArrowLeft
+import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.foundation.layout.width
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -105,7 +108,7 @@ internal fun AudioPlayerMinimizedSidebar(
     }
 
     val locale = Locale.getDefault()
-    val hourText = remember(now, locale) { now.format(DateTimeFormatter.ofPattern("h", locale)) }
+    val hourText = remember(now, locale) { now.format(DateTimeFormatter.ofPattern("hh", locale)) }
     val minuteText = remember(now, locale) { now.format(DateTimeFormatter.ofPattern("mm", locale)) }
     val amPmText = remember(now, locale) { now.format(DateTimeFormatter.ofPattern("a", locale)) }
     val monthText = remember(now, locale) { now.format(DateTimeFormatter.ofPattern("MMM", locale)) }
@@ -147,12 +150,31 @@ internal fun AudioPlayerMinimizedSidebar(
         platformStyle = PlatformTextStyle(includeFontPadding = false),
     )
 
+    if (isPortrait) {
+        PortraitMinimizedBar(
+            onToggleMinimized = onToggleMinimized,
+            hourText = hourText,
+            minuteText = minuteText,
+            amPmText = amPmText,
+            monthText = monthText,
+            dayText = dayText,
+            weatherState = weatherState,
+            weatherTempStyle = weatherTempStyle,
+            labelStyle = labelStyle,
+            timeStyle = timeStyle,
+            trafficTint = trafficTint,
+            mediaState = mediaState,
+            modifier = modifier,
+        )
+        return
+    }
+
     Column(
         modifier = modifier
             .fillMaxSize()
             .background(DeepCharcoal)
             .padding(CarDimensions.PaneGap),
-        verticalArrangement = Arrangement.spacedBy(4.dp, Alignment.Top),
+        verticalArrangement = Arrangement.spacedBy(SECTION_GAP, Alignment.Top),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Box(
@@ -169,54 +191,72 @@ internal fun AudioPlayerMinimizedSidebar(
                 modifier = Modifier.size(32.dp),
             )
         }
-        Text(text = hourText, style = timeStyle, maxLines = 1, textAlign = TextAlign.Center)
-        Text(text = minuteText, style = timeStyle, maxLines = 1, textAlign = TextAlign.Center)
-        Text(text = amPmText, style = labelStyle, maxLines = 1, textAlign = TextAlign.Center)
-        Text(text = monthText, style = labelStyle, maxLines = 1, textAlign = TextAlign.Center)
-        Text(text = dayText, style = labelStyle, maxLines = 1, textAlign = TextAlign.Center)
-        Text(text = yearText, style = labelStyle, maxLines = 1, textAlign = TextAlign.Center)
-        when {
-            weatherState.isLoading -> {
-                Text(text = "...", style = weatherTempStyle, maxLines = 1, textAlign = TextAlign.Center)
+
+        Column(
+            verticalArrangement = Arrangement.spacedBy(ITEM_GAP),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Text(text = hourText, style = timeStyle, maxLines = 1, textAlign = TextAlign.Center)
+            Text(text = minuteText, style = timeStyle, maxLines = 1, textAlign = TextAlign.Center)
+            Text(text = amPmText, style = labelStyle, maxLines = 1, textAlign = TextAlign.Center)
+        }
+
+        Column(
+            verticalArrangement = Arrangement.spacedBy(ITEM_GAP),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Text(text = dayText, style = labelStyle, maxLines = 1, textAlign = TextAlign.Center)
+            Text(text = monthText, style = labelStyle, maxLines = 1, textAlign = TextAlign.Center)
+            Text(text = yearText, style = labelStyle, maxLines = 1, textAlign = TextAlign.Center)
+        }
+
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(ITEM_GAP),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            when {
+                weatherState.isLoading -> {
+                    Text(text = "...", style = weatherIconStyle, maxLines = 1, textAlign = TextAlign.Center)
+                }
+                weatherState.snapshot != null -> {
+                    Text(text = weatherState.snapshot!!.symbol, style = weatherIconStyle, maxLines = 1, textAlign = TextAlign.Center)
+                }
+                else -> {
+                    Text(text = "--", style = weatherIconStyle, maxLines = 1, textAlign = TextAlign.Center)
+                }
             }
-            weatherState.snapshot != null -> {
-                Text(text = weatherState.snapshot!!.symbol, style = weatherIconStyle, maxLines = 1, textAlign = TextAlign.Center)
-            }
-            else -> {
-                Text(text = "--", style = weatherIconStyle, maxLines = 1, textAlign = TextAlign.Center)
+            when {
+                weatherState.isLoading -> {
+                    Text(text = "...", style = weatherTempStyle, maxLines = 1, textAlign = TextAlign.Center)
+                }
+                weatherState.snapshot != null -> {
+                    val snap = weatherState.snapshot!!
+                    Text(
+                        text = snap.temperatureC.toString() + "\u00B0C",
+                        style = weatherTempStyle,
+                        maxLines = 1,
+                        textAlign = TextAlign.Center,
+                    )
+                }
+                else -> {
+                    Text(text = "--", style = weatherTempStyle, maxLines = 1, textAlign = TextAlign.Center)
+                }
             }
         }
-        when {
-            weatherState.isLoading -> {
-                Text(text = "...", style = weatherTempStyle, maxLines = 1, textAlign = TextAlign.Center)
-            }
-            weatherState.snapshot != null -> {
-                val snap = weatherState.snapshot!!
-                Text(
-                    text = snap.temperatureC.toString() + "\u00B0C",
-                    style = weatherTempStyle,
-                    maxLines = 1,
-                    textAlign = TextAlign.Center,
-                )
-            }
-            else -> {
-                Text(text = "--", style = weatherTempStyle, maxLines = 1, textAlign = TextAlign.Center)
-            }
-        }
+
         Icon(
             imageVector = Icons.Filled.DirectionsCar,
             contentDescription = "Traffic",
             tint = trafficTint,
             modifier = Modifier.size(32.dp),
         )
-        if (!isPortrait) {
-            Spacer(modifier = Modifier.weight(1f))
-        }
+        Spacer(modifier = Modifier.weight(1f))
         DockMiniVisualizer(
             isPlaying = mediaState.isPlaying,
             playbackPositionMs = mediaState.playbackPositionMs,
             barCount = 5,
-            modifier = Modifier.fillMaxWidth().height(28.dp),
+            wide = true,
+            modifier = Modifier.fillMaxWidth().height(56.dp),
         )
         AlbumArtModeContent(
             mode = AlbumArtMode.PLAIN,
@@ -224,11 +264,85 @@ internal fun AudioPlayerMinimizedSidebar(
             isPlaying = mediaState.isPlaying,
             playbackPositionMs = mediaState.playbackPositionMs,
             modifier = Modifier
-                .fillMaxWidth(0.8f)
+                .fillMaxWidth()
                 .aspectRatio(1f),
         )
     }
 }
+
+/** Compact horizontal bar for the minimized audio player in portrait: drag-down collapses to this strip. */
+@Composable
+private fun PortraitMinimizedBar(
+    onToggleMinimized: () -> Unit,
+    hourText: String,
+    minuteText: String,
+    amPmText: String,
+    monthText: String,
+    dayText: String,
+    weatherState: com.kyuusanq3.mixauto.ui.status.WeatherUiState,
+    weatherTempStyle: androidx.compose.ui.text.TextStyle,
+    labelStyle: androidx.compose.ui.text.TextStyle,
+    timeStyle: androidx.compose.ui.text.TextStyle,
+    trafficTint: Color,
+    mediaState: MediaPlaybackState,
+    modifier: Modifier = Modifier,
+) {
+    val barTimeStyle = timeStyle.copy(fontSize = 20.sp, lineHeight = 24.sp)
+    Row(
+        modifier = modifier
+            .fillMaxSize()
+            .background(DeepCharcoal)
+            .clickable(onClick = onToggleMinimized)
+            .padding(horizontal = CarDimensions.PaneGap, vertical = 4.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            imageVector = Icons.Filled.KeyboardArrowUp,
+            contentDescription = "Expand audio player",
+            tint = OnDark,
+            modifier = Modifier.size(24.dp),
+        )
+        Text(
+            text = "$hourText:$minuteText $amPmText",
+            style = barTimeStyle,
+            maxLines = 1,
+        )
+        Text(
+            text = "$monthText $dayText",
+            style = labelStyle,
+            maxLines = 1,
+        )
+        when {
+            weatherState.isLoading -> Text(text = "...", style = weatherTempStyle, maxLines = 1)
+            weatherState.snapshot != null -> {
+                val snap = weatherState.snapshot!!
+                Text(
+                    text = snap.symbol + " " + snap.temperatureC.toString() + "\u00B0C",
+                    style = weatherTempStyle,
+                    maxLines = 1,
+                )
+            }
+            else -> Text(text = "--", style = weatherTempStyle, maxLines = 1)
+        }
+        Icon(
+            imageVector = Icons.Filled.DirectionsCar,
+            contentDescription = "Traffic",
+            tint = trafficTint,
+            modifier = Modifier.size(22.dp),
+        )
+        Spacer(modifier = Modifier.weight(1f))
+        DockMiniVisualizer(
+            isPlaying = mediaState.isPlaying,
+            playbackPositionMs = mediaState.playbackPositionMs,
+            barCount = 5,
+            modifier = Modifier.width(48.dp).height(24.dp),
+        )
+    }
+}
+
+private val SECTION_GAP = 16.dp
+private val ITEM_GAP = 2.dp
 
 private fun overallTrafficLevel(
     showTraffic: Boolean,

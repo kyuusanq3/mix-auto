@@ -59,10 +59,10 @@ internal fun MapMediaDividerHandle(
                         onHorizontalDrag = { change, dragAmount ->
                             change.consume()
                             if (containerSizePx > 0f) {
-                                totalDragPx += if (invertDrag) -dragAmount else dragAmount
-                                val newRatio = (dragStartRatio + totalDragPx / containerSizePx)
-                                    .coerceIn(0.3f, 0.8f)
-                                onMapMediaRatioChange(newRatio)
+totalDragPx += if (invertDrag) -dragAmount else dragAmount
+val rawRatio = dragStartRatio + totalDragPx / containerSizePx
+val newRatio = if (rawRatio > 0.8f) rawRatio else rawRatio.coerceIn(0.3f, 0.8f)
+onMapMediaRatioChange(newRatio)
                             }
                         },
                     )
@@ -76,8 +76,8 @@ internal fun MapMediaDividerHandle(
                             change.consume()
                             if (containerSizePx > 0f) {
                                 totalDragPx += dragAmount
-                                val newRatio = (dragStartRatio + totalDragPx / containerSizePx)
-                                    .coerceIn(0.3f, 0.8f)
+                                val rawRatio = dragStartRatio + totalDragPx / containerSizePx // portrait overshoot
+                                val newRatio = if (rawRatio > 0.8f) rawRatio else rawRatio.coerceIn(0.3f, 0.8f)
                                 onMapMediaRatioChange(newRatio)
                             }
                         },

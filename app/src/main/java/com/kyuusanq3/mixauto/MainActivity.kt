@@ -75,6 +75,7 @@ class MainActivity : ComponentActivity() {
         mapHostViewModel = ViewModelProvider(this)[MapHostViewModel::class.java]
         val mapEngine: CarMapEngine = mapHostViewModel.mapEngine
         val navigationVoiceController = mapHostViewModel.navigationVoiceController
+        mapHostViewModel.handleSharedIntent(intent)
 
         MediaSessionRepository.getInstance(this)
         launcherViewModel = ViewModelProvider(this)[LauncherViewModel::class.java]
@@ -97,6 +98,7 @@ class MainActivity : ComponentActivity() {
                         ),
                     )
                     val mediaState by mediaViewModel.mediaState.collectAsStateWithLifecycle()
+                    val pendingSharedPlace by mapHostViewModel.pendingSharedPlace.collectAsStateWithLifecycle()
 
                     SideEffect {
                         applySystemBarVisibility(launcherViewModel.showSystemStatusBar)
@@ -228,6 +230,8 @@ class MainActivity : ComponentActivity() {
                     onToggleShowStatusStrip = launcherViewModel::toggleShowStatusStrip,
                     onToggleShowSystemStatusBar = launcherViewModel::toggleShowSystemStatusBar,
                     onInstallApk = ::launchApkInstall,
+                    pendingSharedPlace = pendingSharedPlace,
+                    onConsumeSharedPlace = mapHostViewModel::consumeSharedPlace,
                 )
 
                     if (showOnboarding) {
@@ -250,6 +254,14 @@ class MainActivity : ComponentActivity() {
         }
         if (!shouldShowOnboarding) {
             requestLocationPermissionIfNeeded()
+        }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        if (::mapHostViewModel.isInitialized) {
+            mapHostViewModel.handleSharedIntent(intent)
         }
     }
 

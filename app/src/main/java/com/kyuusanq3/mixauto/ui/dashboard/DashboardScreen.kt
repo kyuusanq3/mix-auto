@@ -34,7 +34,7 @@ import com.kyuusanq3.mixauto.ui.theme.OledBlack
 import java.io.File
 
 private const val OVERLAY_MAP_MEDIA_RATIO = 0.4f
-private const val AUDIO_PLAYER_MINIMIZED_MEDIA_WEIGHT = 0.06f
+private const val AUDIO_PLAYER_MINIMIZED_MEDIA_WEIGHT = 0.09f
 
 private fun dismissToBasePanel(musicPaneEnabled: Boolean): ActivePanel =
     if (musicPaneEnabled) ActivePanel.MEDIA else ActivePanel.HIDDEN
@@ -53,7 +53,16 @@ private fun DashboardScreenEffects(
     onDismissAddPlacePanel: () -> Unit,
     onDismissSelectedPoi: () -> Unit,
     onDismissPanel: () -> Unit,
+    pendingSharedPlace: SearchResultPlace?,
+    onConsumeSharedPlace: () -> Unit,
 ) {
+    LaunchedEffect(pendingSharedPlace) {
+        pendingSharedPlace?.let { place ->
+            mapEngine.focusOnPoi(place, moveCamera = true)
+            onConsumeSharedPlace()
+        }
+    }
+
     LaunchedEffect(activePanel) {
         if (activePanel == ActivePanel.APP_DRAWER) {
             onEnsureLaunchableAppsLoaded()
@@ -160,6 +169,8 @@ fun DashboardScreen(
     onToggleShowStatusStrip: () -> Unit,
     onToggleShowSystemStatusBar: () -> Unit,
     onInstallApk: (File) -> Unit,
+    pendingSharedPlace: SearchResultPlace? = null,
+    onConsumeSharedPlace: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val launcherViewModel: LauncherViewModel = viewModel()
@@ -346,6 +357,8 @@ fun DashboardScreen(
         onDismissAddPlacePanel = onDismissAddPlacePanel,
         onDismissSelectedPoi = onDismissSelectedPoi,
         onDismissPanel = onDismissPanel,
+        pendingSharedPlace = pendingSharedPlace,
+        onConsumeSharedPlace = onConsumeSharedPlace,
     )
 
     val statusStripVisible = DeveloperSettings.SHOW_STATUS_STRIP && showStatusStrip

@@ -7,7 +7,7 @@ Conductor settings for OpenCode turns (verify, model, temp dir, skills): [`LOCAL
 
 User messages may be one line. Do **not** ask which component.
 
-**Zed Agent:** profile **MixAuto Write** (fixes) or **MixAuto Ask** (plan) � both disable `list_directory` (empty `.` listings stall local models). Model: `mixauto-qwen3-coder:30b`. First tool: `skill` / slash � `/local-opencode-loop` then `/local-map-triage` or `/map-bug <symptom>`; plan ? `/map-plan`. Skills: `.agents/skills/` (junctions to `.opencode/skills/`). See [`.zed/README.md`](.zed/README.md).
+**Zed Agent:** profile **MixAuto Write** (fixes) or **MixAuto Ask** (plan) � both disable `list_directory` (empty `.` listings stall local models). Model: `mixauto-qwen3-coder:30b`. First tool: `skill` / slash � `/local-opencode-loop` then `/local-map-triage` or `/map-bug <symptom>`; plan ? `/map-plan`. Skills: `.agents/skills/` (junctions to `.opencode/skills/`). OpenCode still walks both trees and warns `duplicate skill name` four times per session — it keeps one body, so T0/T1A prefill is not doubled. See [`.zed/README.md`](.zed/README.md).
 
 **OpenCode:** `skill` ? `local-opencode-loop`; map bug ? `local-map-triage`; new map/camera feature ? `local-map-feature`; commands `/map-bug` / `/map-plan`.
 
@@ -196,7 +196,7 @@ This guide stays high-level on purpose � implementation lessons, gotchas, and 
 - **Zed Agent skills** (`.agents/skills/` � junctions to OpenCode bodies): `/local-opencode-loop` (verify gate), `/local-map-triage` (map bugs), `/local-map-feature` (new map/camera behavior), `/local-apk` (GitHub release only), `/map-bug` / `/map-plan` (slash shortcuts)
 - **Zed `/local-opencode` (conductor, optional):** global skill at `~/.agents/skills/local-opencode` (junction to `~/.cursor/skills/local-opencode`); personal rule in `%APPDATA%\Zed\AGENTS.md`. Host must not edit app source -- spawn OpenCode. Everyday MixAuto edits stay on `/local-opencode-loop`.
 - **Zed Ollama + profiles:** `mixauto-qwen3-coder:30b` / `:14b` ([`tools/ollama/`](tools/ollama/), [`scripts/create-mixauto-ollama-models.ps1`](scripts/create-mixauto-ollama-models.ps1)); user Zed profiles **MixAuto Write** / **MixAuto Ask** (disable `list_directory`); notes in [`.zed/README.md`](.zed/README.md)
-- OpenCode: same skill bodies under `.opencode/skills/`; `opencode.json` agent prompts + `.opencode/commands/` for `/map-bug` / `/map-plan`
+- OpenCode: same skill bodies under `.opencode/skills/`; `opencode.json` agent prompts + `.opencode/commands/` for `/map-bug` / `/map-plan`. Duplicate-name warnings vs `.agents/skills/` are expected (junctions); OpenCode keeps one body.
 - OpenCode junior training / postmortems / scorecard (not product): `C:\dev\proj\opencode-training\` — see `postmortems/README.md`
 - Cursor review of local-LLM diffs: `/local-llm-review` ? `~/.cursor/skills/local-llm-review` (personal; not in repo)
 

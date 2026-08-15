@@ -160,22 +160,7 @@ fun MediaSessionGlanceWidget(
         verticalArrangement = Arrangement.Center,
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        if (onToggleMinimized != null) {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable(onClick = onToggleMinimized)
-                    .padding(bottom = 6.dp),
-                contentAlignment = chevronAlignment,
-            ) {
-                Icon(
-                    imageVector = Icons.Filled.KeyboardArrowRight,
-                    contentDescription = "Minimize audio player",
-                    tint = OnDark,
-                    modifier = Modifier.size(32.dp),
-                )
-            }
-        }
+        // no glance chevron
         Row(
             verticalAlignment = Alignment.Bottom,
             horizontalArrangement = Arrangement.Center,

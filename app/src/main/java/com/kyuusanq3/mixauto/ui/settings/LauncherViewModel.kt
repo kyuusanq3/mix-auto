@@ -241,6 +241,10 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     }
 
     fun updateMapMediaRatio(value: Float) {
+        if (value > 0.8f) {
+            isAudioPlayerMinimized = true
+            return
+        }
         mapMediaRatio = value
         preferences.mapMediaRatio = value
     }
@@ -252,6 +256,9 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
 
     fun toggleAudioPlayerMinimized() {
         isAudioPlayerMinimized = !isAudioPlayerMinimized
+        if (!isAudioPlayerMinimized) {
+            updateMapMediaRatio(0.8f)
+        }
     }
 
     fun setAudioPlayerMinimized(value: Boolean) {
