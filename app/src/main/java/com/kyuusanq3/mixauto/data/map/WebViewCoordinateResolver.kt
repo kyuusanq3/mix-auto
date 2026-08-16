@@ -35,6 +35,11 @@ internal object WebViewCoordinateResolver {
             val mainHandler = Handler(Looper.getMainLooper())
             var webView: WebView? = null
             var finished = false
+            // Google's page URL often gets a rough @lat,lng map-camera-center hop before the
+            // JS resolves the precise !3d/!4d pin for the actual business/POI a few hundred ms
+            // later -- accepting @lat,lng immediately can land kilometers from the real place.
+            // Keep it only as a last-resort fallback if the precise pin never shows up in time.
+            var cameraFallback: Pair<Double, Double>? = null
 
             fun finish(result: Pair<Double, Double>?) {
                 if (finished) return
@@ -44,17 +49,23 @@ internal object WebViewCoordinateResolver {
                     webView?.destroy()
                     webView = null
                 }
-                if (continuation.isActive) continuation.resume(result)
+                if (continuation.isActive) continuation.resume(result ?: cameraFallback)
             }
 
             fun tryExtract(pageUrl: String?): Boolean {
                 if (pageUrl == null) return false
-                val match = PIN_COORDINATES_REGEX.find(pageUrl) ?: CAMERA_COORDINATES_REGEX.find(pageUrl)
-                if (match != null) {
+                PIN_COORDINATES_REGEX.find(pageUrl)?.let { match ->
                     val (lat, lng) = match.destructured
-                    Log.d(TAG, "WebViewCoordinateResolver: resolved lat=$lat lng=$lng from $pageUrl")
+                    Log.d(TAG, "WebViewCoordinateResolver: resolved precise pin lat=$lat lng=$lng from $pageUrl")
                     finish(lat.toDouble() to lng.toDouble())
                     return true
+                }
+                CAMERA_COORDINATES_REGEX.find(pageUrl)?.let { match ->
+                    val (lat, lng) = match.destructured
+                    if (cameraFallback == null) {
+                        Log.d(TAG, "WebViewCoordinateResolver: camera-center lat=$lat lng=$lng (fallback only)")
+                    }
+                    cameraFallback = lat.toDouble() to lng.toDouble()
                 }
                 return false
             }
@@ -94,7 +105,11 @@ internal object WebViewCoordinateResolver {
                 }
                 mainHandler.postDelayed(::poll, POLL_INTERVAL_MS)
                 mainHandler.postDelayed({
-                    Log.w(TAG, "WebViewCoordinateResolver: timed out after ${TIMEOUT_MS}ms")
+                    Log.w(
+                        TAG,
+                        "WebViewCoordinateResolver: timed out after ${TIMEOUT_MS}ms, " +
+                            "cameraFallback=$cameraFallback",
+                    )
                     finish(null)
                 }, TIMEOUT_MS)
                 view.loadUrl(url)

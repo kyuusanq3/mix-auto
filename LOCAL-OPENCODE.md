@@ -10,7 +10,7 @@
 | `verify_notes` | Gradle may sit silent for minutes — ScriptOnly idle **300s**. After test / Turn A edits add `-UnitTestCompile`. Stale `UP-TO-DATE` after a non-empty owner diff → force `:app:compileDebugKotlin --rerun-tasks`. Never `&&`; never `.\scripts\` under Git Bash. Do not delete overlay temp_dir at wrap-up (Zed delete_path confirm stalls queued turns). Kotlin/Compose: `Replace-OnceInRepo` asserts missing imports / Arrangement-vs-Alignment on simulated `.kt` (TSK-016, TSK-025). |
 | `opencode_skills_edit_once` | `local-opencode-loop`; map bugs → `local-map-triage`; map features → `local-map-feature` (Turns A→B→C, one turn per run) |
 | `forbid_skills_script_first` | Edit, Write, triage/feature/apk, pitch tools (unless `-AllowPitchTools`) |
-| `default_apply` | `script-first` for multi-hunk / Compose / EOL; `edit-once` only for narrow body fills |
+| `default_apply` | `script-first` for multi-hunk / Compose / EOL / **new helpers or quoted UA strings**; `edit-once` only for narrow body fills (FIND ≈ REPLACE). T1A `spec-gate` fails `new_declaration` / `new_quoted_literal` / `generate_heavy` (TSK-038). |
 | `owners_hint` | See `AGENTS.md` / `llms.txt`; map puck/camera → map-engine owners |
 
 ## Verify (shell-only step 3)
@@ -28,3 +28,4 @@ Optional: same command + `-UnitTestCompile` when unit tests / Turn A are in scop
 - Product loop + package map: `AGENTS.md` — do not duplicate here.
 - Conductor Step 3a: one phase per turn (TSK-016 packed the whole minimized pane — split like TSK-017..024). Write ≤2 owners unless the third is a flag/constant + call site. Split extra phases, then still OpenCode phase 1 — do not implement as conductor because it looks “too full-stack for 14B.”
 - T1A/T0 spawn: `.agents/skills` product skills are junctions to `.opencode/skills`. OpenCode `duplicate skill name` ×4 is noise (one body kept), not doubled prefill. On launcher kill 56, Read `OPENCODE_STDERR_LOG` before concluding the junior produced nothing.
+- T1A copy-fill (TSK-038): do not invoke `/local-opencode-t1a` for a new helper / `const val` / User-Agent string. `spec-gate.ps1` fails those; use T0.

@@ -45,3 +45,6 @@ MIXAUTO_VERIFY_DONE.txt
 
 # /local-opencode scratch space (patch drafts, prompts, run logs) — never app source
 temp_opencode/
+
+# Local planning notes (not product)
+to-dos/

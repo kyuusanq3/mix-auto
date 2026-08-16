@@ -4,13 +4,11 @@ import android.content.Context
 import android.database.sqlite.SQLiteDatabase
 import android.location.Location
 import android.net.Uri
-import android.provider.OpenableColumns
 import android.util.Log
 import com.kyuusanq3.mixauto.data.map.rankSearchResults
 import com.kyuusanq3.mixauto.domain.map.SearchResultPlace
 import com.kyuusanq3.mixauto.ui.settings.DeveloperSettings
 import java.io.File
-import java.io.InputStream
 
 class LocalPlacesRepository(context: Context) {
 
@@ -23,6 +21,17 @@ class LocalPlacesRepository(context: Context) {
     private var database: SQLiteDatabase? = null
     private var activeIsoCode: String? = null
     private var fts5Available: Boolean = true
+
+    private val downloader = LocalPlacesDownloader(
+        appContext = appContext,
+        placesDir = placesDir,
+        dbLock = dbLock,
+        databaseFile = ::databaseFile,
+        prepareDatabaseFileReplacement = ::prepareDatabaseFileReplacement,
+        openDatabase = ::openDatabase,
+        readMeta = ::readMeta,
+        deleteDatabase = ::deleteDatabase,
+    )
 
     init {
         placesDir.mkdirs()
@@ -185,140 +194,16 @@ class LocalPlacesRepository(context: Context) {
         isoCode: String,
         url: String,
         onProgress: (Float) -> Unit,
-    ): Result<LocalDbMeta> {
-        return try {
-            val connection = java.net.URL(url).openConnection() as java.net.HttpURLConnection
-            connection.connectTimeout = DOWNLOAD_CONNECT_TIMEOUT_MS
-            connection.readTimeout = DOWNLOAD_READ_TIMEOUT_MS
-            connection.setRequestProperty("User-Agent", DOWNLOAD_USER_AGENT)
-            connection.instanceFollowRedirects = true
+    ): Result<LocalDbMeta> = downloader.downloadDatabaseFromUrl(isoCode, url, onProgress)
 
-            try {
-                if (connection.responseCode !in 200..299) {
-                    return Result.failure(
-                        Exception("Download failed: HTTP ${connection.responseCode}"),
-                    )
-                }
-
-                val totalBytes = connection.contentLengthLong.takeIf { it > 0L }
-                    ?: connection.getHeaderField("Content-Length")?.toLongOrNull()
-                    ?: -1L
-
-                val rawStream = connection.inputStream
-                val inputStream = if (url.endsWith(".gz", ignoreCase = true)) {
-                    java.util.zip.GZIPInputStream(rawStream)
-                } else {
-                    rawStream
-                }
-
-                inputStream.use { input ->
-                    copyToDatabaseFile(isoCode, input, totalBytes, onProgress)
-                }
-
-                val meta = readMeta(isoCode)
-                    ?: return Result.failure(Exception("Downloaded file is not a valid places database"))
-
-                if (!openDatabase(meta.countryIso)) {
-                    return Result.failure(Exception("Downloaded database could not be opened"))
-                }
-
-                Result.success(meta)
-            } finally {
-                connection.disconnect()
-            }
-        } catch (exception: Exception) {
-            Log.w(TAG, "Failed to download database from $url", exception)
-            deleteDatabase(isoCode)
-            Result.failure(exception)
-        }
-    }
-
-    fun installFromAsset(assetPath: String, isoCode: String): Boolean {
-        return try {
-            appContext.assets.open(assetPath).use { input ->
-                copyToDatabaseFile(isoCode, input)
-            }
-            openDatabase(isoCode)
-        } catch (exception: Exception) {
-            Log.w(TAG, "Failed to install asset $assetPath for $isoCode", exception)
-            databaseFile(isoCode).delete()
-            false
-        }
-    }
+    fun installFromAsset(assetPath: String, isoCode: String): Boolean =
+        downloader.installFromAsset(assetPath, isoCode)
 
     fun importDatabaseFromUri(
         defaultIsoCode: String,
         uri: Uri,
         onProgress: (Float) -> Unit,
-    ): Result<LocalDbMeta> {
-        val resolver = appContext.contentResolver
-        val totalBytes = resolver.query(uri, arrayOf(OpenableColumns.SIZE), null, null, null)
-            ?.use { cursor ->
-                if (cursor.moveToFirst()) {
-                    val index = cursor.getColumnIndex(OpenableColumns.SIZE)
-                    if (index >= 0) cursor.getLong(index) else -1L
-                } else {
-                    -1L
-                }
-            } ?: -1L
-
-        return try {
-            resolver.openInputStream(uri)?.use { input ->
-                copyToDatabaseFile(defaultIsoCode, input, totalBytes, onProgress)
-            } ?: return Result.failure(Exception("Could not read selected file"))
-
-            val meta = readMeta(defaultIsoCode)
-                ?: return Result.failure(Exception("Imported file is not a valid places database"))
-
-            if (!openDatabase(meta.countryIso)) {
-                return Result.failure(Exception("Imported database could not be opened"))
-            }
-
-            Result.success(meta)
-        } catch (exception: Exception) {
-            Log.w(TAG, "Failed to import database from $uri", exception)
-            deleteDatabase(defaultIsoCode)
-            Result.failure(exception)
-        }
-    }
-
-    private fun copyToDatabaseFile(
-        isoCode: String,
-        input: InputStream,
-        totalBytes: Long = -1L,
-        onProgress: ((Float) -> Unit)? = null,
-    ) {
-        val targetFile = databaseFile(isoCode)
-        val tempFile = File(placesDir, "${isoCode.lowercase()}.db.tmp")
-        targetFile.parentFile?.mkdirs()
-        tempFile.delete()
-
-        tempFile.outputStream().use { output ->
-            val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
-            var copied = 0L
-            while (true) {
-                val read = input.read(buffer)
-                if (read <= 0) break
-                output.write(buffer, 0, read)
-                copied += read
-                if (totalBytes > 0L && onProgress != null) {
-                    onProgress((copied.toFloat() / totalBytes.toFloat()).coerceIn(0f, 0.99f))
-                }
-            }
-        }
-
-        synchronized(dbLock) {
-            prepareDatabaseFileReplacement(isoCode)
-            if (targetFile.exists()) {
-                targetFile.delete()
-            }
-            if (!tempFile.renameTo(targetFile)) {
-                tempFile.copyTo(targetFile, overwrite = true)
-                tempFile.delete()
-            }
-        }
-        onProgress?.invoke(1f)
-    }
+    ): Result<LocalDbMeta> = downloader.importDatabaseFromUri(defaultIsoCode, uri, onProgress)
 
     fun readMeta(isoCode: String = activeIsoCode.orEmpty()): LocalDbMeta? {
         val file = databaseFile(isoCode)
@@ -607,8 +492,5 @@ class LocalPlacesRepository(context: Context) {
         private const val BBOX_DELTA = 0.5
         private const val LOCAL_RESULT_LIMIT = 15
         private const val BBOX_RESULT_LIMIT = 100
-        private const val DOWNLOAD_USER_AGENT = "MixAutoCarLauncher/1.0"
-        private const val DOWNLOAD_CONNECT_TIMEOUT_MS = 30_000
-        private const val DOWNLOAD_READ_TIMEOUT_MS = 300_000
     }
 }

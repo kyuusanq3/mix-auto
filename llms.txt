@@ -15,6 +15,8 @@ domain/media/ — MediaPlaybackState
 data/map/ — MapLibre facade + GPS/puck/camera/style/route/POI collaborators (mix-auto-map-engine.mdc)
 data/navigation/ — turn-by-turn TTS, step phrases (mix-auto-navigation.mdc)
 data/places/ — offline Overture POI SQLite + encountered places (mix-auto-places.mdc)
+LocalPlacesRepository.kt — Overture POI SQLite open/search; download/import/asset install delegates to LocalPlacesDownloader
+LocalPlacesDownloader.kt — HTTP/asset/URI pack copy + gzip; open/readMeta stay on the repo
 data/media/ — MediaSessionRepository, album art, audio resume (mix-auto-media.mdc)
 data/location/ — Nominatim reverse geocode helpers
 data/apps/ — launchable apps for drawer/dock
@@ -76,11 +78,15 @@ OffRouteDetector.kt — parallel-street off-route confirms
 ConventionalRouteSelector.kt / NavigationRouteFetcher.kt — OSRM conventional + fetch
 OfflineMapRepository.kt — offline tile catalog + public download/pause/delete API (session extracted)
 
-## ui/components (destination search)
+## ui/components (destination search / map HUD / map data)
 
 NavigationSearchOverlay.kt — NavigationSearchContent panel shell (query, lists, loading)
 VoiceDestinationSearch.kt — SpeechRecognizer + mic permission + rememberVoiceSearch
 SearchPlaceHelpers.kt — SearchResultRow, distance/dedup helpers, saved-place filter
+CarMapViewContainer.kt — MapView AndroidView + lifecycle; overlay call sites
+MapHudOverlays.kt — nav HUD, toolbar, search/settings FABs, speed circle, lighter-traffic chip
+OfflineRegionRow.kt — offline region row + delete/update confirm dialogs
+OfflinePackRowActions.kt — PackRowActions, OfflineDownloadStatusHints, ActionRow
 
 ## ui/dashboard (media / album art)
 
