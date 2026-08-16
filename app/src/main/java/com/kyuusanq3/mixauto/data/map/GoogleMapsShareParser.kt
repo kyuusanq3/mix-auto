@@ -45,6 +45,14 @@ internal object GoogleMapsShareParser {
         "Mozilla/5.0 (Linux; Android 13; Pixel 6) AppleWebKit/537.36 (KHTML, like Gecko) " +
             "Chrome/124.0.0.0 Mobile Safari/537.36"
 
+    // Google's JS-rendered /maps/place/ page resolves a feature ID (!1s0x...) to
+    // coordinates client-side, but a desktop (non-mobile) User-Agent sometimes gets a
+    // simpler server-rendered response with the coordinates already embedded in the HTML,
+    // avoiding the need to run that JS ourselves.
+    private const val DESKTOP_USER_AGENT =
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) " +
+            "Chrome/124.0.0.0 Safari/537.36"
+
     fun isShareableText(text: String): Boolean =
         GEO_URI_REGEX.containsMatchIn(text) || URL_REGEX.containsMatchIn(text)
 
@@ -63,7 +71,7 @@ internal object GoogleMapsShareParser {
     /** Result of [parseSharedText]: either a fully-resolved place, or just a name to geocode. */
     sealed class ParsedShare {
         data class Resolved(val place: SearchResultPlace) : ParsedShare()
-        data class NeedsGeocode(val nameHint: String) : ParsedShare()
+        data class NeedsGeocode(val nameHint: String, val url: String? = null) : ParsedShare()
     }
 
     /** Runs blocking network I/O to resolve short links -- call from a background dispatcher. */
@@ -98,13 +106,29 @@ internal object GoogleMapsShareParser {
         if (coordinates == null) {
             // Business/POI shares often encode the place purely as a Google feature ID
             // (`!1s0x...:0x...`) with no @lat,lng or !3d/!4d anywhere in the URL -- only
-            // Google's own servers can resolve that ID. The place *name* is still present in
-            // the URL path though (/maps/place/<name>/), so fall back to geocoding that.
+            // Google's own servers can resolve that ID via JS. A plain GET with a desktop
+            // User-Agent sometimes returns the coordinates inline in the HTML without
+            // needing to execute that JS, so try it before falling back to name geocoding.
+            if (expandedContent.startsWith("http")) {
+                val desktopBody = fetchDesktopUserAgentBody(expandedContent)
+                val desktopCoordinates = desktopBody?.let { body ->
+                    PIN_COORDINATES_REGEX.find(body)
+                        ?: QUERY_COORDINATES_REGEX.find(body)
+                        ?: CAMERA_COORDINATES_REGEX.find(body)
+                }
+                if (desktopCoordinates != null) {
+                    val (dLat, dLng) = desktopCoordinates.destructured
+                    Log.d(TAG, "parseSharedText: desktop-UA fetch found lat=$dLat lng=$dLng")
+                    return ParsedShare.Resolved(placeFrom(dLat.toDouble(), dLng.toDouble(), name))
+                }
+                Log.w(TAG, "parseSharedText: desktop-UA fetch found no coordinates either")
+            }
             Log.w(TAG, "parseSharedText: no !3d/!4d, q=, or @lat,lng pattern found in expanded content")
+            val fallbackUrl = expandedContent.takeIf { it.startsWith("http") }
             return name?.let {
                 Log.d(TAG, "parseSharedText: falling back to geocoding URL place-name=$it")
-                ParsedShare.NeedsGeocode(it)
-            }
+                ParsedShare.NeedsGeocode(it, fallbackUrl)
+            } ?: fallbackUrl?.let { ParsedShare.NeedsGeocode(nameHint = "Shared Location", url = it) }
         }
         val (lat, lng) = coordinates.destructured
         Log.d(TAG, "parseSharedText: matched coordinates lat=$lat lng=$lng via '${coordinates.value}'")
@@ -193,6 +217,33 @@ internal object GoogleMapsShareParser {
             RedirectResult.Body(readBodySafely(connection))
         } catch (e: Exception) {
             Log.e(TAG, "fetchRedirectOrBody: request to $url failed", e)
+            null
+        } finally {
+            connection?.disconnect()
+        }
+    }
+
+    /**
+     * Plain GET of an already-resolved (non-goo.gl) Google Maps URL using a desktop User-Agent,
+     * as a last resort when the URL itself carries no coordinates. Returns null on any failure
+     * or non-2xx response -- caller falls back to name-based geocoding either way.
+     */
+    private fun fetchDesktopUserAgentBody(url: String): String? {
+        var connection: HttpURLConnection? = null
+        return try {
+            connection = (URL(url).openConnection() as HttpURLConnection).apply {
+                instanceFollowRedirects = true
+                connectTimeout = CONNECT_TIMEOUT_MS
+                readTimeout = READ_TIMEOUT_MS
+                requestMethod = "GET"
+                setRequestProperty("User-Agent", DESKTOP_USER_AGENT)
+                setRequestProperty("Accept", "text/html")
+            }
+            val responseCode = connection.responseCode
+            Log.d(TAG, "fetchDesktopUserAgentBody: $url -> HTTP $responseCode")
+            if (responseCode !in 200..299) null else readBodySafely(connection)
+        } catch (e: Exception) {
+            Log.e(TAG, "fetchDesktopUserAgentBody: request to $url failed", e)
             null
         } finally {
             connection?.disconnect()

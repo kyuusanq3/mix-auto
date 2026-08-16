@@ -9,6 +9,7 @@ import com.kyuusanq3.mixauto.data.map.GoogleMapsShareParser
 import com.kyuusanq3.mixauto.data.map.MapLibreEngineImpl
 import com.kyuusanq3.mixauto.data.map.OfflineMapRepository
 import com.kyuusanq3.mixauto.data.map.PhotonSearchClient
+import com.kyuusanq3.mixauto.data.map.WebViewCoordinateResolver
 import com.kyuusanq3.mixauto.data.navigation.NavigationVoiceController
 import com.kyuusanq3.mixauto.data.places.EncounteredPlacesRepository
 import com.kyuusanq3.mixauto.data.places.LocalPlacesRepository
@@ -108,7 +109,7 @@ class MapHostViewModel(application: Application) : AndroidViewModel(application)
             val place = when (parsedShare) {
                 is GoogleMapsShareParser.ParsedShare.Resolved -> parsedShare.place
                 is GoogleMapsShareParser.ParsedShare.NeedsGeocode ->
-                    geocodeNameHint(parsedShare.nameHint)
+                    resolveViaWebViewThenGeocode(parsedShare.url, parsedShare.nameHint)
                 null ->
                     GoogleMapsShareParser.extractNameHint(sharedText)?.let { geocodeNameHint(it) }
             }
@@ -120,6 +121,35 @@ class MapHostViewModel(application: Application) : AndroidViewModel(application)
                 _shareError.value = SHARE_ERROR_MESSAGE
             }
         }
+    }
+
+    /**
+     * Business/POI shares that encode the place purely as a Google feature ID have no
+     * coordinates anywhere in the URL or a plain HTTP response -- Google only resolves the ID
+     * to a `@lat,lng` via client-side JS. Try that (headless WebView, JS enabled) before falling
+     * back to name-based geocoding, which can only find places that also exist in OpenStreetMap.
+     */
+    private suspend fun resolveViaWebViewThenGeocode(url: String?, nameHint: String): SearchResultPlace? {
+        if (url != null) {
+            val coordinates = withContext(Dispatchers.Main) {
+                runCatching { WebViewCoordinateResolver.resolveCoordinates(getApplication(), url) }
+                    .onFailure { e -> Log.e(TAG, "resolveViaWebViewThenGeocode: WebView resolve threw", e) }
+                    .getOrNull()
+            }
+            if (coordinates != null) {
+                val (lat, lng) = coordinates
+                Log.d(TAG, "resolveViaWebViewThenGeocode: WebView resolved lat=$lat lng=$lng")
+                return SearchResultPlace(
+                    name = nameHint.takeIf { it.isNotBlank() } ?: "Shared Location",
+                    subTitle = nameHint,
+                    latitude = lat,
+                    longitude = lng,
+                    isDroppedPin = true,
+                )
+            }
+            Log.w(TAG, "resolveViaWebViewThenGeocode: WebView found no coordinates, falling back to geocoding")
+        }
+        return geocodeNameHint(nameHint)
     }
 
     /**
