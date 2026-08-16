@@ -4,10 +4,10 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -15,8 +15,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.DirectionsCar
-import androidx.compose.material.icons.filled.KeyboardArrowLeft
-import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.foundation.layout.width
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -113,7 +111,6 @@ internal fun AudioPlayerMinimizedSidebar(
     val amPmText = remember(now, locale) { now.format(DateTimeFormatter.ofPattern("a", locale)) }
     val monthText = remember(now, locale) { now.format(DateTimeFormatter.ofPattern("MMM", locale)) }
     val dayText = remember(now, locale) { now.format(DateTimeFormatter.ofPattern("d", locale)) }
-    val yearText = remember(now, locale) { now.format(DateTimeFormatter.ofPattern("yyyy", locale)) }
 
     val trafficLevel = overallTrafficLevel(
         showTraffic = showTraffic,
@@ -173,25 +170,11 @@ internal fun AudioPlayerMinimizedSidebar(
         modifier = modifier
             .fillMaxSize()
             .background(DeepCharcoal)
+            .clickable(onClick = onToggleMinimized)
             .padding(CarDimensions.PaneGap),
         verticalArrangement = Arrangement.spacedBy(SECTION_GAP, Alignment.Top),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clickable(onClick = onToggleMinimized)
-                .padding(bottom = 4.dp),
-            contentAlignment = chevronAlignment,
-        ) {
-            Icon(
-                imageVector = Icons.Filled.KeyboardArrowLeft,
-                contentDescription = "Expand audio player",
-                tint = OnDark,
-                modifier = Modifier.size(32.dp),
-            )
-        }
-
         Column(
             verticalArrangement = Arrangement.spacedBy(ITEM_GAP),
             horizontalAlignment = Alignment.CenterHorizontally,
@@ -207,7 +190,6 @@ internal fun AudioPlayerMinimizedSidebar(
         ) {
             Text(text = dayText, style = labelStyle, maxLines = 1, textAlign = TextAlign.Center)
             Text(text = monthText, style = labelStyle, maxLines = 1, textAlign = TextAlign.Center)
-            Text(text = yearText, style = labelStyle, maxLines = 1, textAlign = TextAlign.Center)
         }
 
         Row(
@@ -250,23 +232,33 @@ internal fun AudioPlayerMinimizedSidebar(
             tint = trafficTint,
             modifier = Modifier.size(32.dp),
         )
-        Spacer(modifier = Modifier.weight(1f))
-        DockMiniVisualizer(
-            isPlaying = mediaState.isPlaying,
-            playbackPositionMs = mediaState.playbackPositionMs,
-            barCount = 5,
-            wide = true,
-            modifier = Modifier.fillMaxWidth().height(56.dp),
-        )
-        AlbumArtModeContent(
-            mode = AlbumArtMode.PLAIN,
-            albumArt = mediaState.albumArt,
-            isPlaying = mediaState.isPlaying,
-            playbackPositionMs = mediaState.playbackPositionMs,
+        Column(
             modifier = Modifier
-                .fillMaxWidth()
-                .aspectRatio(1f),
-        )
+                .weight(1f)
+                .fillMaxWidth(),
+            verticalArrangement = Arrangement.spacedBy(ITEM_GAP, Alignment.Bottom),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            DockMiniVisualizer(
+                isPlaying = mediaState.isPlaying,
+                playbackPositionMs = mediaState.playbackPositionMs,
+                barCount = 5,
+                wide = true,
+                modifier = Modifier.fillMaxWidth().height(56.dp),
+            )
+            BoxWithConstraints(
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                val albumArtSide = maxWidth
+                AlbumArtModeContent(
+                    mode = AlbumArtMode.PLAIN,
+                    albumArt = mediaState.albumArt,
+                    isPlaying = mediaState.isPlaying,
+                    playbackPositionMs = mediaState.playbackPositionMs,
+                    modifier = Modifier.size(albumArtSide),
+                )
+            }
+        }
     }
 }
 
@@ -297,12 +289,6 @@ private fun PortraitMinimizedBar(
         horizontalArrangement = Arrangement.spacedBy(12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Icon(
-            imageVector = Icons.Filled.KeyboardArrowUp,
-            contentDescription = "Expand audio player",
-            tint = OnDark,
-            modifier = Modifier.size(24.dp),
-        )
         Text(
             text = "$hourText:$minuteText $amPmText",
             style = barTimeStyle,

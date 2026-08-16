@@ -9,17 +9,25 @@ import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
+import android.util.Log
 import android.view.KeyEvent
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import androidx.core.view.WindowCompat
@@ -99,6 +107,15 @@ class MainActivity : ComponentActivity() {
                     )
                     val mediaState by mediaViewModel.mediaState.collectAsStateWithLifecycle()
                     val pendingSharedPlace by mapHostViewModel.pendingSharedPlace.collectAsStateWithLifecycle()
+                    val shareError by mapHostViewModel.shareError.collectAsStateWithLifecycle()
+                    val snackbarHostState = remember { SnackbarHostState() }
+
+                    LaunchedEffect(shareError) {
+                        shareError?.let { message ->
+                            snackbarHostState.showSnackbar(message)
+                            mapHostViewModel.consumeShareError()
+                        }
+                    }
 
                     SideEffect {
                         applySystemBarVisibility(launcherViewModel.showSystemStatusBar)
@@ -246,6 +263,13 @@ class MainActivity : ComponentActivity() {
                             },
                         )
                     }
+
+                    SnackbarHost(
+                        hostState = snackbarHostState,
+                        modifier = Modifier
+                            .align(Alignment.BottomCenter)
+                            .padding(bottom = 24.dp),
+                    )
                 }
             }
         }
@@ -259,6 +283,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
+        Log.d("MixAutoShare", "MainActivity.onNewIntent: action=${intent.action} type=${intent.type}")
         setIntent(intent)
         if (::mapHostViewModel.isInitialized) {
             mapHostViewModel.handleSharedIntent(intent)

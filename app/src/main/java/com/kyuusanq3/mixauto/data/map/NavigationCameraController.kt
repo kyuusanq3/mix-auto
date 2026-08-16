@@ -10,6 +10,7 @@ import org.maplibre.android.camera.CameraPosition
 import org.maplibre.android.camera.CameraUpdateFactory
 import org.maplibre.android.geometry.LatLng
 import org.maplibre.android.location.LocationComponent
+import org.maplibre.android.location.OnLocationCameraTransitionListener
 import org.maplibre.android.location.modes.CameraMode
 import org.maplibre.android.location.modes.RenderMode
 import org.maplibre.android.maps.MapLibreMap
@@ -367,6 +368,31 @@ internal class NavigationCameraController(
         return null
     }
 
+    /**
+     * Engages [CameraMode.TRACKING_GPS] and re-applies the saved puck-placement padding once the
+     * mode transition finishes. `paddingWhileTracking()` calls made while the camera mode is still
+     * transitioning are silently ignored by MapLibre, which is why the puck would visibly snap back
+     * to screen center on reroute / nav turns / exit-nav before this fix — the immediate
+     * `applyDrivingTrackingPadding()` call right after flipping `cameraMode` landed mid-transition
+     * and was dropped. The [OnLocationCameraTransitionListener] callback fires after the transition
+     * completes, guaranteeing the puck offset lands.
+     */
+    private fun engageTrackingGpsWithPuckPadding(map: MapLibreMap, component: LocationComponent) {
+        component.setCameraMode(
+            CameraMode.TRACKING_GPS,
+            object : OnLocationCameraTransitionListener {
+                override fun onLocationCameraTransitionFinished(cameraMode: Int) {
+                    viewportPadding.applyDrivingTrackingPadding(map)
+                }
+
+                override fun onLocationCameraTransitionCanceled(cameraMode: Int) {
+                    viewportPadding.applyDrivingTrackingPadding(map)
+                }
+            },
+        )
+        viewportPadding.applyDrivingTrackingPadding(map)
+    }
+
     fun activateFreeDriveTrackingMode(map: MapLibreMap) {
         if (uiState().isNavigating ||
             uiState().isInTopDownView ||
@@ -393,9 +419,8 @@ internal class NavigationCameraController(
         }
 
         component.renderMode = RenderMode.GPS
-        component.cameraMode = CameraMode.TRACKING_GPS
         component.setMaxAnimationFps(DRIVING_ANIMATION_FPS)
-        viewportPadding.applyDrivingTrackingPadding(map)
+        engageTrackingGpsWithPuckPadding(map, component)
     }
 
     fun snapCameraToGpsIfNeeded(latLng: LatLng) {
@@ -427,6 +452,10 @@ internal class NavigationCameraController(
             component.cameraMode = CameraMode.NONE
         }
 
+        // Same dedup-cache gap as enterNavigationCamera(): force puck-offset padding to
+        // re-apply after this CameraMode.NONE round-trip (exit navigation / free-drive snap).
+        viewportPadding.invalidateDrivingPaddingCache()
+
         map.moveCamera(
             CameraUpdateFactory.newCameraPosition(
                 CameraPosition.Builder()
@@ -439,8 +468,7 @@ internal class NavigationCameraController(
         )
 
         if (componentReady) {
-            component.cameraMode = CameraMode.TRACKING_GPS
-            viewportPadding.applyDrivingTrackingPadding(map)
+            engageTrackingGpsWithPuckPadding(map, component)
             forceLocationUpdateForImmediateRender(
                 map,
                 true,
@@ -468,6 +496,11 @@ internal class NavigationCameraController(
         }
 
         invalidateCameraSession()
+        // Force the saved puck-offset padding to re-apply once TRACKING_GPS re-engages below —
+        // the dedup cache in DrivingViewportPaddingController would otherwise see an unchanged
+        // padding key and skip re-pushing paddingWhileTracking after this dive's CameraMode.NONE
+        // round-trip, leaving the puck centered (reroute / turn dive / manual recenter mid-nav).
+        viewportPadding.invalidateDrivingPaddingCache()
         val sessionId = cameraSessionId
         navigationCameraTransitionActive = true
 
@@ -542,6 +575,7 @@ internal class NavigationCameraController(
                     val current = map.cameraPosition
                     val zoomTarget = resolveNavigationZoomTarget()
                     if (current.tilt < navTilt() - 5.0 || abs(current.zoom - zoomTarget) > 0.5) {
+                        viewportPadding.invalidateDrivingPaddingCache()
                         map.moveCamera(
                             CameraUpdateFactory.newCameraPosition(
                                 CameraPosition.Builder()
@@ -556,9 +590,8 @@ internal class NavigationCameraController(
                     }
                 }
                 component.renderMode = RenderMode.GPS
-                component.cameraMode = CameraMode.TRACKING_GPS
                 component.setMaxAnimationFps(DRIVING_ANIMATION_FPS)
-                viewportPadding.applyDrivingTrackingPadding(map)
+                engageTrackingGpsWithPuckPadding(map, component)
                 lastDistToManeuverM?.let { updateNavigationZoomForDistance(it) }
             }.onFailure { error ->
                 Log.w(TAG, "Failed to activate navigation tracking: ${error.message}")
