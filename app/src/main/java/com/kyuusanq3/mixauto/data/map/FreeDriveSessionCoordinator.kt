@@ -111,6 +111,7 @@ internal class FreeDriveSessionCoordinator(
             } else {
                 navigationCamera().activateFreeDriveTrackingMode(map)
             }
+            navigationCamera().scheduleFreeDrivePaddingRestore(map) // applyFreeDriveToMap restore
         }
     }
 }

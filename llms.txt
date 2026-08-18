@@ -17,7 +17,9 @@ data/navigation/ — turn-by-turn TTS, step phrases (mix-auto-navigation.mdc)
 data/places/ — offline Overture POI SQLite + encountered places (mix-auto-places.mdc)
 LocalPlacesRepository.kt — Overture POI SQLite open/search; download/import/asset install delegates to LocalPlacesDownloader
 LocalPlacesDownloader.kt — HTTP/asset/URI pack copy + gzip; open/readMeta stay on the repo
-data/media/ — MediaSessionRepository, album art, audio resume (mix-auto-media.mdc)
+data/media/ — MediaSessionRepository, MediaSessionParsers, album art, audio resume (mix-auto-media.mdc)
+MediaSessionRepository.kt — session attach, boot/resume, transport; metadata/like/shuffle parsers in MediaSessionParsers
+MediaSessionParsers.kt — title/art/like/shuffle readers from MediaMetadata / PlaybackState
 data/location/ — Nominatim reverse geocode helpers
 data/apps/ — launchable apps for drawer/dock
 data/update/ — app update checks

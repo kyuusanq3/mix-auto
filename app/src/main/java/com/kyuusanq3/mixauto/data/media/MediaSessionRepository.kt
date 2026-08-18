@@ -2,13 +2,11 @@ package com.kyuusanq3.mixauto.data.media
 
 import android.content.ComponentName
 import android.content.Context
-import android.graphics.Bitmap
 import android.media.MediaMetadata
 import android.media.Rating
 import android.media.session.MediaController
 import android.media.session.MediaSessionManager
 import android.media.session.PlaybackState
-import android.os.SystemClock
 import android.support.v4.media.session.MediaControllerCompat
 import android.support.v4.media.session.MediaSessionCompat
 import android.support.v4.media.session.PlaybackStateCompat
@@ -193,12 +191,12 @@ class MediaSessionRepository(context: Context) {
         val shuffleMode = runCatching { compat.shuffleMode }
             .getOrDefault(PlaybackStateCompat.SHUFFLE_MODE_INVALID)
         val currentlyOn = when {
-            isShuffleModeOn(shuffleMode) -> true
+            MediaSessionParsers.isShuffleModeOn(shuffleMode) -> true
             shuffleMode == PlaybackStateCompat.SHUFFLE_MODE_NONE -> false
             else -> cachedShuffleOn
         }
         val customAction = shuffleCustomActionId
-        if (!isShuffleModeKnown(shuffleMode) && customAction != null) {
+        if (!MediaSessionParsers.isShuffleModeKnown(shuffleMode) && customAction != null) {
             controller.transportControls.sendCustomAction(customAction, null)
         } else {
             val next = if (currentlyOn) {
@@ -221,7 +219,7 @@ class MediaSessionRepository(context: Context) {
         val transportControls = controller.transportControls
         val liked = _state.value.isLiked ?: false
         val likeAction = likeCustomActionId
-        val userRating = readUserLikeRating(controller.metadata)
+        val userRating = MediaSessionParsers.readUserLikeRating(controller.metadata)
         val ratingStyle = userRating?.ratingStyle
         val supportsSetRating = (controller.playbackState?.actions ?: 0L) and
             PlaybackState.ACTION_SET_RATING != 0L
@@ -262,7 +260,7 @@ class MediaSessionRepository(context: Context) {
             }
         }
 
-        readTrackKey(controller.metadata)?.let { trackKey ->
+        MediaSessionParsers.readTrackKey(controller.metadata)?.let { trackKey ->
             likedTrackCache[trackKey] = !liked
         }
         publishControllerState(controller)
@@ -314,12 +312,14 @@ class MediaSessionRepository(context: Context) {
         val metadata = controller.metadata
         val playbackState = controller.playbackState
         val isPlaying = playbackState?.state == PlaybackState.STATE_PLAYING
-        val userRating = readUserLikeRating(metadata)
-        val trackKey = readTrackKey(metadata)
+        val userRating = MediaSessionParsers.readUserLikeRating(metadata)
+        val trackKey = MediaSessionParsers.readTrackKey(metadata)
         val supportsSetRating = (playbackState?.actions ?: 0L) and PlaybackState.ACTION_SET_RATING != 0L
-        val likeActions = parseLikeCustomActions(playbackState?.customActions.orEmpty())
+        val likeActions = MediaSessionParsers.parseLikeCustomActions(playbackState?.customActions.orEmpty())
         likeCustomActionId = likeActions
-        shuffleCustomActionId = parseShuffleCustomAction(playbackState?.customActions.orEmpty())
+        shuffleCustomActionId = MediaSessionParsers.parseShuffleCustomAction(
+            playbackState?.customActions.orEmpty(),
+        )
         val supportsLike = when {
             userRating?.ratingStyle == Rating.RATING_HEART -> true
             userRating?.ratingStyle == Rating.RATING_THUMB_UP_DOWN -> true
@@ -328,7 +328,7 @@ class MediaSessionRepository(context: Context) {
             supportsSetRating -> true
             else -> false
         }
-        val sessionLiked = readIsLikedFromSession(userRating)
+        val sessionLiked = MediaSessionParsers.readIsLikedFromSession(userRating)
         if (sessionLiked != null && trackKey != null) {
             likedTrackCache[trackKey] = sessionLiked
         }
@@ -338,15 +338,21 @@ class MediaSessionRepository(context: Context) {
             trackKey != null -> likedTrackCache[trackKey] ?: false
             else -> false
         }
-        val shuffleState = readShuffleState(controller)
+        val shuffleState = MediaSessionParsers.readShuffleState(
+            controller,
+            compatController(controller),
+            shuffleCustomActionId,
+            cachedShuffleOn,
+        )
+        cachedShuffleOn = shuffleState.isShuffleOn
 
         _state.update {
             MediaPlaybackState(
-                title = readTitle(metadata),
-                artist = readArtist(metadata),
-                albumArt = readAlbumArt(metadata),
+                title = MediaSessionParsers.readTitle(metadata),
+                artist = MediaSessionParsers.readArtist(metadata),
+                albumArt = MediaSessionParsers.readAlbumArt(metadata),
                 isPlaying = isPlaying,
-                playbackPositionMs = readPlaybackPositionMs(playbackState),
+                playbackPositionMs = MediaSessionParsers.readPlaybackPositionMs(playbackState),
                 hasActiveSession = metadata != null || playbackState != null,
                 needsNotificationAccess = false,
                 sourcePackage = controller.packageName,
@@ -358,11 +364,6 @@ class MediaSessionRepository(context: Context) {
         }
     }
 
-    private data class ShuffleState(
-        val supportsShuffle: Boolean,
-        val isShuffleOn: Boolean,
-    )
-
     private fun compatController(controller: MediaController): MediaControllerCompat? {
         return runCatching {
             MediaControllerCompat(
@@ -370,47 +371,6 @@ class MediaSessionRepository(context: Context) {
                 MediaSessionCompat.Token.fromToken(controller.sessionToken),
             )
         }.getOrNull()
-    }
-
-    private fun readShuffleState(controller: MediaController): ShuffleState {
-        val compat = compatController(controller) ?: return ShuffleState(false, false)
-        val shuffleMode = runCatching { compat.shuffleMode }
-            .getOrDefault(PlaybackStateCompat.SHUFFLE_MODE_INVALID)
-        // Fallback: some apps (e.g. YT Music) advertise shuffle via actions bit only
-        val actionsSupportsShuffle = (controller.playbackState?.actions ?: 0L) and
-            PlaybackStateCompat.ACTION_SET_SHUFFLE_MODE != 0L
-        val supportsShuffle = isShuffleModeKnown(shuffleMode) ||
-            actionsSupportsShuffle ||
-            shuffleCustomActionId != null
-        val isShuffleOn = when {
-            isShuffleModeOn(shuffleMode) -> true.also { cachedShuffleOn = true }
-            shuffleMode == PlaybackStateCompat.SHUFFLE_MODE_NONE -> false.also { cachedShuffleOn = false }
-            else -> cachedShuffleOn
-        }
-        return ShuffleState(supportsShuffle, isShuffleOn)
-    }
-
-    private fun isShuffleModeOn(shuffleMode: Int): Boolean {
-        return shuffleMode == PlaybackStateCompat.SHUFFLE_MODE_ALL ||
-            shuffleMode == PlaybackStateCompat.SHUFFLE_MODE_GROUP
-    }
-
-    private fun isShuffleModeKnown(shuffleMode: Int): Boolean {
-        return shuffleMode != PlaybackStateCompat.SHUFFLE_MODE_INVALID
-    }
-
-    private fun parseShuffleCustomAction(
-        customActions: List<PlaybackState.CustomAction>,
-    ): String? {
-        for (action in customActions) {
-            val actionId = action.action
-            val id = actionId.lowercase()
-            val name = action.name?.toString()?.lowercase().orEmpty()
-            if (id.contains("shuffle") || name.contains("shuffle")) {
-                return actionId
-            }
-        }
-        return null
     }
 
     private fun selectController(controllers: List<MediaController>): MediaController? {
@@ -426,98 +386,6 @@ class MediaSessionRepository(context: Context) {
         return controllers.maxByOrNull { controller ->
             controller.playbackState?.lastPositionUpdateTime ?: 0L
         }
-    }
-
-    private fun readTitle(metadata: MediaMetadata?): String {
-        return metadata?.getString(MediaMetadata.METADATA_KEY_TITLE)
-            ?: metadata?.getString(MediaMetadata.METADATA_KEY_DISPLAY_TITLE)
-            ?: ""
-    }
-
-    private fun readArtist(metadata: MediaMetadata?): String {
-        return metadata?.getString(MediaMetadata.METADATA_KEY_ARTIST)
-            ?: metadata?.getString(MediaMetadata.METADATA_KEY_ALBUM_ARTIST)
-            ?: metadata?.getString(MediaMetadata.METADATA_KEY_DISPLAY_SUBTITLE)
-            ?: metadata?.getString(MediaMetadata.METADATA_KEY_DISPLAY_DESCRIPTION)
-            ?: ""
-    }
-
-    private fun readAlbumArt(metadata: MediaMetadata?): Bitmap? {
-        return metadata?.getBitmap(MediaMetadata.METADATA_KEY_ALBUM_ART)
-            ?: metadata?.getBitmap(MediaMetadata.METADATA_KEY_ART)
-            ?: metadata?.getBitmap(MediaMetadata.METADATA_KEY_DISPLAY_ICON)
-    }
-
-    private fun readPlaybackPositionMs(playbackState: PlaybackState?): Long {
-        if (playbackState == null) return 0L
-        val position = playbackState.position.coerceAtLeast(0L)
-        if (playbackState.state != PlaybackState.STATE_PLAYING) return position
-        val elapsed = SystemClock.elapsedRealtime() - playbackState.lastPositionUpdateTime
-        return (position + elapsed * playbackState.playbackSpeed).toLong().coerceAtLeast(0L)
-    }
-
-    private fun readTrackKey(metadata: MediaMetadata?): String? {
-        if (metadata == null) return null
-        val mediaId = metadata.getString(MediaMetadata.METADATA_KEY_MEDIA_ID)
-        if (!mediaId.isNullOrBlank()) return mediaId
-        val title = readTitle(metadata)
-        if (title.isBlank()) return null
-        return "$title|${readArtist(metadata)}"
-    }
-
-    private fun readUserLikeRating(metadata: MediaMetadata?): Rating? {
-        return metadata?.getRating(MediaMetadata.METADATA_KEY_USER_RATING)
-            ?: metadata?.getRating(MediaMetadata.METADATA_KEY_RATING)
-    }
-
-    /** Returns null when the session omits rating metadata (use track cache instead). */
-    private fun readIsLikedFromSession(userRating: Rating?): Boolean? {
-        if (userRating == null) return null
-        return when (userRating.ratingStyle) {
-            Rating.RATING_HEART -> {
-                if (userRating.isRated) userRating.hasHeart() else false
-            }
-            Rating.RATING_THUMB_UP_DOWN -> {
-                if (userRating.isRated) userRating.isThumbUp() else false
-            }
-            else -> null
-        }
-    }
-
-    private fun parseLikeCustomActions(
-        customActions: List<PlaybackState.CustomAction>,
-    ): String? {
-        for (action in customActions) {
-            val actionId = action.action
-            val id = actionId.lowercase()
-            val name = action.name?.toString()?.lowercase().orEmpty()
-            if (isLikeAction(id, name)) {
-                return actionId
-            }
-        }
-        return null
-    }
-
-    private fun isLikeAction(id: String, name: String): Boolean {
-        if (isDislikeAction(id, name)) return false
-        return id.contains("like") ||
-            id.contains("thumb_up") ||
-            id.contains("favorite") ||
-            id.contains("favourite") ||
-            id.contains("heart") ||
-            name.contains("like") ||
-            name.contains("thumb up") ||
-            name.contains("favorite") ||
-            name.contains("favourite")
-    }
-
-    private fun isDislikeAction(id: String, name: String): Boolean {
-        return id.contains("unlike") ||
-            id.contains("thumb_down") ||
-            id.contains("dislike") ||
-            name.contains("unlike") ||
-            name.contains("thumb down") ||
-            name.contains("dislike")
     }
 
     companion object {

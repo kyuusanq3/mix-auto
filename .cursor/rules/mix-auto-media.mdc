@@ -8,7 +8,7 @@ alwaysApply: false
 
 ## Agent front matter
 
-**Owners:** `MediaPlayerPane.kt`, `AlbumArtDisplay.kt`, `data/media/MediaSessionRepository.kt`, `MixAutoNotificationListenerService.kt`, `ui/components/AudioSettingsPanel.kt`.
+**Owners:** `MediaPlayerPane.kt`, `AlbumArtDisplay.kt`, `data/media/MediaSessionRepository.kt`, `data/media/MediaSessionParsers.kt`, `MixAutoNotificationListenerService.kt`, `ui/components/AudioSettingsPanel.kt`.
 
 **Common tasks:** now-playing UI, default audio source, boot/resume (`ensureDefaultPlayerIfNeeded`, `attemptResumeNow`), album art modes/gestures, idle manual-play fallbacks.
 
@@ -32,7 +32,7 @@ alwaysApply: false
 - Transport controls row order: `[Source app] [Prev] [Play/Pause] [Next] [Like]` — gated by `LauncherViewModel.showAlbumArtControls` (default off); first slot is `SourceAppButton`: **tap** = launch `sourcePackage` when session active, else open Audio Settings (shows default app icon when default set, cyan `MusicNote` when not); **long-press** opens Audio Settings; Like is 5th button with `active = mediaState.isLiked == true`
 - When transport row hidden: Info (ⓘ) button beside ⋮ opens `GestureHintDialog` (gestures + pointer to re-enable buttons in Audio Settings)
 - Media like: `MediaSessionRepository.toggleLike()` via `RATING_HEART` / custom actions; never send dislike/thumb_down (YT Music skips on unlike); `likedTrackCache` keyed by media ID
-- Media shuffle (repo only): `MediaSessionRepository.toggleShuffle()` + `readShuffleState()` — YT Music returns `SHUFFLE_MODE_INVALID`; use `ACTION_SET_SHUFFLE_MODE` actions-bit for `supportsShuffle` and `cachedShuffleOn` when toggling if mode stays invalid; third-party shuffle UI removed as unreliable
+- Media shuffle (repo only): `MediaSessionRepository.toggleShuffle()` + `MediaSessionParsers.readShuffleState()` — YT Music returns `SHUFFLE_MODE_INVALID`; use `ACTION_SET_SHUFFLE_MODE` actions-bit for `supportsShuffle` and `cachedShuffleOn` when toggling if mode stays invalid; third-party shuffle UI removed as unreliable
 
 ## Album art
 
