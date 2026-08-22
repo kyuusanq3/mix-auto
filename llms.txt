@@ -15,8 +15,9 @@ domain/media/ — MediaPlaybackState
 data/map/ — MapLibre facade + GPS/puck/camera/style/route/POI collaborators (mix-auto-map-engine.mdc)
 data/navigation/ — turn-by-turn TTS, step phrases (mix-auto-navigation.mdc)
 data/places/ — offline Overture POI SQLite + encountered places (mix-auto-places.mdc)
-LocalPlacesRepository.kt — Overture POI SQLite open/search; download/import/asset install delegates to LocalPlacesDownloader
+LocalPlacesRepository.kt — Overture POI SQLite open/lifecycle; search delegates to LocalPlacesSearch; download to LocalPlacesDownloader
 LocalPlacesDownloader.kt — HTTP/asset/URI pack copy + gzip; open/readMeta stay on the repo
+LocalPlacesSearch.kt — FTS5/LIKE/bbox POI queries; ORDER BY distance proxy then LIMIT
 data/media/ — MediaSessionRepository, MediaSessionParsers, album art, audio resume (mix-auto-media.mdc)
 MediaSessionRepository.kt — session attach, boot/resume, transport; metadata/like/shuffle parsers in MediaSessionParsers
 MediaSessionParsers.kt — title/art/like/shuffle readers from MediaMetadata / PlaybackState
@@ -25,9 +26,12 @@ data/apps/ — launchable apps for drawer/dock
 data/update/ — app update checks
 data/weather/ — weather fetch (if used by HUD/settings)
 ui/map/ — MapHostViewModel (activity-scoped engine holder; keep thin)
-ui/dashboard/ — DashboardScreen, MediaPlayerPane, dock layouts (mix-auto-dashboard-ui.mdc)
+ui/dashboard/ — DashboardScreen, DashboardScreenEffects, MediaPlayerPane, dock layouts (mix-auto-dashboard-ui.mdc)
 ui/components/ — map container, search, POI drawer, settings panels, overlays
-ui/settings/ — LauncherViewModel, preferences, MapDataViewModel, DeveloperSettings.kt (hardcoded compile-time toggles)
+ui/settings/ — LauncherViewModel, LauncherMapPrefs, LauncherAudioPrefs, preferences, MapDataViewModel, DeveloperSettings.kt (hardcoded compile-time toggles)
+LauncherViewModel.kt — panel/search/layout prefs; map/audio setter bodies in LauncherMapPrefs / LauncherAudioPrefs
+LauncherMapPrefs.kt — driving/traffic/voice/puck/TomTom pref state + key check
+LauncherAudioPrefs.kt — default player, resume, album-art pref state
 ui/theme/ — Color, CarDimensions, Type, MixAutoTheme
 ui/onboarding/ — first-run permission wizard
 ui/status/ — status bar pieces
@@ -59,6 +63,7 @@ MapInteractionController.kt — map tap/long-press, custom pin draft, reverse ge
 NavigationSessionCoordinator.kt — navigate, startNavigation, reroute, lighter-traffic alternate; routeTrafficSections on applyActiveRoute; maneuver-fork prefetch/adopt
 ManeuverAlternatePlanner.kt — pure per-turn fork math (5 min gate, next-turn pick, adopt)
 ManeuverAlternateCoordinator.kt — stash OSRM forks at Navigate, grey next-turn line, adopt RouteResult
+ManeuverAlternateCallout.kt — ETA speech-bubble bitmap (icon-only, tail on fork)
 OfflineRegionCatalog.kt — offline_regions.json catalog load
 OfflineRegionMetadata.kt — offline region SDK metadata parse / resumability
 OfflineProgressFormatting.kt — offline progress/size formatters + OfflineRegionInstallState, PendingOfflineResume
@@ -92,6 +97,11 @@ OfflinePackRowActions.kt — PackRowActions, OfflineDownloadStatusHints, ActionR
 
 ## ui/dashboard (media / album art)
 
+DashboardScreen.kt — dashboard wiring + layout tree; overlay call sites
+DashboardScreenEffects.kt — shared-place focus, map-tap dismiss, POI return-to-search, layout tick
+DashboardPanelActions.kt — panel toggle, search/voice/POI preview, audio-source open
+DashboardLayoutProps.kt — Dashboard*Props holders for the three layout trees
+DashboardLayouts.kt — portrait/landscape dock layout trees
 MediaPlayerPane.kt — now-playing shell + album-art gestures (pointerInput stays here)
 MediaPlayerIdleArt.kt — idle manual-link / default-player art + launchManualFallbackLink
 MediaTransportControls.kt — SourceAppButton, MediaControlButton, GestureHintDialog

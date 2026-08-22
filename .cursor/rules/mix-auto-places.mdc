@@ -12,7 +12,7 @@ alwaysApply: false
 
 | System | Owners | UI |
 |--------|--------|-----|
-| Overture POI SQLite | `data/places/LocalPlacesRepository.kt`, `LocalPlacesDownloader.kt` | Map Data country download |
+| Overture POI SQLite | `data/places/LocalPlacesRepository.kt`, `LocalPlacesDownloader.kt`, `LocalPlacesSearch.kt` | Map Data country download |
 | Offline map tile regions | `data/map/OfflineMapRepository.kt`, `OfflineMapDownloadService.kt` | Same Map Data panel |
 
 **Common tasks:** catalog fetch from GitHub releases, install/decompress `.db.gz`, TomTom key + traffic toggle in Map Data, offline region download/pause.
@@ -32,7 +32,7 @@ Two distinct offline systems share the same "Map Data" UI (`MapDataOverlay.kt` /
 - `MapDataOverlay` header copy still says "~50 MB compressed" — per-row sizes from catalog are correct (~137 MB for PH)
 - Map Data panel (`MapDataPanelContent`) lists catalog countries only — no Import/Sample Philippines fallback rows; install via per-country Download from GitHub `countries.json`
 - Map Data scroll: `CountryCatalogList` wraps scrollable `Column` in `Box(modifier.carScrollbar(scrollState))`; external `modifier` (e.g. `.weight(1f)`) stays on `Box`
-- Offline DB after app update: `LocalPlacesRepository` init auto-discovers largest `files/places/*.db` when `active_iso` pref missing; `hasInstalledDatabase` checks any installed file (not pref-only); open failure retries after deleting `-wal`/`-shm`/`-journal` sidecars; **`ensureDatabaseOpen()`** before `searchPlaces()` / `getPlacesInBounds()` — file can show Installed while connection is closed
+- Offline DB after app update: `LocalPlacesRepository` init auto-discovers largest `files/places/*.db` when `active_iso` pref missing; `hasInstalledDatabase` checks any installed file (not pref-only); open failure retries after deleting `-wal`/`-shm`/`-journal` sidecars; **`ensureDatabaseOpen()`** before `LocalPlacesSearch.searchPlaces()` / `getPlacesInBounds()` — file can show Installed while connection is closed. FTS5/LIKE SQL lives in `LocalPlacesSearch` (`ORDER BY` distance proxy then `LIMIT`); do not re-apply LIMIT before distance sort.
 - Google Places POI caching prohibited by Google Maps Platform ToS even when device has Play Services; TomTom Places or Overture offline DB are cache-friendly alternatives
 
 ## TomTom API key (shared UI in Map Data panel)

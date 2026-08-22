@@ -1,6 +1,12 @@
 package com.kyuusanq3.mixauto.data.map
 
 import org.maplibre.android.geometry.LatLng
+import kotlin.math.abs
+import kotlin.math.asin
+import kotlin.math.cos
+import kotlin.math.round
+import kotlin.math.sin
+import kotlin.math.sqrt
 
 /**
  * Pure planner for per-maneuver alternate routes.
@@ -47,6 +53,12 @@ internal object ManeuverAlternatePlanner {
 
     /** Only consider turns within this many steps ahead of the current step (lookahead window). */
     const val LOOKAHEAD_STEP_COUNT: Int = 6
+
+    /** |delta| below this is shown as "Similar ETA" on the grey-fork callout. */
+    const val SIMILAR_ETA_MAX_SECONDS: Double = 60.0
+
+    /** Place the ETA bubble this far along the fork from the branch. */
+    const val CALLOUT_ALONG_ROUTE_M: Double = 150.0
 
     /**
      * Indices of upcoming "main turn" maneuvers in [steps] starting after [currentStepIndex],
@@ -158,5 +170,48 @@ internal object ManeuverAlternatePlanner {
     ): Boolean {
         if (distToAlternateM > onRouteMaxM) return false
         return distToPrimaryM > rerouteThresholdM
+    }
+
+    /**
+     * Driver-facing ETA vs the original remaining duration. [deltaSeconds] is alternate minus
+     * original (negative = faster). Under one minute either way is "Similar ETA".
+     */
+    fun formatEtaCalloutLabel(deltaSeconds: Double): String {
+        val absSec = abs(deltaSeconds)
+        if (absSec < SIMILAR_ETA_MAX_SECONDS) return "Similar ETA"
+        val minutes = round(absSec / 60.0).toInt().coerceAtLeast(1)
+        return if (deltaSeconds < 0.0) {
+            "$minutes min faster"
+        } else {
+            "$minutes min slower"
+        }
+    }
+
+    /**
+     * Point on [geometryPoints] about [alongRouteM] from the branch so the callout sits on the
+     * grey fork, not on the shared start with the cyan line.
+     */
+    fun calloutAnchorPoint(
+        geometryPoints: List<LatLng>,
+        alongRouteM: Double = CALLOUT_ALONG_ROUTE_M,
+    ): LatLng? {
+        if (geometryPoints.size < 2) return geometryPoints.firstOrNull()
+        var traveled = 0.0
+        for (i in 1 until geometryPoints.size) {
+            traveled += haversineMeters(geometryPoints[i - 1], geometryPoints[i])
+            if (traveled >= alongRouteM) return geometryPoints[i]
+        }
+        return geometryPoints[geometryPoints.size / 2]
+    }
+
+    private fun haversineMeters(a: LatLng, b: LatLng): Double {
+        val earthM = 6_371_000.0
+        val lat1 = Math.toRadians(a.latitude)
+        val lat2 = Math.toRadians(b.latitude)
+        val dLat = Math.toRadians(b.latitude - a.latitude)
+        val dLng = Math.toRadians(b.longitude - a.longitude)
+        val h = sin(dLat / 2) * sin(dLat / 2) +
+            cos(lat1) * cos(lat2) * sin(dLng / 2) * sin(dLng / 2)
+        return 2.0 * earthM * asin(sqrt(h).coerceIn(0.0, 1.0))
     }
 }

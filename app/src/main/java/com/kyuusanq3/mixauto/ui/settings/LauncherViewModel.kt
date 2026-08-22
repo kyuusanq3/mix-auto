@@ -10,41 +10,45 @@ import androidx.lifecycle.viewModelScope
 import com.kyuusanq3.mixauto.BuildConfig
 import com.kyuusanq3.mixauto.data.apps.LaunchableAppEntry
 import com.kyuusanq3.mixauto.data.apps.LaunchableAppsRepository
-import com.kyuusanq3.mixauto.data.map.TomTomKeyCheckResult
-import com.kyuusanq3.mixauto.data.map.TomTomTrafficClient
 import com.kyuusanq3.mixauto.domain.map.SearchResultPlace
 import com.kyuusanq3.mixauto.ui.components.canLaunchApp
 import com.kyuusanq3.mixauto.ui.dashboard.ActivePanel
 import com.kyuusanq3.mixauto.ui.dashboard.AlbumArtMode
 import com.kyuusanq3.mixauto.ui.dashboard.DockShortcutIconSize
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
-
-sealed class TomTomKeyCheckState {
-    data object Idle : TomTomKeyCheckState()
-    data object Checking : TomTomKeyCheckState()
-    data class Success(val message: String) : TomTomKeyCheckState()
-    data class Error(val message: String) : TomTomKeyCheckState()
-}
 
 class LauncherViewModel(application: Application) : AndroidViewModel(application) {
     private val preferences = LauncherPreferences(application)
     private val launchableAppsRepository = LaunchableAppsRepository(application)
+    private val mapPrefs = LauncherMapPrefs(preferences, viewModelScope)
+    private val audioPrefs = LauncherAudioPrefs(application, preferences)
 
-    var defaultAudioPackage by mutableStateOf(loadValidatedDefaultAudioPackage())
-        private set
+    val defaultAudioPackage: String get() = audioPrefs.defaultAudioPackage
+    val audioFallbackResumeLink: String get() = audioPrefs.audioFallbackResumeLink
+    val showAlbumArtControls: Boolean get() = audioPrefs.showAlbumArtControls
+    val resumeAudioOnStartup: Boolean get() = audioPrefs.resumeAudioOnStartup
+    val albumArtMode: AlbumArtMode get() = audioPrefs.albumArtMode
 
-    var audioFallbackResumeLink by mutableStateOf(preferences.audioFallbackResumeLink)
-        private set
-
-    var showAlbumArtControls by mutableStateOf(preferences.showAlbumArtControls)
-        private set
-
-    var resumeAudioOnStartup by mutableStateOf(preferences.resumeAudioOnStartup)
-        private set
+    val limitSearchDistance: Boolean get() = mapPrefs.limitSearchDistance
+    val useVectorTiles: Boolean get() = mapPrefs.useVectorTiles
+    val show3dBuildings: Boolean get() = mapPrefs.show3dBuildings
+    val drivingZoom: Float get() = mapPrefs.drivingZoom
+    val drivingTilt: Float get() = mapPrefs.drivingTilt
+    val puckHorizontalOffset: Float get() = mapPrefs.puckHorizontalOffset
+    val puckVerticalOffset: Float get() = mapPrefs.puckVerticalOffset
+    val puckScale: Float get() = mapPrefs.puckScale
+    val showTraffic: Boolean get() = mapPrefs.showTraffic
+    val navigationVoiceEnabled: Boolean get() = mapPrefs.navigationVoiceEnabled
+    val navigationVoiceVolume: Float get() = mapPrefs.navigationVoiceVolume
+    val navigationVoiceBoost: Boolean get() = mapPrefs.navigationVoiceBoost
+    val tomTomApiKey: String get() = mapPrefs.tomTomApiKey
+    val rememberEncounteredPlaces: Boolean get() = mapPrefs.rememberEncounteredPlaces
+    val allowMapDownloadOnMobileData: Boolean get() = mapPrefs.allowMapDownloadOnMobileData
+    val offlineDetailUpgradeBannerDismissed: Boolean
+        get() = mapPrefs.offlineDetailUpgradeBannerDismissed
+    val tomTomKeyCheckState: TomTomKeyCheckState get() = mapPrefs.tomTomKeyCheckState
 
     var dockPinnedPackages by mutableStateOf(loadValidatedDockPinnedPackages())
         private set
@@ -58,58 +62,16 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     var mapMediaRatio by mutableStateOf(preferences.mapMediaRatio)
         private set
 
-    var limitSearchDistance by mutableStateOf(preferences.limitSearchDistance)
-        private set
-
-    var useVectorTiles by mutableStateOf(preferences.useVectorTiles)
-        private set
-
-    var show3dBuildings by mutableStateOf(preferences.show3dBuildings)
-        private set
-
     var isLauncherMode by mutableStateOf(preferences.isLauncherMode)
         private set
 
     var dockShortcutIconSize by mutableStateOf(preferences.dockShortcutIconSize)
         private set
 
-    var drivingZoom by mutableStateOf(preferences.drivingZoom)
-        private set
-
-    var drivingTilt by mutableStateOf(preferences.drivingTilt)
-        private set
-
-    var puckHorizontalOffset by mutableStateOf(preferences.puckHorizontalOffset)
-        private set
-
-    var puckVerticalOffset by mutableStateOf(preferences.puckVerticalOffset)
-        private set
-
-    var puckScale by mutableStateOf(preferences.puckScale)
-        private set
-
-    var showTraffic by mutableStateOf(preferences.showTraffic)
-        private set
-
-    var navigationVoiceEnabled by mutableStateOf(preferences.navigationVoiceEnabled)
-        private set
-
-    var navigationVoiceVolume by mutableStateOf(preferences.navigationVoiceVolume)
-        private set
-
-    var navigationVoiceBoost by mutableStateOf(preferences.navigationVoiceBoost)
-        private set
-
-    var tomTomApiKey by mutableStateOf(preferences.tomTomApiKey)
-        private set
-
     var recentDestinations by mutableStateOf(preferences.recentDestinations)
         private set
 
     var savedPlaces by mutableStateOf(preferences.savedPlaces)
-        private set
-
-    var albumArtMode by mutableStateOf(AlbumArtMode.fromPreference(preferences.albumArtMode))
         private set
 
     var showStatusStrip by mutableStateOf(preferences.showStatusStrip)
@@ -123,20 +85,6 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
 
     var isAudioPlayerMinimized by mutableStateOf(false)
         internal set
-
-    var rememberEncounteredPlaces by mutableStateOf(preferences.rememberEncounteredPlaces)
-        private set
-
-    var allowMapDownloadOnMobileData by mutableStateOf(preferences.allowMapDownloadOnMobileData)
-        private set
-
-    var offlineDetailUpgradeBannerDismissed by mutableStateOf(
-        preferences.offlineDetailUpgradeBannerDismissed,
-    )
-        private set
-
-    var tomTomKeyCheckState by mutableStateOf<TomTomKeyCheckState>(TomTomKeyCheckState.Idle)
-        private set
 
     var isDestinationSearchOpen by mutableStateOf(false)
         internal set
@@ -265,20 +213,11 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         isAudioPlayerMinimized = value
     }
 
-    fun toggleLimitSearchDistance() {
-        limitSearchDistance = !limitSearchDistance
-        preferences.limitSearchDistance = limitSearchDistance
-    }
+    fun toggleLimitSearchDistance() = mapPrefs.toggleLimitSearchDistance()
 
-    fun toggleVectorTiles() {
-        useVectorTiles = !useVectorTiles
-        preferences.useVectorTiles = useVectorTiles
-    }
+    fun toggleVectorTiles() = mapPrefs.toggleVectorTiles()
 
-    fun toggleShow3dBuildings() {
-        show3dBuildings = !show3dBuildings
-        preferences.show3dBuildings = show3dBuildings
-    }
+    fun toggleShow3dBuildings() = mapPrefs.toggleShow3dBuildings()
 
     fun toggleLauncherMode() {
         isLauncherMode = !isLauncherMode
@@ -290,76 +229,32 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         preferences.dockShortcutIconSize = size
     }
 
-    fun updateDrivingZoom(value: Float) {
-        drivingZoom = value
-        preferences.drivingZoom = value
-    }
+    fun updateDrivingZoom(value: Float) = mapPrefs.updateDrivingZoom(value)
 
-    fun updateDrivingTilt(value: Float) {
-        drivingTilt = value.coerceIn(
-            LauncherPreferences.MIN_DRIVING_TILT,
-            LauncherPreferences.MAX_DRIVING_TILT,
-        )
-        preferences.drivingTilt = drivingTilt
-    }
+    fun updateDrivingTilt(value: Float) = mapPrefs.updateDrivingTilt(value)
 
-    fun updatePuckHorizontalOffset(value: Float) {
-        puckHorizontalOffset = value
-        preferences.puckHorizontalOffset = value
-    }
+    fun updatePuckHorizontalOffset(value: Float) = mapPrefs.updatePuckHorizontalOffset(value)
 
-    fun updatePuckVerticalOffset(value: Float) {
-        puckVerticalOffset = value
-        preferences.puckVerticalOffset = value
-    }
+    fun updatePuckVerticalOffset(value: Float) = mapPrefs.updatePuckVerticalOffset(value)
 
-    fun updatePuckScale(value: Float) {
-        puckScale = value
-        preferences.puckScale = value
-    }
+    fun updatePuckScale(value: Float) = mapPrefs.updatePuckScale(value)
 
-    fun updateAlbumArtMode(mode: AlbumArtMode) {
-        albumArtMode = mode
-        preferences.albumArtMode = mode.name
-    }
+    fun updateAlbumArtMode(mode: AlbumArtMode) = audioPrefs.updateAlbumArtMode(mode)
 
-    fun toggleTraffic() {
-        showTraffic = !showTraffic
-        preferences.showTraffic = showTraffic
-    }
+    fun toggleTraffic() = mapPrefs.toggleTraffic()
 
-    fun toggleNavigationVoice() {
-        navigationVoiceEnabled = !navigationVoiceEnabled
-        preferences.navigationVoiceEnabled = navigationVoiceEnabled
-    }
+    fun toggleNavigationVoice() = mapPrefs.toggleNavigationVoice()
 
-    fun updateNavigationVoiceVolume(value: Float) {
-        navigationVoiceVolume = value.coerceIn(
-            LauncherPreferences.MIN_NAVIGATION_VOICE_VOLUME,
-            LauncherPreferences.MAX_NAVIGATION_VOICE_VOLUME,
-        )
-        preferences.navigationVoiceVolume = navigationVoiceVolume
-    }
+    fun updateNavigationVoiceVolume(value: Float) = mapPrefs.updateNavigationVoiceVolume(value)
 
-    fun updateNavigationVoiceBoost(enabled: Boolean) {
-        navigationVoiceBoost = enabled
-        preferences.navigationVoiceBoost = enabled
-    }
+    fun updateNavigationVoiceBoost(enabled: Boolean) = mapPrefs.updateNavigationVoiceBoost(enabled)
 
-    fun updateRememberEncounteredPlaces(enabled: Boolean) {
-        rememberEncounteredPlaces = enabled
-        preferences.rememberEncounteredPlaces = enabled
-    }
+    fun updateRememberEncounteredPlaces(enabled: Boolean) =
+        mapPrefs.updateRememberEncounteredPlaces(enabled)
 
-    fun toggleAllowMapDownloadOnMobileData() {
-        allowMapDownloadOnMobileData = !allowMapDownloadOnMobileData
-        preferences.allowMapDownloadOnMobileData = allowMapDownloadOnMobileData
-    }
+    fun toggleAllowMapDownloadOnMobileData() = mapPrefs.toggleAllowMapDownloadOnMobileData()
 
-    fun dismissOfflineDetailUpgradeBanner() {
-        offlineDetailUpgradeBannerDismissed = true
-        preferences.offlineDetailUpgradeBannerDismissed = true
-    }
+    fun dismissOfflineDetailUpgradeBanner() = mapPrefs.dismissOfflineDetailUpgradeBanner()
 
     fun toggleShowStatusStrip() {
         showStatusStrip = !showStatusStrip
@@ -371,31 +266,19 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         preferences.showSystemStatusBar = showSystemStatusBar
     }
 
-    fun updateTomTomApiKey(key: String) {
-        tomTomApiKey = key
-        preferences.tomTomApiKey = key
-        tomTomKeyCheckState = TomTomKeyCheckState.Idle
-    }
+    fun updateTomTomApiKey(key: String) = mapPrefs.updateTomTomApiKey(key)
 
-    fun updateDefaultAudioPackage(packageName: String) {
-        defaultAudioPackage = packageName
-        preferences.defaultAudioPackage = packageName
-    }
+    fun updateDefaultAudioPackage(packageName: String) =
+        audioPrefs.updateDefaultAudioPackage(packageName)
 
-    fun updateAudioFallbackResumeLink(link: String) {
-        audioFallbackResumeLink = link
-        preferences.audioFallbackResumeLink = link
-    }
+    fun updateAudioFallbackResumeLink(link: String) =
+        audioPrefs.updateAudioFallbackResumeLink(link)
 
-    fun updateShowAlbumArtControls(enabled: Boolean) {
-        showAlbumArtControls = enabled
-        preferences.showAlbumArtControls = enabled
-    }
+    fun updateShowAlbumArtControls(enabled: Boolean) =
+        audioPrefs.updateShowAlbumArtControls(enabled)
 
-    fun updateResumeAudioOnStartup(enabled: Boolean) {
-        resumeAudioOnStartup = enabled
-        preferences.resumeAudioOnStartup = enabled
-    }
+    fun updateResumeAudioOnStartup(enabled: Boolean) =
+        audioPrefs.updateResumeAudioOnStartup(enabled)
 
     fun isDockPinned(packageName: String): Boolean {
         return dockPinnedPackages.contains(packageName)
@@ -443,30 +326,7 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         return savedPlaces.any { isWithinDedupThreshold(it, place) }
     }
 
-    fun checkTomTomApiKey() {
-        if (tomTomKeyCheckState is TomTomKeyCheckState.Checking) return
-
-        viewModelScope.launch {
-            tomTomKeyCheckState = TomTomKeyCheckState.Checking
-            val result = withContext(Dispatchers.IO) {
-                TomTomTrafficClient.verifyApiKey(tomTomApiKey)
-            }
-            tomTomKeyCheckState = when (result) {
-                is TomTomKeyCheckResult.Success -> TomTomKeyCheckState.Success(result.message)
-                is TomTomKeyCheckResult.Failure -> TomTomKeyCheckState.Error(result.message)
-            }
-        }
-    }
-
-    private fun loadValidatedDefaultAudioPackage(): String {
-        val stored = preferences.defaultAudioPackage
-        if (stored.isBlank()) return ""
-        if (!canLaunchApp(getApplication(), stored)) {
-            preferences.defaultAudioPackage = ""
-            return ""
-        }
-        return stored
-    }
+    fun checkTomTomApiKey() = mapPrefs.checkTomTomApiKey()
 
     private fun loadValidatedDockPinnedPackages(): List<String> {
         val app = getApplication<Application>()

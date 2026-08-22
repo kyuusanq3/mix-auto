@@ -378,6 +378,11 @@ internal class NavigationCameraController(
      * completes, guaranteeing the puck offset lands.
      */
     private fun engageTrackingGpsWithPuckPadding(map: MapLibreMap, component: LocationComponent) {
+        val alreadyTrackingGps = component.cameraMode == CameraMode.TRACKING_GPS
+        if (alreadyTrackingGps) {
+            viewportPadding.applyDrivingTrackingPadding(map)
+            return
+        }
         component.setCameraMode(
             CameraMode.TRACKING_GPS,
             object : OnLocationCameraTransitionListener {

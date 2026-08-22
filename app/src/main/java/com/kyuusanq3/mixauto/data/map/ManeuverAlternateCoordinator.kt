@@ -16,6 +16,7 @@ private const val TAG = "ManeuverAlt"
 internal data class StashedManeuverAlternate(
     val planned: ManeuverAlternateRoute,
     val route: RouteResult,
+    val baselineDurationSeconds: Double,
 )
 
 /**
@@ -29,6 +30,7 @@ internal class ManeuverAlternateCoordinator(
     private val getCurrentStepIndex: () -> Int,
     private val getDestinationLatLng: () -> LatLng?,
     private val fetchOsrmFromBranch: (Double, Double, Double, Double) -> List<RouteResult>,
+    private val displayDensity: () -> Float,
 ) {
     private var prefetchJob: Job? = null
     private var stashed: List<StashedManeuverAlternate> = emptyList()
@@ -63,6 +65,10 @@ internal class ManeuverAlternateCoordinator(
                             dest.longitude,
                         )
                         val picked = pickBranchRoute(candidates, route, idx) ?: continue
+                        val baseline = ManeuverAlternatePlanner.estimateRemainingDurationSeconds(
+                            route,
+                            idx,
+                        )
                         add(
                             StashedManeuverAlternate(
                                 planned = ManeuverAlternateRoute(
@@ -74,6 +80,7 @@ internal class ManeuverAlternateCoordinator(
                                     distanceMeters = picked.distanceMeters,
                                 ),
                                 route = picked,
+                                baselineDurationSeconds = baseline,
                             ),
                         )
                     }
@@ -101,7 +108,14 @@ internal class ManeuverAlternateCoordinator(
             if (next == null || next.planned.geometryPoints.size < 2) {
                 routeRenderer().clearManeuverAlternate(style)
             } else {
-                routeRenderer().showManeuverAlternate(style, next.planned.geometryPoints)
+                routeRenderer().showManeuverAlternate(
+                    style,
+                    next.planned.geometryPoints,
+                    ManeuverAlternatePlanner.formatEtaCalloutLabel(
+                        next.planned.durationSeconds - next.baselineDurationSeconds,
+                    ),
+                    displayDensity(),
+                )
                 Log.i(TAG, "Showing maneuver alternate for step " + next.planned.maneuverStepIndex)
             }
         }

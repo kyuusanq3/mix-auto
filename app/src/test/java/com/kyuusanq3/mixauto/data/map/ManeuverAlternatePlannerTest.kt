@@ -143,6 +143,29 @@ class ManeuverAlternatePlannerTest {
         )
     }
 
+    @Test
+    fun etaCalloutLabelUsesSimilarOrMinutesFasterSlower() {
+        assertEquals("Similar ETA", ManeuverAlternatePlanner.formatEtaCalloutLabel(0.0))
+        assertEquals("Similar ETA", ManeuverAlternatePlanner.formatEtaCalloutLabel(59.0))
+        assertEquals("Similar ETA", ManeuverAlternatePlanner.formatEtaCalloutLabel(-45.0))
+        assertEquals("1 min slower", ManeuverAlternatePlanner.formatEtaCalloutLabel(60.0))
+        assertEquals("2 min faster", ManeuverAlternatePlanner.formatEtaCalloutLabel(-90.0))
+        assertEquals("3 min slower", ManeuverAlternatePlanner.formatEtaCalloutLabel(200.0))
+    }
+
+    @Test
+    fun calloutAnchorSkipsSharedStartForLongFork() {
+        val pts = listOf(
+            LatLng(10.0, 123.0),
+            LatLng(10.001, 123.0),
+            LatLng(10.002, 123.0),
+            LatLng(10.003, 123.0),
+        )
+        val anchor = ManeuverAlternatePlanner.calloutAnchorPoint(pts, alongRouteM = 50.0)
+        assertTrue(anchor != null)
+        assertTrue(anchor!!.latitude > pts[0].latitude)
+    }
+
     private fun leg(type: String, dist: Double): LegStep = LegStep(
         maneuverLat = 0.0,
         maneuverLng = 0.0,

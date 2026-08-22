@@ -12,8 +12,9 @@ import java.util.zip.GZIPInputStream
 
 /**
  * HTTP / asset / URI install of Overture country packs, extracted from
- * [LocalPlacesRepository]. SQLite open/search stays on the repository;
- * this class only copies bytes onto disk then asks the repo to open/read meta.
+ * [LocalPlacesRepository]. SQLite open stays on the repository;
+ * search lives in [LocalPlacesSearch]. This class only copies bytes onto disk
+ * then asks the repo to open/read meta.
  */
 internal class LocalPlacesDownloader(
     private val appContext: Context,

@@ -8,6 +8,7 @@ import org.maplibre.android.style.expressions.Expression
 import org.maplibre.android.style.layers.LineLayer
 import org.maplibre.android.style.layers.Property
 import org.maplibre.android.style.layers.PropertyFactory
+import org.maplibre.android.style.layers.SymbolLayer
 import org.maplibre.android.style.sources.GeoJsonSource
 
 /** Grey dashed alternate shown during navigation when TomTom offers lighter traffic. */
@@ -88,19 +89,26 @@ internal class RouteRenderer(
         runCatching { style.removeLayer(ROUTE_CASING_LAYER_ID) }
         runCatching { style.removeLayer(ROUTE_TOMTOM_LAYER_ID) }
         runCatching { style.removeLayer(ROUTE_OSRM_ALT_LAYER_ID) }
+        runCatching { style.removeLayer(ROUTE_OSRM_ALT_CASING_LAYER_ID) }
+        runCatching { style.removeLayer(ROUTE_OSRM_ALT_CALLOUT_LAYER_ID) }
         runCatching { style.removeLayer(ROUTE_OSRM_PRIMARY_PREVIEW_LAYER_ID) }
         runCatching { style.removeSource(ROUTE_TRAVELED_SOURCE_ID) }
         runCatching { style.removeSource(ROUTE_REMAINING_SOURCE_ID) }
         runCatching { style.removeSource(ROUTE_SOURCE_ID) }
         runCatching { style.removeSource(ROUTE_TOMTOM_SOURCE_ID) }
         runCatching { style.removeSource(ROUTE_OSRM_ALT_SOURCE_ID) }
+        runCatching { style.removeSource(ROUTE_OSRM_ALT_CALLOUT_SOURCE_ID) }
         runCatching { style.removeSource(ROUTE_OSRM_PRIMARY_PREVIEW_SOURCE_ID) }
     }
 
     fun removeAlternateRouteLayers(style: Style) {
         runCatching { style.removeLayer(ROUTE_TOMTOM_LAYER_ID) }
+        runCatching { style.removeLayer(ROUTE_OSRM_ALT_LAYER_ID) }
+        runCatching { style.removeLayer(ROUTE_OSRM_ALT_CASING_LAYER_ID) }
+        runCatching { style.removeLayer(ROUTE_OSRM_ALT_CALLOUT_LAYER_ID) }
         runCatching { style.removeSource(ROUTE_TOMTOM_SOURCE_ID) }
         runCatching { style.removeSource(ROUTE_OSRM_ALT_SOURCE_ID) }
+        runCatching { style.removeSource(ROUTE_OSRM_ALT_CALLOUT_SOURCE_ID) }
         runCatching { style.removeSource(ROUTE_OSRM_PRIMARY_PREVIEW_SOURCE_ID) }
     }
 
@@ -120,7 +128,12 @@ internal class RouteRenderer(
         clearAltLayer(style, ROUTE_TOMTOM_SOURCE_ID)
     }
 
-    fun showManeuverAlternate(style: Style, points: List<LatLng>) {
+    fun showManeuverAlternate(
+        style: Style,
+        points: List<LatLng>,
+        etaLabel: String,
+        density: Float,
+    ) {
         ensureRouteLayers(style)
         setAltRouteGeoJson(
             style,
@@ -129,11 +142,13 @@ internal class RouteRenderer(
             points,
             AltRouteStyle.MANEUVER,
         )
+        showManeuverAlternateCallout(style, points, etaLabel, density)
         ensurePuckAboveOverlays()
     }
 
     fun clearManeuverAlternate(style: Style) {
         clearAltLayer(style, ROUTE_OSRM_ALT_SOURCE_ID)
+        clearAltLayer(style, ROUTE_OSRM_ALT_CALLOUT_SOURCE_ID)
     }
 
     fun restackRouteLayersAbove(style: Style, anchorLayerId: String) {
@@ -354,6 +369,94 @@ internal class RouteRenderer(
     /** Test/debug: index of the segment containing the traveled/remaining split. */
     internal fun debugProgressSegmentIndex(): Int = routeProgressSegmentIndex
 
+    private fun ensureManeuverAlternateLayers(style: Style, sourceId: String) {
+        if (style.getLayer(ROUTE_OSRM_ALT_CASING_LAYER_ID) != null &&
+            style.getLayer(ROUTE_OSRM_ALT_LAYER_ID) != null
+        ) {
+            return
+        }
+        val casing = LineLayer(ROUTE_OSRM_ALT_CASING_LAYER_ID, sourceId).withProperties(
+            PropertyFactory.lineColor(ROUTE_CASING_COLOR),
+            PropertyFactory.lineWidth(ROUTE_OSRM_ALT_CASING_WIDTH),
+            PropertyFactory.lineCap(Property.LINE_CAP_ROUND),
+            PropertyFactory.lineJoin(Property.LINE_JOIN_ROUND),
+            PropertyFactory.lineOpacity(1f),
+        )
+        val fill = LineLayer(ROUTE_OSRM_ALT_LAYER_ID, sourceId).withProperties(
+            PropertyFactory.lineColor(ROUTE_OSRM_ALT_COLOR),
+            PropertyFactory.lineWidth(ROUTE_OSRM_ALT_WIDTH),
+            PropertyFactory.lineOpacity(ROUTE_OSRM_ALT_OPACITY),
+            PropertyFactory.lineCap(Property.LINE_CAP_ROUND),
+            PropertyFactory.lineJoin(Property.LINE_JOIN_ROUND),
+        )
+        val existingFill = style.getLayer(ROUTE_OSRM_ALT_LAYER_ID)
+        val existingCasing = style.getLayer(ROUTE_OSRM_ALT_CASING_LAYER_ID)
+        when {
+            existingCasing == null && existingFill == null -> {
+                val anchor = resolveAnchorLayerId(style)
+                if (anchor != null && style.getLayer(anchor) != null) {
+                    style.addLayerAbove(casing, anchor)
+                    style.addLayerAbove(fill, ROUTE_OSRM_ALT_CASING_LAYER_ID)
+                } else {
+                    style.addLayer(casing)
+                    style.addLayer(fill)
+                }
+            }
+            existingCasing == null && existingFill != null -> {
+                style.addLayerBelow(casing, ROUTE_OSRM_ALT_LAYER_ID)
+            }
+            existingCasing != null && existingFill == null -> {
+                style.addLayerAbove(fill, ROUTE_OSRM_ALT_CASING_LAYER_ID)
+            }
+        }
+    }
+
+    private fun showManeuverAlternateCallout(
+        style: Style,
+        points: List<LatLng>,
+        etaLabel: String,
+        density: Float,
+    ) {
+        val anchor = ManeuverAlternatePlanner.calloutAnchorPoint(points) ?: run {
+            clearAltLayer(style, ROUTE_OSRM_ALT_CALLOUT_SOURCE_ID)
+            return
+        }
+        val bitmap = ManeuverAlternateCallout.drawBitmap(density, etaLabel)
+        runCatching { style.removeImage(ROUTE_OSRM_ALT_CALLOUT_ICON_ID) }
+        style.addImage(ROUTE_OSRM_ALT_CALLOUT_ICON_ID, bitmap)
+        val json = ManeuverAlternateCallout.pointFeatureJson(anchor)
+        if (style.getSource(ROUTE_OSRM_ALT_CALLOUT_SOURCE_ID) == null) {
+            style.addSource(GeoJsonSource(ROUTE_OSRM_ALT_CALLOUT_SOURCE_ID, json))
+        } else {
+            (style.getSource(ROUTE_OSRM_ALT_CALLOUT_SOURCE_ID) as? GeoJsonSource)?.setGeoJson(json)
+        }
+        if (style.getLayer(ROUTE_OSRM_ALT_CALLOUT_LAYER_ID) == null) {
+            val layer = SymbolLayer(
+                ROUTE_OSRM_ALT_CALLOUT_LAYER_ID,
+                ROUTE_OSRM_ALT_CALLOUT_SOURCE_ID,
+            ).withProperties(
+                PropertyFactory.iconImage(ROUTE_OSRM_ALT_CALLOUT_ICON_ID),
+                PropertyFactory.iconAnchor(Property.ICON_ANCHOR_BOTTOM),
+                PropertyFactory.iconAllowOverlap(true),
+                PropertyFactory.iconIgnorePlacement(true),
+                PropertyFactory.iconSize(1f),
+                PropertyFactory.iconPitchAlignment(Property.ICON_PITCH_ALIGNMENT_VIEWPORT),
+                PropertyFactory.iconRotationAlignment(Property.ICON_ROTATION_ALIGNMENT_VIEWPORT),
+            )
+            val aboveId = when {
+                style.getLayer(ROUTE_OSRM_ALT_LAYER_ID) != null -> ROUTE_OSRM_ALT_LAYER_ID
+                style.getLayer(ROUTE_OSRM_ALT_CASING_LAYER_ID) != null ->
+                    ROUTE_OSRM_ALT_CASING_LAYER_ID
+                else -> resolveAnchorLayerId(style)
+            }
+            if (aboveId != null && style.getLayer(aboveId) != null) {
+                style.addLayerAbove(layer, aboveId)
+            } else {
+                style.addLayer(layer)
+            }
+        }
+    }
+
     private fun clearAltLayer(style: Style, sourceId: String) {
         (style.getSource(sourceId) as? GeoJsonSource)
             ?.setGeoJson(buildLineStringFeatureJson(emptyList()))
@@ -369,28 +472,24 @@ internal class RouteRenderer(
         if (style.getSource(sourceId) == null) {
             style.addSource(GeoJsonSource(sourceId, buildLineStringFeatureJson(emptyList())))
         }
-        if (style.getLayer(layerId) == null) {
-            val layer = when (altStyle) {
-                AltRouteStyle.LIGHTER_TRAFFIC -> LineLayer(layerId, sourceId).withProperties(
-                    PropertyFactory.lineColor(ROUTE_LIGHTER_TRAFFIC_COLOR),
-                    PropertyFactory.lineWidth(ROUTE_LIGHTER_TRAFFIC_WIDTH),
-                    PropertyFactory.lineOpacity(ROUTE_LIGHTER_TRAFFIC_OPACITY),
-                    PropertyFactory.lineCap(Property.LINE_CAP_ROUND),
-                    PropertyFactory.lineJoin(Property.LINE_JOIN_ROUND),
-                )
-                AltRouteStyle.MANEUVER -> LineLayer(layerId, sourceId).withProperties(
-                    PropertyFactory.lineColor(ROUTE_OSRM_ALT_COLOR),
-                    PropertyFactory.lineWidth(ROUTE_OSRM_ALT_WIDTH),
-                    PropertyFactory.lineOpacity(ROUTE_OSRM_ALT_OPACITY),
-                    PropertyFactory.lineCap(Property.LINE_CAP_ROUND),
-                    PropertyFactory.lineJoin(Property.LINE_JOIN_ROUND),
-                )
-            }
-            val anchor = resolveAnchorLayerId(style)
-            if (anchor != null && style.getLayer(anchor) != null) {
-                style.addLayerAbove(layer, anchor)
-            } else {
-                style.addLayer(layer)
+        when (altStyle) {
+            AltRouteStyle.MANEUVER -> ensureManeuverAlternateLayers(style, sourceId)
+            AltRouteStyle.LIGHTER_TRAFFIC -> {
+                if (style.getLayer(layerId) == null) {
+                    val layer = LineLayer(layerId, sourceId).withProperties(
+                        PropertyFactory.lineColor(ROUTE_LIGHTER_TRAFFIC_COLOR),
+                        PropertyFactory.lineWidth(ROUTE_LIGHTER_TRAFFIC_WIDTH),
+                        PropertyFactory.lineOpacity(ROUTE_LIGHTER_TRAFFIC_OPACITY),
+                        PropertyFactory.lineCap(Property.LINE_CAP_ROUND),
+                        PropertyFactory.lineJoin(Property.LINE_JOIN_ROUND),
+                    )
+                    val anchor = resolveAnchorLayerId(style)
+                    if (anchor != null && style.getLayer(anchor) != null) {
+                        style.addLayerAbove(layer, anchor)
+                    } else {
+                        style.addLayer(layer)
+                    }
+                }
             }
         }
         (style.getSource(sourceId) as? GeoJsonSource)

@@ -80,6 +80,9 @@ internal class NavigationSessionCoordinator(
         fetchOsrmFromBranch = { latA, lngA, latB, lngB ->
             fetchOsrmRoutesWithAlternatives(lngA, latA, lngB, latB)
         },
+        displayDensity = {
+            appContext()?.resources?.displayMetrics?.density ?: 3f
+        },
     )
 
     fun navigateToCoordinates(lat: Double, lng: Double) {
@@ -214,7 +217,7 @@ internal class NavigationSessionCoordinator(
                             )
                         }
                         offRouteDetector().isRerouteInProgress = false
-                        enterNavigationCamera()
+                        // skipRerouteNavDive: stay in TRACKING_GPS so puck offset holds
                     } else {
                         offRouteDetector().isRerouteInProgress = false
                         updateUiState { it.copy(isNavigating = false, streetName = "Route not found") }
