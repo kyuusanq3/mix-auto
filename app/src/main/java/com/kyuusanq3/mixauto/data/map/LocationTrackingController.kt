@@ -263,18 +263,22 @@ internal class LocationTrackingController(
                 createLocationEngine(ctx)
             }
             this.locationEngine = locationEngine
+            if (alreadyActivated) {
+                // Resume / retryLocationActivation: applyStyle rebuilds puck layers (flicker).
+                // Padding is restored after MapView.onResume via schedulePuckPaddingRestore.
+                if (!locationComponent.isLocationComponentEnabled) {
+                    locationComponent.isLocationComponentEnabled = true
+                }
+                return@runCatching
+            }
             val componentOptions = buildLocationComponentOptions(ctx, style)
             val engineRequest = buildDrivingLocationEngineRequest()
-            if (!alreadyActivated) {
-                val options = LocationComponentActivationOptions.builder(ctx, style)
-                    .locationEngine(locationEngine)
-                    .locationComponentOptions(componentOptions)
-                    .locationEngineRequest(engineRequest)
-                    .build()
-                locationComponent.activateLocationComponent(options)
-            } else {
-                locationComponent.applyStyle(componentOptions)
-            }
+            val options = LocationComponentActivationOptions.builder(ctx, style)
+                .locationEngine(locationEngine)
+                .locationComponentOptions(componentOptions)
+                .locationEngineRequest(engineRequest)
+                .build()
+            locationComponent.activateLocationComponent(options)
             locationComponent.isLocationComponentEnabled = true
             locationComponent.renderMode = RenderMode.GPS
             locationComponent.locationEngineRequest = engineRequest

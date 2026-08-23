@@ -701,6 +701,7 @@ class MapLibreEngineImpl(
                         locationTracking.refreshLocationOnly(context)
                     }
                 }
+                mapLibreMap?.let { navigationCamera.schedulePuckPaddingRestore(it) }
             },
         )
     }

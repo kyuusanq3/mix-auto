@@ -115,6 +115,7 @@ internal class MapViewHostCoordinator(
 
     fun onResume() {
         getMapView()?.onResume()
+        // GPS refresh + puck-offset restore must run after native MapView resume.
         refreshLocationOnResume()
     }
 

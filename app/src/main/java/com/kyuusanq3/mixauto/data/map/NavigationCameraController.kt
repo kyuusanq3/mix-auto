@@ -313,7 +313,7 @@ internal class NavigationCameraController(
             val trackingGps = componentReady && component.cameraMode == CameraMode.TRACKING_GPS
             val padding = viewportPadding.computeDrivingViewportPadding(map)
             val paddingKey = intArrayOf(padding.left, padding.top, padding.right, padding.bottom)
-            val paddingChanged = viewportPadding.drivingPaddingNeedsUpdate(map, paddingKey, trackingGps)
+            val paddingChanged = viewportPadding.drivingPaddingNeedsUpdate(paddingKey, trackingGps)
             if (paddingChanged) {
                 if (trackingGps) {
                     viewportPadding.applyDrivingTrackingPadding(map)
@@ -346,15 +346,33 @@ internal class NavigationCameraController(
 
     fun scheduleFreeDrivePaddingRestore(map: MapLibreMap) {
         if (uiState().isNavigating) return
+        schedulePuckPaddingRestore(map)
+    }
+
+    /**
+     * Re-pushes Map Settings puck offset after [MapView.onResume]. `MainActivity.onResume` →
+     * `activateLocationTracking()` applies `paddingWhileTracking` *before* MapLibre restores the
+     * GL/location camera, so that apply is dropped and the dedup cache then skips later retries —
+     * puck snaps to screen center after an app switch, shortcut launch, or update-installer return.
+     */
+    fun schedulePuckPaddingRestore(map: MapLibreMap) {
+        if (uiState().isInTopDownView || uiState().isCameraDetached) return
+        if (isRouteOverviewActive()) return
         val view = mapView() ?: return
+        viewportPadding.invalidateDrivingPaddingCache()
         view.post {
             if (uiState().isInTopDownView ||
                 uiState().isCameraDetached ||
-                uiState().isNavigating
+                isRouteOverviewActive()
             ) {
                 return@post
             }
-            applyPuckPaddingUpdate(map, bypassRenderThrottle = true)
+            val component = map.locationComponent
+            if (!component.isLocationComponentActivated || !component.isLocationComponentEnabled) {
+                return@post
+            }
+            viewportPadding.invalidateDrivingPaddingCache()
+            engageTrackingGpsWithPuckPadding(map, component)
         }
     }
 

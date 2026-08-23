@@ -25,8 +25,6 @@ internal class DrivingViewportPaddingController(
 ) {
     private var lastAppliedTrackingPadding: IntArray? = null
     private var lastEngagedTrackingPadding: IntArray? = null
-    private var lastPaddingMapWidth: Int = 0
-    private var lastPaddingMapHeight: Int = 0
     private var lookaheadPaddingActive: Boolean = false
 
     fun resetLookaheadPaddingActive() {
@@ -40,8 +38,6 @@ internal class DrivingViewportPaddingController(
     fun invalidateDrivingPaddingCache() {
         lastAppliedTrackingPadding = null
         lastEngagedTrackingPadding = null
-        lastPaddingMapWidth = 0
-        lastPaddingMapHeight = 0
     }
 
     fun hasEngagedTrackingPadding(): Boolean = lastEngagedTrackingPadding != null
@@ -65,15 +61,12 @@ internal class DrivingViewportPaddingController(
     }
 
     fun drivingPaddingNeedsUpdate(
-        map: MapLibreMap,
         paddingKey: IntArray,
         trackingGps: Boolean,
     ): Boolean {
-        val w = map.width.toInt()
-        val h = map.height.toInt()
-        if (w > 0 && h > 0 && (w != lastPaddingMapWidth || h != lastPaddingMapHeight)) {
-            return true
-        }
+        // Key-only: 1px Compose/layout jitter used to force paddingWhileTracking even when the
+        // quantized puck offset was unchanged, which restarts MapLibre's tracking camera (flicker).
+        // Real resizes that change placement still produce a new key (4dp quantize).
         val cached = if (trackingGps) lastEngagedTrackingPadding else lastAppliedTrackingPadding
         return cached?.contentEquals(paddingKey) != true
     }
@@ -92,16 +85,14 @@ internal class DrivingViewportPaddingController(
         val componentReady = component.isLocationComponentActivated && component.isLocationComponentEnabled
         val alreadyTrackingGps = componentReady && component.cameraMode == CameraMode.TRACKING_GPS
         if (!alreadyTrackingGps) {
-            if (!drivingPaddingNeedsUpdate(map, paddingKey, trackingGps = false)) return
+            if (!drivingPaddingNeedsUpdate(paddingKey, trackingGps = false)) return
             lastAppliedTrackingPadding = paddingKey
-            markDrivingPaddingMapSize(map)
             applyMapPaddingImmediate(map, padding)
             return
         }
-        if (!drivingPaddingNeedsUpdate(map, paddingKey, trackingGps = true)) return
+        if (!drivingPaddingNeedsUpdate(paddingKey, trackingGps = true)) return
         lastAppliedTrackingPadding = paddingKey
         lastEngagedTrackingPadding = paddingKey
-        markDrivingPaddingMapSize(map)
         applyPaddingWhileTrackingIfEngaged(component, padding)
         if (!shouldSmoothPuckMotion()) {
             forceLocationUpdateForImmediateRender(map, false, false)
@@ -117,7 +108,7 @@ internal class DrivingViewportPaddingController(
         val trackingGps = component.isLocationComponentActivated &&
             component.isLocationComponentEnabled &&
             component.cameraMode == CameraMode.TRACKING_GPS
-        if (!drivingPaddingNeedsUpdate(map, paddingKey, trackingGps)) return
+        if (!drivingPaddingNeedsUpdate(paddingKey, trackingGps)) return
         applyDrivingTrackingPadding(map)
     }
 
@@ -141,13 +132,6 @@ internal class DrivingViewportPaddingController(
             applyDrivingTrackingPadding(map)
             forceLocationUpdateForImmediateRender(map, bypassRenderThrottle, true)
         }
-    }
-
-    private fun markDrivingPaddingMapSize(map: MapLibreMap) {
-        val w = map.width.toInt()
-        val h = map.height.toInt()
-        if (w > 0) lastPaddingMapWidth = w
-        if (h > 0) lastPaddingMapHeight = h
     }
 
     private fun applyMapPaddingImmediate(map: MapLibreMap, padding: ViewportPadding) {
