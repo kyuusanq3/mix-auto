@@ -7,12 +7,15 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import com.kyuusanq3.mixauto.data.map.MixAutoPuckLog
 import com.kyuusanq3.mixauto.ui.components.AppUpdateSection
 import com.kyuusanq3.mixauto.ui.components.PanelHeaderRow
 import com.kyuusanq3.mixauto.ui.components.SettingsSwitchRow
@@ -150,6 +153,29 @@ internal fun SettingsContent(
                 onDownloadUpdate = onDownloadUpdate,
                 onInstallApk = onInstallApk,
             )
+
+            val context = LocalContext.current
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                CarBodyText(
+                    text = "Debug Logs",
+                    style = MaterialTheme.typography.bodyLarge,
+                )
+                CarLabelText(
+                    text = "Puck and camera probe from this drive. Share after you see the bug.",
+                    style = MaterialTheme.typography.labelMedium,
+                )
+                Button(
+                    onClick = { MixAutoPuckLog.share(context) },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(CarDimensions.MinTapTarget),
+                ) {
+                    CarBodyText(text = "Share Debug Logs")
+                }
+            }
         }
     }
 }

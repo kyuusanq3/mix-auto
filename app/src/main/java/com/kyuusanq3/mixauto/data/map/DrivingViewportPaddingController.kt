@@ -36,6 +36,11 @@ internal class DrivingViewportPaddingController(
     }
 
     fun invalidateDrivingPaddingCache() {
+        MixAutoPuckLog.event(
+            "padInvalidate",
+            "wasApplied=" + MixAutoPuckLog.key(lastAppliedTrackingPadding) +
+                " wasEngaged=" + MixAutoPuckLog.key(lastEngagedTrackingPadding),
+        )
         lastAppliedTrackingPadding = null
         lastEngagedTrackingPadding = null
     }
@@ -76,25 +81,60 @@ internal class DrivingViewportPaddingController(
         applyMapPaddingImmediate(map, computeDrivingViewportPadding(map))
     }
 
-    fun applyDrivingTrackingPadding(map: MapLibreMap) {
-        if (isRouteOverviewActive() || navigationCameraTransitionActive()) return
-        if (uiState().isInTopDownView || uiState().isCameraDetached) return
+    fun applyDrivingTrackingPadding(map: MapLibreMap, caller: String = "pad") {
+        if (isRouteOverviewActive() || navigationCameraTransitionActive()) {
+            MixAutoPuckLog.event("padSkip", "caller=" + caller + " reason=overviewOrNavTransition")
+            return
+        }
+        val state = uiState()
+        if (state.isInTopDownView || state.isCameraDetached) {
+            MixAutoPuckLog.event("padSkip", "caller=" + caller + " reason=topDownOrDetached")
+            return
+        }
         val padding = computeDrivingViewportPadding(map)
         val paddingKey = intArrayOf(padding.left, padding.top, padding.right, padding.bottom)
         val component = map.locationComponent
         val componentReady = component.isLocationComponentActivated && component.isLocationComponentEnabled
-        val alreadyTrackingGps = componentReady && component.cameraMode == CameraMode.TRACKING_GPS
+        val cameraMode = if (componentReady) component.cameraMode else -1
+        val alreadyTrackingGps = componentReady && cameraMode == CameraMode.TRACKING_GPS
         if (!alreadyTrackingGps) {
-            if (!drivingPaddingNeedsUpdate(paddingKey, trackingGps = false)) return
+            if (!drivingPaddingNeedsUpdate(paddingKey, trackingGps = false)) {
+                MixAutoPuckLog.event(
+                    "padSkip",
+                    "caller=" + caller +
+                        " reason=keyUnchanged tracking=false camera=" +
+                        MixAutoPuckLog.cameraModeName(cameraMode) +
+                        " key=" + MixAutoPuckLog.key(paddingKey) +
+                        " applied=" + MixAutoPuckLog.key(lastAppliedTrackingPadding),
+                )
+                return
+            }
             lastAppliedTrackingPadding = paddingKey
             applyMapPaddingImmediate(map, padding)
+            MixAutoPuckLog.event(
+                "padMap",
+                "caller=" + caller +
+                    " camera=" + MixAutoPuckLog.cameraModeName(cameraMode) +
+                    " key=" + MixAutoPuckLog.key(paddingKey),
+            )
             return
         }
-        if (!drivingPaddingNeedsUpdate(paddingKey, trackingGps = true)) return
+        if (!drivingPaddingNeedsUpdate(paddingKey, trackingGps = true)) {
+            MixAutoPuckLog.event(
+                "padSkip",
+                "caller=" + caller +
+                    " reason=keyUnchanged tracking=true camera=TRACKING_GPS key=" +
+                    MixAutoPuckLog.key(paddingKey) +
+                    " engaged=" + MixAutoPuckLog.key(lastEngagedTrackingPadding),
+            )
+            return
+        }
         lastAppliedTrackingPadding = paddingKey
         lastEngagedTrackingPadding = paddingKey
-        applyPaddingWhileTrackingIfEngaged(component, padding)
-        if (!shouldSmoothPuckMotion()) {
+        applyPaddingWhileTrackingIfEngaged(component, padding, caller)
+        val smooth = shouldSmoothPuckMotion()
+        if (!smooth) {
+            MixAutoPuckLog.event("padForce", "caller=" + caller + " allowSmooth=false")
             forceLocationUpdateForImmediateRender(map, false, false)
         }
     }
@@ -109,27 +149,33 @@ internal class DrivingViewportPaddingController(
             component.isLocationComponentEnabled &&
             component.cameraMode == CameraMode.TRACKING_GPS
         if (!drivingPaddingNeedsUpdate(paddingKey, trackingGps)) return
-        applyDrivingTrackingPadding(map)
+        applyDrivingTrackingPadding(map, "speed")
     }
 
     fun clearViewportPaddingForPreview(map: MapLibreMap) {
+        MixAutoPuckLog.event("padClearPreview", "zero")
         invalidateDrivingPaddingCache()
         applyMapPaddingImmediate(map, ViewportPadding(0, 0, 0, 0))
-        applyPaddingWhileTrackingIfEngaged(map.locationComponent, ViewportPadding(0, 0, 0, 0))
+        applyPaddingWhileTrackingIfEngaged(
+            map.locationComponent,
+            ViewportPadding(0, 0, 0, 0),
+            "preview",
+        )
     }
 
     fun applyPuckPaddingUpdate(map: MapLibreMap, bypassRenderThrottle: Boolean = false) {
+        MixAutoPuckLog.event("padSlider", "bypass=" + bypassRenderThrottle)
         invalidateDrivingPaddingCache()
         val component = map.locationComponent
         val componentReady = component.isLocationComponentActivated &&
             component.isLocationComponentEnabled
         val trackingGps = componentReady && component.cameraMode == CameraMode.TRACKING_GPS
         if (trackingGps) {
-            applyDrivingTrackingPadding(map)
+            applyDrivingTrackingPadding(map, "slider")
             forceLocationUpdateForImmediateRender(map, bypassRenderThrottle, true)
         } else {
             applyDrivingViewportPadding(map)
-            applyDrivingTrackingPadding(map)
+            applyDrivingTrackingPadding(map, "slider")
             forceLocationUpdateForImmediateRender(map, bypassRenderThrottle, true)
         }
     }
@@ -148,9 +194,21 @@ internal class DrivingViewportPaddingController(
     private fun applyPaddingWhileTrackingIfEngaged(
         component: LocationComponent,
         padding: ViewportPadding,
+        caller: String,
     ) {
-        if (!component.isLocationComponentActivated || !component.isLocationComponentEnabled) return
-        if (component.cameraMode == CameraMode.NONE) return
+        if (!component.isLocationComponentActivated || !component.isLocationComponentEnabled) {
+            MixAutoPuckLog.event("padWhileTracking", "caller=" + caller + " skip=notReady")
+            return
+        }
+        val mode = component.cameraMode
+        val key = intArrayOf(padding.left, padding.top, padding.right, padding.bottom)
+        if (mode == CameraMode.NONE) {
+            MixAutoPuckLog.event(
+                "padWhileTracking",
+                "caller=" + caller + " skip=NONE key=" + MixAutoPuckLog.key(key),
+            )
+            return
+        }
         component.paddingWhileTracking(
             doubleArrayOf(
                 padding.left.toDouble(),
@@ -158,6 +216,12 @@ internal class DrivingViewportPaddingController(
                 padding.right.toDouble(),
                 padding.bottom.toDouble(),
             ),
+        )
+        MixAutoPuckLog.event(
+            "padWhileTracking",
+            "caller=" + caller +
+                " applied camera=" + MixAutoPuckLog.cameraModeName(mode) +
+                " key=" + MixAutoPuckLog.key(key),
         )
     }
 }

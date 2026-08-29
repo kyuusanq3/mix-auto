@@ -74,6 +74,7 @@ LocationAcquisitionHelper.kt — permission/retry/poll GPS acquisition
 NavigationProgressEvaluator.kt — step advance / arrival / off-route tick (OffRouteDetector injected)
 NavigationCameraController.kt — free-drive / nav dive / cameraSessionId; applyFollowZoom; updateDrivingZoomForSpeed (GPS wired; fill body for speed zoom); updateNavigationZoomForDistance
 DrivingViewportPaddingController.kt — driving padding compute/apply + dedup caches
+MixAutoPuckLog.kt — puck/camera probe + cache file; Launcher Settings Share Debug Logs
 TopDownPoiCameraController.kt — POI preview / top-down explore camera
 NavigationZoom.kt — maneuver-distance follow zoom math (pure); append new formulas AFTER shouldApplyZoomChange + tests (Turn A); never nest inside targetZoomForManeuverDistance
 DrivingTilePrefetcher.kt — tile prefetch while driving + network gate

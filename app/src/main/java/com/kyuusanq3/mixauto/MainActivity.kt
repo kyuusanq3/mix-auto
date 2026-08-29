@@ -38,6 +38,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.kyuusanq3.mixauto.data.media.MediaSessionRepository
 import com.kyuusanq3.mixauto.data.navigation.NavTtsPhrases
+import com.kyuusanq3.mixauto.data.map.MixAutoPuckLog
 import com.kyuusanq3.mixauto.domain.map.CarMapEngine
 import com.kyuusanq3.mixauto.ui.dashboard.DashboardScreen
 import com.kyuusanq3.mixauto.ui.map.MapHostViewModel
@@ -78,6 +79,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        MixAutoPuckLog.install(applicationContext)
         launcherPreferences = LauncherPreferences(this)
         applyLauncherMode(launcherPreferences.isLauncherMode)
         mapHostViewModel = ViewModelProvider(this)[MapHostViewModel::class.java]

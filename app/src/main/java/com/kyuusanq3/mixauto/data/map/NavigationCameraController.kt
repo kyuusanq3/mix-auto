@@ -315,17 +315,27 @@ internal class NavigationCameraController(
             val paddingKey = intArrayOf(padding.left, padding.top, padding.right, padding.bottom)
             val paddingChanged = viewportPadding.drivingPaddingNeedsUpdate(paddingKey, trackingGps)
             if (paddingChanged) {
+                MixAutoPuckLog.event(
+                    "layout",
+                    "paddingChanged tracking=" + trackingGps +
+                        " nav=" + state.isNavigating +
+                        " key=" + MixAutoPuckLog.key(paddingKey),
+                )
                 if (trackingGps) {
-                    viewportPadding.applyDrivingTrackingPadding(map)
+                    viewportPadding.applyDrivingTrackingPadding(map, "layout")
                 } else {
                     viewportPadding.applyDrivingViewportPadding(map)
-                    viewportPadding.applyDrivingTrackingPadding(map)
+                    viewportPadding.applyDrivingTrackingPadding(map, "layout")
                     if (state.isNavigating) {
                         forceLocationUpdateForImmediateRender(map, true, false)
                     }
                 }
             }
             if (state.isNavigating && componentReady && component.cameraMode != CameraMode.TRACKING_GPS) {
+                MixAutoPuckLog.event(
+                    "layout",
+                    "reengageNav camera=" + MixAutoPuckLog.cameraModeName(component.cameraMode),
+                )
                 activateNavigationTracking(componentReady)
             }
         }
@@ -360,19 +370,22 @@ internal class NavigationCameraController(
         if (isRouteOverviewActive()) return
         val view = mapView() ?: return
         viewportPadding.invalidateDrivingPaddingCache()
+        MixAutoPuckLog.event("resumeRestore", "posted")
         view.post {
             if (uiState().isInTopDownView ||
                 uiState().isCameraDetached ||
                 isRouteOverviewActive()
             ) {
+                MixAutoPuckLog.event("resumeRestore", "skip=detachedOrOverview")
                 return@post
             }
             val component = map.locationComponent
             if (!component.isLocationComponentActivated || !component.isLocationComponentEnabled) {
+                MixAutoPuckLog.event("resumeRestore", "skip=notReady")
                 return@post
             }
             viewportPadding.invalidateDrivingPaddingCache()
-            engageTrackingGpsWithPuckPadding(map, component)
+            engageTrackingGpsWithPuckPadding(map, component, "resume")
         }
     }
 
@@ -395,25 +408,45 @@ internal class NavigationCameraController(
      * and was dropped. The [OnLocationCameraTransitionListener] callback fires after the transition
      * completes, guaranteeing the puck offset lands.
      */
-    private fun engageTrackingGpsWithPuckPadding(map: MapLibreMap, component: LocationComponent) {
+    private fun engageTrackingGpsWithPuckPadding(
+        map: MapLibreMap,
+        component: LocationComponent,
+        caller: String,
+    ) {
         val alreadyTrackingGps = component.cameraMode == CameraMode.TRACKING_GPS
+        MixAutoPuckLog.event(
+            "engage",
+            "caller=" + caller +
+                " alreadyTracking=" + alreadyTrackingGps +
+                " camera=" + MixAutoPuckLog.cameraModeName(component.cameraMode),
+        )
         if (alreadyTrackingGps) {
-            viewportPadding.applyDrivingTrackingPadding(map)
+            viewportPadding.applyDrivingTrackingPadding(map, caller + "-already")
             return
         }
         component.setCameraMode(
             CameraMode.TRACKING_GPS,
             object : OnLocationCameraTransitionListener {
                 override fun onLocationCameraTransitionFinished(cameraMode: Int) {
-                    viewportPadding.applyDrivingTrackingPadding(map)
+                    MixAutoPuckLog.event(
+                        "engage",
+                        "caller=" + caller +
+                            " finished camera=" + MixAutoPuckLog.cameraModeName(cameraMode),
+                    )
+                    viewportPadding.applyDrivingTrackingPadding(map, caller + "-finished")
                 }
 
                 override fun onLocationCameraTransitionCanceled(cameraMode: Int) {
-                    viewportPadding.applyDrivingTrackingPadding(map)
+                    MixAutoPuckLog.event(
+                        "engage",
+                        "caller=" + caller +
+                            " canceled camera=" + MixAutoPuckLog.cameraModeName(cameraMode),
+                    )
+                    viewportPadding.applyDrivingTrackingPadding(map, caller + "-canceled")
                 }
             },
         )
-        viewportPadding.applyDrivingTrackingPadding(map)
+        viewportPadding.applyDrivingTrackingPadding(map, caller + "-immediate")
     }
 
     fun activateFreeDriveTrackingMode(map: MapLibreMap) {
@@ -431,7 +464,8 @@ internal class NavigationCameraController(
             component.renderMode == RenderMode.GPS
         if (alreadyTracking) {
             if (!viewportPadding.hasEngagedTrackingPadding()) {
-                viewportPadding.applyDrivingTrackingPadding(map)
+                MixAutoPuckLog.event("freeDrive", "restoreMissingEngaged")
+                viewportPadding.applyDrivingTrackingPadding(map, "freeDrive")
                 forceLocationUpdateForImmediateRender(
                     map,
                     true,
@@ -443,7 +477,7 @@ internal class NavigationCameraController(
 
         component.renderMode = RenderMode.GPS
         component.setMaxAnimationFps(DRIVING_ANIMATION_FPS)
-        engageTrackingGpsWithPuckPadding(map, component)
+        engageTrackingGpsWithPuckPadding(map, component, "freeDrive")
     }
 
     fun snapCameraToGpsIfNeeded(latLng: LatLng) {
@@ -490,8 +524,9 @@ internal class NavigationCameraController(
             ),
         )
 
+        MixAutoPuckLog.event("snapCamera", "ready=" + componentReady)
         if (componentReady) {
-            engageTrackingGpsWithPuckPadding(map, component)
+            engageTrackingGpsWithPuckPadding(map, component, "snap")
             forceLocationUpdateForImmediateRender(
                 map,
                 true,
@@ -524,6 +559,7 @@ internal class NavigationCameraController(
         // padding key and skip re-pushing paddingWhileTracking after this dive's CameraMode.NONE
         // round-trip, leaving the puck centered (reroute / turn dive / manual recenter mid-nav).
         viewportPadding.invalidateDrivingPaddingCache()
+        MixAutoPuckLog.event("navDive", "start")
         val sessionId = cameraSessionId
         navigationCameraTransitionActive = true
 
@@ -614,7 +650,7 @@ internal class NavigationCameraController(
                 }
                 component.renderMode = RenderMode.GPS
                 component.setMaxAnimationFps(DRIVING_ANIMATION_FPS)
-                engageTrackingGpsWithPuckPadding(map, component)
+                engageTrackingGpsWithPuckPadding(map, component, "nav")
                 lastDistToManeuverM?.let { updateNavigationZoomForDistance(it) }
             }.onFailure { error ->
                 Log.w(TAG, "Failed to activate navigation tracking: ${error.message}")

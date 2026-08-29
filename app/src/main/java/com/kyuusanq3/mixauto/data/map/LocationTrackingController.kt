@@ -122,6 +122,7 @@ internal class LocationTrackingController(
     private var lastPuckPushLocation: Location? = null
     private var lastForcePuckRenderMs: Long = 0L
     private var lastDrivingSpeedMps: Float = 0f
+    private var lastLoggedRoadSnapped: Boolean? = null
 
     private lateinit var navigationProgress: NavigationProgressEvaluator
     private lateinit var locationAcquisition: LocationAcquisitionHelper
@@ -191,6 +192,15 @@ internal class LocationTrackingController(
         if (!component.isLocationComponentActivated) return
         map.getStyle { style ->
             component.applyStyle(buildLocationComponentOptions(ctx, style))
+            // applyStyle() rebuilds the LocationComponent's internal camera/animator state and
+            // silently drops any paddingWhileTracking() offset applied before this call. Called
+            // from RouteRenderer on every drawRoute() (incl. reroute, which stays TRACKING_GPS
+            // with no nav-dive re-engage to fix it up) and removeRouteLayers() (End nav), this was
+            // the puck-centering source at "Recalculating Route" and "Navigation End" — re-push
+            // the saved offset right after.
+            MixAutoPuckLog.event("ensurePuckAboveOverlays", "reapplyPadding")
+            invalidateDrivingPaddingCache()
+            applyDrivingTrackingPadding(map)
         }
     }
 
@@ -215,11 +225,21 @@ internal class LocationTrackingController(
         bypassThrottle: Boolean = false,
         allowDuringSmoothing: Boolean = false,
     ) {
-        if (!allowDuringSmoothing && shouldSmoothPuckMotion()) return
+        val smooth = shouldSmoothPuckMotion()
+        if (!allowDuringSmoothing && smooth) {
+            MixAutoPuckLog.event("force", "skip=smooth allowSmooth=false")
+            return
+        }
         val now = System.currentTimeMillis()
-        if (!bypassThrottle && now - lastForcePuckRenderMs < FORCE_PUCK_RENDER_MIN_MS) return
+        if (!bypassThrottle && now - lastForcePuckRenderMs < FORCE_PUCK_RENDER_MIN_MS) {
+            MixAutoPuckLog.event("force", "skip=throttle allowSmooth=" + allowDuringSmoothing)
+            return
+        }
         val component = map.locationComponent
-        if (!component.isLocationComponentActivated || !component.isLocationComponentEnabled) return
+        if (!component.isLocationComponentActivated || !component.isLocationComponentEnabled) {
+            MixAutoPuckLog.event("force", "skip=notReady")
+            return
+        }
         val location = smoothingLocationEngine?.currentDisplayLocation()
             ?: component.lastKnownLocation
             ?: lastKnownLocation()?.let { ll ->
@@ -228,12 +248,23 @@ internal class LocationTrackingController(
                     longitude = ll.longitude
                 }
             }
-            ?: return
+        if (location == null) {
+            MixAutoPuckLog.event("force", "skip=noLocation")
+            return
+        }
         lastForcePuckRenderMs = now
+        MixAutoPuckLog.event(
+            "force",
+            "applied allowSmooth=" + allowDuringSmoothing +
+                " smooth=" + smooth +
+                " camera=" + MixAutoPuckLog.cameraModeName(component.cameraMode) +
+                " bypass=" + bypassThrottle,
+        )
         pushPuckLocationIfNeeded(location, force = true)
     }
 
     fun resetSmoothingMotion() {
+        MixAutoPuckLog.event("smoothReset", "nav=" + uiState().isNavigating)
         smoothingLocationEngine?.reset()
     }
 
@@ -266,6 +297,7 @@ internal class LocationTrackingController(
             if (alreadyActivated) {
                 // Resume / retryLocationActivation: applyStyle rebuilds puck layers (flicker).
                 // Padding is restored after MapView.onResume via schedulePuckPaddingRestore.
+                MixAutoPuckLog.event("activate", "skip=alreadyActivated")
                 if (!locationComponent.isLocationComponentEnabled) {
                     locationComponent.isLocationComponentEnabled = true
                 }
@@ -283,6 +315,7 @@ internal class LocationTrackingController(
             locationComponent.renderMode = RenderMode.GPS
             locationComponent.locationEngineRequest = engineRequest
             locationComponent.setMaxAnimationFps(DRIVING_ANIMATION_FPS)
+            MixAutoPuckLog.event("activate", "first")
             invalidateDrivingPaddingCache()
             applyDrivingTrackingPadding(map)
 
@@ -455,6 +488,11 @@ internal class LocationTrackingController(
             snapLocationToRoute(locationWithBearing) ?: locationWithBearing
         } else {
             locationWithBearing
+        }
+        val roadSnapped = displayLocation !== locationWithBearing
+        if (lastLoggedRoadSnapped != roadSnapped) {
+            lastLoggedRoadSnapped = roadSnapped
+            MixAutoPuckLog.event("roadSnap", "active=" + roadSnapped)
         }
 
         val latLng = LatLng(displayLocation.latitude, displayLocation.longitude)
