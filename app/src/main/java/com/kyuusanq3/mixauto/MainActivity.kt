@@ -133,10 +133,6 @@ class MainActivity : ComponentActivity() {
                     mediaState = mediaState,
                     defaultAudioPackage = launcherViewModel.defaultAudioPackage,
                     onSetDefaultAudioPackage = launcherViewModel::updateDefaultAudioPackage,
-                    onSelectAudioSource = { packageName ->
-                        launcherViewModel.updateDefaultAudioPackage(packageName)
-                        mediaViewModel.selectAudioSource(packageName)
-                    },
                     onMediaPlayPause = mediaViewModel::playPause,
                     onMediaSkipPrevious = mediaViewModel::skipToPrevious,
                     onMediaSkipNext = mediaViewModel::skipToNext,
@@ -163,7 +159,6 @@ class MainActivity : ComponentActivity() {
                     dockPinnedPackages = launcherViewModel.dockPinnedPackages,
                     onToggleDockPin = launcherViewModel::toggleDockPinnedPackage,
                     launchableApps = launcherViewModel.launchableApps,
-                    audioPlayerPackages = launcherViewModel.audioPlayerPackages,
                     isAppDrawerLoading = launcherViewModel.isAppDrawerLoading,
                     onEnsureLaunchableAppsLoaded = launcherViewModel::ensureLaunchableAppsLoaded,
                     drivingZoom = launcherViewModel.drivingZoom,

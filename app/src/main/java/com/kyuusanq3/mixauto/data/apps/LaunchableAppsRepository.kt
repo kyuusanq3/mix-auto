@@ -3,7 +3,6 @@ package com.kyuusanq3.mixauto.data.apps
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
-import com.kyuusanq3.mixauto.ui.components.loadAudioPlayerPackageNames
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -16,9 +15,6 @@ class LaunchableAppsRepository(context: Context) {
     @Volatile
     private var cachedApps: List<LaunchableAppEntry>? = null
 
-    @Volatile
-    private var cachedAudioPackages: Set<String>? = null
-
     suspend fun getLaunchableApps(): List<LaunchableAppEntry> = mutex.withLock {
         cachedApps?.let { return it }
         val apps = withContext(Dispatchers.Default) {
@@ -28,24 +24,8 @@ class LaunchableAppsRepository(context: Context) {
         apps
     }
 
-    suspend fun getAudioPlayerPackages(): Set<String> = mutex.withLock {
-        cachedAudioPackages?.let { return it }
-        val packages = withContext(Dispatchers.Default) {
-            loadAudioPlayerPackageNames(appContext)
-        }
-        cachedAudioPackages = packages
-        packages
-    }
-
-    suspend fun loadAll(): Pair<List<LaunchableAppEntry>, Set<String>> {
-        val apps = getLaunchableApps()
-        val audioPackages = getAudioPlayerPackages()
-        return apps to audioPackages
-    }
-
     fun invalidate() {
         cachedApps = null
-        cachedAudioPackages = null
     }
 
     private fun loadLaunchableApps(

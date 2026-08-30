@@ -935,8 +935,14 @@ class MapLibreEngineImpl(
     override fun recenterCamera() = freeDriveSessionCoordinator.recenterCamera()
 
     override fun startFreeDrive() {
-        freeDriveSessionCoordinator.startFreeDrive()
+        // refreshTrafficOverlay() -> applyTrafficOverlay() always calls ensurePuckAboveOverlays(),
+        // which calls component.applyStyle() again. Running that AFTER
+        // freeDriveSessionCoordinator.startFreeDrive() disrupts the GPS camera transition
+        // it just engaged (engageTrackingGpsWithPuckPadding), dropping the puck offset a second
+        // time on End Navigation. Refresh traffic first so its applyStyle() lands before the
+        // tracking engage, not during it.
         refreshTrafficOverlay()
+        freeDriveSessionCoordinator.startFreeDrive()
     }
 
     override fun dismissSelectedPoi() = poiSelectionController.dismissSelectedPoi()

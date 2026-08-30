@@ -2,13 +2,10 @@ package com.kyuusanq3.mixauto.ui.dashboard
 
 import com.kyuusanq3.mixauto.domain.map.CarMapEngine
 import com.kyuusanq3.mixauto.domain.map.SearchResultPlace
-import com.kyuusanq3.mixauto.domain.media.MediaPlaybackState
 import com.kyuusanq3.mixauto.ui.settings.LauncherViewModel
 
 internal data class DashboardPanelActions(
     val onTogglePanel: (ActivePanel) -> Unit,
-    val handleSelectAudioSource: (String) -> Unit,
-    val openAudioSource: (String) -> Unit,
     val onDismissPanel: () -> Unit,
     val onOpenMapData: () -> Unit,
     val onDismissAppDrawer: () -> Unit,
@@ -32,9 +29,6 @@ internal data class DashboardPanelActions(
 internal fun dashboardPanelActions(
     mapEngine: CarMapEngine,
     launcherViewModel: LauncherViewModel,
-    mediaState: MediaPlaybackState,
-    defaultAudioPackage: String,
-    onSelectAudioSource: (String) -> Unit,
 ): DashboardPanelActions {
     val activePanel = launcherViewModel.activePanel
     val musicPaneEnabled = launcherViewModel.musicPaneEnabled
@@ -75,25 +69,6 @@ internal fun dashboardPanelActions(
             }
         }
     }
-    val handleSelectAudioSource: (String) -> Unit = { packageName ->
-        val isActiveSource = if (mediaState.hasActiveSession) {
-            mediaState.sourcePackage == packageName
-        } else {
-            defaultAudioPackage == packageName
-        }
-        if (isActiveSource) {
-            onTogglePanel(ActivePanel.MEDIA)
-        } else {
-            onSelectAudioSource(packageName)
-            launcherViewModel.updateMusicPaneEnabled(true)
-            launcherViewModel.setActivePanel(ActivePanel.MEDIA)
-        }
-    }
-    val openAudioSource: (String) -> Unit = { packageName ->
-        onSelectAudioSource(packageName)
-        launcherViewModel.updateMusicPaneEnabled(true)
-        launcherViewModel.setActivePanel(ActivePanel.MEDIA)
-    }
     val onDismissPanel = {
         if (activePanel == ActivePanel.SEARCH) {
             launcherViewModel.isDestinationSearchOpen = false
@@ -117,8 +92,6 @@ internal fun dashboardPanelActions(
 
     return DashboardPanelActions(
         onTogglePanel = onTogglePanel,
-        handleSelectAudioSource = handleSelectAudioSource,
-        openAudioSource = openAudioSource,
         onDismissPanel = onDismissPanel,
         onOpenMapData = onOpenMapData,
         onDismissAppDrawer = { launcherViewModel.setActivePanel(dismissToBasePanel(musicPaneEnabled)) },

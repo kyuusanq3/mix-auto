@@ -17,14 +17,11 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.key
-import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.kyuusanq3.mixauto.domain.media.MediaPlaybackState
-import com.kyuusanq3.mixauto.ui.components.loadAudioPlayerPackageNames
 import com.kyuusanq3.mixauto.ui.settings.DeveloperSettings
 import com.kyuusanq3.mixauto.ui.theme.CarDimensions
 import com.kyuusanq3.mixauto.ui.theme.DeepCharcoal
@@ -89,16 +86,12 @@ fun ShortcutDock(
     activePanel: ActivePanel,
     mediaState: MediaPlaybackState,
     voiceSearchAvailable: Boolean = true,
-    defaultAudioPackage: String = "",
     dockPinnedPackages: List<String> = emptyList(),
     onToggleDockPin: (String) -> Unit = {},
-    onSelectAudioSource: (String) -> Unit = {},
     onTogglePanel: (ActivePanel) -> Unit,
     onVoiceSearch: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
-    val context = LocalContext.current
-    val audioPlayerPackages = remember(context) { loadAudioPlayerPackageNames(context) }
     val tapTarget = dockTapTargetFor(shortcutIconSize)
     val iconSize = dockIconSizeFor(shortcutIconSize)
     val activeIndicatorPlacement = if (isHorizontal) {
@@ -143,14 +136,11 @@ fun ShortcutDock(
                     CenterDockCluster(
                         isHorizontal = true,
                         dockPinnedPackages = dockPinnedPackages,
-                        audioPlayerPackages = audioPlayerPackages,
-                        defaultAudioPackage = defaultAudioPackage,
                         tapTarget = tapTarget,
                         iconSize = iconSize,
                         itemSpacing = itemSpacing,
                         isLeftHandDrive = isLeftHandDrive,
                         onToggleDockPin = onToggleDockPin,
-                        onSelectAudioSource = onSelectAudioSource,
                     )
                     if (isLeftHandDrive) {
                         Box(modifier = Modifier.align(Alignment.CenterStart)) {
@@ -246,14 +236,11 @@ fun ShortcutDock(
                         CenterDockCluster(
                             isHorizontal = false,
                             dockPinnedPackages = dockPinnedPackages,
-                            audioPlayerPackages = audioPlayerPackages,
-                            defaultAudioPackage = defaultAudioPackage,
                             tapTarget = tapTarget,
                             iconSize = iconSize,
                             itemSpacing = itemSpacing,
                             isLeftHandDrive = isLeftHandDrive,
                             onToggleDockPin = onToggleDockPin,
-                            onSelectAudioSource = onSelectAudioSource,
                         )
                     }
                     if (DeveloperSettings.SHOW_DOCK_MUSIC_SIDE_CONTROL) {

@@ -28,7 +28,7 @@ alwaysApply: false
 - Default source / picker entry points: ⋮ or source icon (no session) → `ActivePanel.AUDIO_SETTINGS` — NOT inline `showAudioPicker` overlay in `MediaPlayerPane`
 - Source app icon helpers: `ui/components/AppIconUtils.kt` — `rememberAppIcon()`, `canLaunchApp()`, `launchAppByPackage()`; drawable→bitmap via private `Drawable.toImageBitmap()` (no Accompanist)
 - `MediaSessionRepository.setPreferredAudioSource(packageName)`: in-memory `preferredPackage`; `selectController()` attaches preferred only — returns null (idle UI) when preferred has no session, does not fall back to another playing app
-- `loadAudioPlayerPackageNames()` in `AudioPlayerUtils.kt` — lightweight set for drawer/dock detection without loading icons
+- `loadAudioPlayerPackageNames()` in `AudioPlayerUtils.kt` — used by `loadAudioPlayerApps()` for Audio Settings / `AudioPlayerPickerOverlay` only; do **not** use it to special-case dock or app-drawer taps
 - Transport controls row order: `[Source app] [Prev] [Play/Pause] [Next] [Like]` — gated by `LauncherViewModel.showAlbumArtControls` (default off); first slot is `SourceAppButton`: **tap** = launch `sourcePackage` when session active, else open Audio Settings (shows default app icon when default set, cyan `MusicNote` when not); **long-press** opens Audio Settings; Like is 5th button with `active = mediaState.isLiked == true`
 - When transport row hidden: Info (ⓘ) button beside ⋮ opens `GestureHintDialog` (gestures + pointer to re-enable buttons in Audio Settings)
 - Media like: `MediaSessionRepository.toggleLike()` via `RATING_HEART` / custom actions; never send dislike/thumb_down (YT Music skips on unlike); `likedTrackCache` keyed by media ID

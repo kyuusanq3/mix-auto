@@ -138,9 +138,6 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     var launchableApps by mutableStateOf<List<LaunchableAppEntry>>(emptyList())
         private set
 
-    var audioPlayerPackages by mutableStateOf<Set<String>>(emptySet())
-        private set
-
     var isAppDrawerLoading by mutableStateOf(false)
         private set
 
@@ -167,9 +164,7 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         if (launchableApps.isNotEmpty() || isAppDrawerLoading) return
         viewModelScope.launch {
             isAppDrawerLoading = true
-            val (apps, audioPackages) = launchableAppsRepository.loadAll()
-            launchableApps = apps
-            audioPlayerPackages = audioPackages
+            launchableApps = launchableAppsRepository.getLaunchableApps()
             isAppDrawerLoading = false
         }
     }

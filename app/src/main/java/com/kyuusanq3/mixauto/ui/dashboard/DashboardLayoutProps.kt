@@ -95,10 +95,8 @@ internal data class DashboardDockProps(
     val activePanel: ActivePanel,
     val mediaState: MediaPlaybackState,
     val voiceSearchAvailable: Boolean,
-    val defaultAudioPackage: String,
     val dockPinnedPackages: List<String>,
     val onToggleDockPin: (String) -> Unit,
-    val onSelectAudioSource: (String) -> Unit,
     val onTogglePanel: (ActivePanel) -> Unit,
     val onVoiceSearch: () -> Unit,
 )
@@ -106,11 +104,9 @@ internal data class DashboardDockProps(
 internal data class DashboardAppDrawerProps(
     val activePanel: ActivePanel,
     val launchableApps: List<LaunchableAppEntry>,
-    val audioPlayerPackages: Set<String>,
     val isAppDrawerLoading: Boolean,
     val dockPinnedPackages: List<String>,
     val onToggleDockPin: (String) -> Unit,
-    val onSelectAudioSource: (String) -> Unit,
     val onOpenLauncherSettings: () -> Unit,
     val onDismiss: () -> Unit,
 )

@@ -19,7 +19,6 @@ import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Android
-import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.CardDefaults
@@ -38,7 +37,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.unit.dp
 import com.kyuusanq3.mixauto.data.apps.LaunchableAppEntry
 import com.kyuusanq3.mixauto.ui.components.AppContextDropdownMenu
 import com.kyuusanq3.mixauto.ui.components.PanelHeaderIconButton
@@ -55,12 +53,10 @@ private const val TAG = "AppDrawerOverlay"
 @Composable
 fun AppDrawerOverlay(
     launchableApps: List<LaunchableAppEntry>,
-    audioPlayerPackages: Set<String>,
     isLoading: Boolean,
     dockPinnedPackages: List<String>,
     maxDockPinnedApps: Int,
     onToggleDockPin: (String) -> Unit,
-    onSelectAudioSource: (String) -> Unit,
     onOpenLauncherSettings: () -> Unit,
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier,
@@ -156,16 +152,13 @@ fun AppDrawerOverlay(
                         verticalArrangement = Arrangement.spacedBy(CarDimensions.PaneGap),
                     ) {
                         items(filteredApps, key = { it.packageName }) { app ->
-                            val isAudioPlayer = app.packageName in audioPlayerPackages
                             AppDrawerItem(
                                 app = app,
-                                isAudioPlayer = isAudioPlayer,
                                 isPinnedToDock = app.packageName in dockPinnedPackages,
                                 canAddToDock = app.packageName in dockPinnedPackages ||
                                     dockPinnedPackages.size < maxDockPinnedApps,
                                 onToggleDockPin = { onToggleDockPin(app.packageName) },
                                 onLaunch = { launchApp(context, app) },
-                                onSelectAudioSource = { onSelectAudioSource(app.packageName) },
                             )
                         }
                     }
@@ -179,12 +172,10 @@ fun AppDrawerOverlay(
 @Composable
 private fun AppDrawerItem(
     app: LaunchableAppEntry,
-    isAudioPlayer: Boolean,
     isPinnedToDock: Boolean,
     canAddToDock: Boolean,
     onToggleDockPin: () -> Unit,
     onLaunch: () -> Unit,
-    onSelectAudioSource: () -> Unit,
 ) {
     val icon = rememberAppIcon(app.packageName)
     var showMenu by remember { mutableStateOf(false) }
@@ -195,9 +186,7 @@ private fun AppDrawerItem(
                 .fillMaxWidth()
                 .heightIn(min = CarDimensions.MinTapTarget)
                 .combinedClickable(
-                    onClick = {
-                        if (isAudioPlayer) onSelectAudioSource() else onLaunch()
-                    },
+                    onClick = onLaunch,
                     onLongClick = { showMenu = true },
                 ),
             elevation = CardDefaults.elevatedCardElevation(defaultElevation = CarDimensions.CardElevation),
@@ -230,14 +219,6 @@ private fun AppDrawerItem(
                     text = app.label,
                     modifier = Modifier.weight(1f),
                 )
-                if (isAudioPlayer) {
-                    Icon(
-                        imageVector = Icons.Filled.MusicNote,
-                        contentDescription = "Audio source",
-                        modifier = Modifier.size(28.dp),
-                        tint = ElectricCyan,
-                    )
-                }
             }
         }
 

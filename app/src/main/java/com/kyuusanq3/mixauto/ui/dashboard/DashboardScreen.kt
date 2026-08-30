@@ -42,7 +42,6 @@ fun DashboardScreen(
     mediaState: MediaPlaybackState,
     defaultAudioPackage: String,
     onSetDefaultAudioPackage: (String) -> Unit,
-    onSelectAudioSource: (String) -> Unit,
     onMediaPlayPause: () -> Unit,
     onMediaSkipPrevious: () -> Unit,
     onMediaSkipNext: () -> Unit,
@@ -69,7 +68,6 @@ fun DashboardScreen(
     dockPinnedPackages: List<String>,
     onToggleDockPin: (String) -> Unit,
     launchableApps: List<LaunchableAppEntry>,
-    audioPlayerPackages: Set<String>,
     isAppDrawerLoading: Boolean,
     onEnsureLaunchableAppsLoaded: () -> Unit,
     drivingZoom: Float,
@@ -113,9 +111,6 @@ fun DashboardScreen(
     val panel = dashboardPanelActions(
         mapEngine = mapEngine,
         launcherViewModel = launcherViewModel,
-        mediaState = mediaState,
-        defaultAudioPackage = defaultAudioPackage,
-        onSelectAudioSource = onSelectAudioSource,
     )
     val mapUiState by mapEngine.uiState.collectAsStateWithLifecycle()
     val appUpdateViewModel: AppUpdateViewModel = viewModel()
@@ -258,21 +253,17 @@ fun DashboardScreen(
             activePanel = activePanel,
             mediaState = mediaState,
             voiceSearchAvailable = voiceSearchAvailable,
-            defaultAudioPackage = defaultAudioPackage,
             dockPinnedPackages = dockPinnedPackages,
             onToggleDockPin = onToggleDockPin,
-            onSelectAudioSource = panel.handleSelectAudioSource,
             onTogglePanel = panel.onTogglePanel,
             onVoiceSearch = panel.onVoiceSearch,
         ),
         appDrawer = DashboardAppDrawerProps(
             activePanel = activePanel,
             launchableApps = launchableApps,
-            audioPlayerPackages = audioPlayerPackages,
             isAppDrawerLoading = isAppDrawerLoading,
             dockPinnedPackages = dockPinnedPackages,
             onToggleDockPin = onToggleDockPin,
-            onSelectAudioSource = panel.openAudioSource,
             onOpenLauncherSettings = panel.onOpenLauncherSettingsFromDrawer,
             onDismiss = panel.onDismissAppDrawer,
         ),

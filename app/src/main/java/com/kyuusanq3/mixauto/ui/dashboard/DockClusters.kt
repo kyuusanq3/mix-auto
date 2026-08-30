@@ -2,14 +2,12 @@ package com.kyuusanq3.mixauto.ui.dashboard
 
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
-import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.foundation.shape.CircleShape
@@ -17,7 +15,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Android
 import androidx.compose.material.icons.filled.Apps
 import androidx.compose.material.icons.filled.Mic
-import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
@@ -37,7 +34,6 @@ import com.kyuusanq3.mixauto.ui.components.AppContextDropdownMenu
 import com.kyuusanq3.mixauto.ui.components.launchAppByPackage
 import com.kyuusanq3.mixauto.ui.components.rememberAppIcon
 import com.kyuusanq3.mixauto.ui.theme.CarDimensions
-import com.kyuusanq3.mixauto.ui.theme.DeepCharcoal
 import com.kyuusanq3.mixauto.ui.theme.ElectricCyan
 
 private const val VOICE_SEARCH_KEY = "voice_search"
@@ -114,14 +110,11 @@ internal fun DriverSideCluster(
 internal fun CenterDockCluster(
     isHorizontal: Boolean,
     dockPinnedPackages: List<String>,
-    audioPlayerPackages: Set<String>,
-    defaultAudioPackage: String,
     tapTarget: Dp,
     iconSize: Dp,
     itemSpacing: Dp,
     isLeftHandDrive: Boolean,
     onToggleDockPin: (String) -> Unit,
-    onSelectAudioSource: (String) -> Unit,
 ) {
     if (isHorizontal) {
         Row(
@@ -132,8 +125,6 @@ internal fun CenterDockCluster(
                 key(dockPinnedKey(packageName)) {
                     PinnedDockAppItem(
                         packageName = packageName,
-                        isAudioPlayer = packageName in audioPlayerPackages,
-                        isDefaultAudioSource = packageName == defaultAudioPackage,
                         isHorizontal = true,
                         isLeftHandDrive = isLeftHandDrive,
                         tapTarget = tapTarget,
@@ -141,7 +132,6 @@ internal fun CenterDockCluster(
                         isPinnedToDock = true,
                         canAddToDock = true,
                         onToggleDockPin = { onToggleDockPin(packageName) },
-                        onSelectAudioSource = { onSelectAudioSource(packageName) },
                     )
                 }
             }
@@ -155,8 +145,6 @@ internal fun CenterDockCluster(
                 key(dockPinnedKey(packageName)) {
                     PinnedDockAppItem(
                         packageName = packageName,
-                        isAudioPlayer = packageName in audioPlayerPackages,
-                        isDefaultAudioSource = packageName == defaultAudioPackage,
                         isHorizontal = false,
                         isLeftHandDrive = isLeftHandDrive,
                         tapTarget = tapTarget,
@@ -164,7 +152,6 @@ internal fun CenterDockCluster(
                         isPinnedToDock = true,
                         canAddToDock = true,
                         onToggleDockPin = { onToggleDockPin(packageName) },
-                        onSelectAudioSource = { onSelectAudioSource(packageName) },
                     )
                 }
             }
@@ -176,8 +163,6 @@ internal fun CenterDockCluster(
 @Composable
 private fun PinnedDockAppItem(
     packageName: String,
-    isAudioPlayer: Boolean,
-    isDefaultAudioSource: Boolean,
     isHorizontal: Boolean,
     isLeftHandDrive: Boolean,
     tapTarget: Dp,
@@ -185,14 +170,10 @@ private fun PinnedDockAppItem(
     isPinnedToDock: Boolean,
     canAddToDock: Boolean,
     onToggleDockPin: () -> Unit,
-    onSelectAudioSource: () -> Unit,
 ) {
     val context = LocalContext.current
     var showMenu by remember { mutableStateOf(false) }
     val appIcon = rememberAppIcon(packageName)
-    val badgeSize = iconSize * 0.55f
-    val badgeIconSize = iconSize * 0.35f
-    val badgeTint = if (isDefaultAudioSource) ElectricCyan else MaterialTheme.colorScheme.primary
     val menuUpOffset = -(tapTarget + DOCK_APP_MENU_ESTIMATED_HEIGHT)
     val dropdownOffset = when {
         isHorizontal -> DpOffset(0.dp, menuUpOffset)
@@ -213,9 +194,7 @@ private fun PinnedDockAppItem(
             modifier = Modifier
                 .size(tapTarget)
                 .combinedClickable(
-                    onClick = {
-                        if (isAudioPlayer) onSelectAudioSource() else launchAppByPackage(context, packageName)
-                    },
+                    onClick = { launchAppByPackage(context, packageName) },
                     onLongClick = { showMenu = true },
                 ),
             contentAlignment = Alignment.Center,
@@ -235,24 +214,6 @@ private fun PinnedDockAppItem(
                     modifier = Modifier.size(iconSize),
                     tint = MaterialTheme.colorScheme.primary,
                 )
-            }
-            if (isAudioPlayer) {
-                Box(
-                    modifier = Modifier
-                        .align(Alignment.BottomEnd)
-                        .padding(2.dp)
-                        .size(badgeSize)
-                        .clip(CircleShape)
-                        .background(DeepCharcoal, CircleShape),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Icon(
-                        imageVector = Icons.Filled.MusicNote,
-                        contentDescription = "Audio source",
-                        modifier = Modifier.size(badgeIconSize),
-                        tint = badgeTint,
-                    )
-                }
             }
         }
         AppContextDropdownMenu(
