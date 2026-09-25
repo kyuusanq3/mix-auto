@@ -109,6 +109,7 @@ private fun BoxScope.DashboardAppDrawerSlot(props: DashboardAppDrawerProps) {
         maxDockPinnedApps = LauncherPreferences.MAX_DOCK_PINNED_APPS,
         onToggleDockPin = props.onToggleDockPin,
         onOpenLauncherSettings = props.onOpenLauncherSettings,
+        onOpenFirstPartyApp = props.onOpenFirstPartyApp,
         onDismiss = props.onDismiss,
         modifier = Modifier
             .fillMaxSize()

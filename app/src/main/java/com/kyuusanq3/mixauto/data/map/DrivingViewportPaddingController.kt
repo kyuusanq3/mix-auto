@@ -16,6 +16,7 @@ internal class DrivingViewportPaddingController(
     private val lastDrivingSpeedMps: () -> Float,
     private val isRouteOverviewActive: () -> Boolean,
     private val navigationCameraTransitionActive: () -> Boolean,
+    private val puckTrackingTransitionPending: () -> Boolean,
     private val shouldSmoothPuckMotion: () -> Boolean,
     private val forceLocationUpdateForImmediateRender: (
         map: MapLibreMap,
@@ -126,6 +127,19 @@ internal class DrivingViewportPaddingController(
                     " reason=keyUnchanged tracking=true camera=TRACKING_GPS key=" +
                     MixAutoPuckLog.key(paddingKey) +
                     " engaged=" + MixAutoPuckLog.key(lastEngagedTrackingPadding),
+            )
+            return
+        }
+        // `component.cameraMode` flips to TRACKING_GPS synchronously the instant setCameraMode()
+        // is called, well before the transition animation finishes — so any paddingWhileTracking()
+        // call issued while a puck-tracking engage transition is still pending (including a racing
+        // resume/slider apply from a different caller) is silently dropped by MapLibre. Do not
+        // cache it as engaged here, or the later, real post-transition apply will be skipped as a
+        // false "keyUnchanged" no-op and the puck offset never actually lands.
+        if (puckTrackingTransitionPending()) {
+            MixAutoPuckLog.event(
+                "padSkip",
+                "caller=" + caller + " reason=transitionPending key=" + MixAutoPuckLog.key(paddingKey),
             )
             return
         }

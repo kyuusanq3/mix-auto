@@ -15,6 +15,7 @@ import com.kyuusanq3.mixauto.ui.components.canLaunchApp
 import com.kyuusanq3.mixauto.ui.dashboard.ActivePanel
 import com.kyuusanq3.mixauto.ui.dashboard.AlbumArtMode
 import com.kyuusanq3.mixauto.ui.dashboard.DockShortcutIconSize
+import com.kyuusanq3.mixauto.ui.firstparty.FirstPartyAppId
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.launch
@@ -24,6 +25,7 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     private val launchableAppsRepository = LaunchableAppsRepository(application)
     private val mapPrefs = LauncherMapPrefs(preferences, viewModelScope)
     private val audioPrefs = LauncherAudioPrefs(application, preferences)
+    private val reminderPrefs = LauncherReminderPrefs(preferences)
 
     val defaultAudioPackage: String get() = audioPrefs.defaultAudioPackage
     val audioFallbackResumeLink: String get() = audioPrefs.audioFallbackResumeLink
@@ -49,6 +51,18 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     val offlineDetailUpgradeBannerDismissed: Boolean
         get() = mapPrefs.offlineDetailUpgradeBannerDismissed
     val tomTomKeyCheckState: TomTomKeyCheckState get() = mapPrefs.tomTomKeyCheckState
+
+    val reminderChecklistEnabled: Boolean get() = reminderPrefs.reminderChecklistEnabled
+    val reminderChecklistItems: List<String> get() = reminderPrefs.reminderChecklistItems
+
+    fun setReminderChecklistEnabled(enabled: Boolean) = reminderPrefs.setEnabled(enabled)
+
+    fun addReminderChecklistItem(text: String) = reminderPrefs.addItem(text)
+
+    fun updateReminderChecklistItem(index: Int, text: String) =
+        reminderPrefs.updateItem(index, text)
+
+    fun removeReminderChecklistItem(index: Int) = reminderPrefs.removeItem(index)
 
     var dockPinnedPackages by mutableStateOf(loadValidatedDockPinnedPackages())
         private set
@@ -96,6 +110,38 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
 
     var poiReturnToSearch by mutableStateOf(false)
         internal set
+
+    var openFirstPartyApp by mutableStateOf<FirstPartyAppId?>(null)
+        private set
+
+    fun openFirstPartyApp(id: FirstPartyAppId) {
+        openFirstPartyApp = id
+    }
+
+    fun closeFirstPartyApp() {
+        openFirstPartyApp = null
+    }
+
+    var reminderPopupVisible by mutableStateOf(
+        preferences.reminderChecklistEnabled && preferences.reminderChecklistItems.isNotEmpty(),
+    )
+        private set
+
+    var reminderCheckedIndices by mutableStateOf<Set<Int>>(emptySet())
+        private set
+
+    fun toggleReminderChecked(index: Int) {
+        reminderCheckedIndices = if (index in reminderCheckedIndices) {
+            reminderCheckedIndices - index
+        } else {
+            reminderCheckedIndices + index
+        }
+    }
+
+    fun dismissReminderPopup() {
+        reminderPopupVisible = false
+        reminderCheckedIndices = emptySet()
+    }
 
     fun setActivePanel(panel: ActivePanel) {
         activePanel = panel

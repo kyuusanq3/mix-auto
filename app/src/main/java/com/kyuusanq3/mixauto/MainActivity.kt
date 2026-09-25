@@ -12,6 +12,7 @@ import android.provider.Settings
 import android.util.Log
 import android.view.KeyEvent
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Box
@@ -40,7 +41,12 @@ import com.kyuusanq3.mixauto.data.media.MediaSessionRepository
 import com.kyuusanq3.mixauto.data.navigation.NavTtsPhrases
 import com.kyuusanq3.mixauto.data.map.MixAutoPuckLog
 import com.kyuusanq3.mixauto.domain.map.CarMapEngine
+import com.kyuusanq3.mixauto.ui.dashboard.ActivePanel
 import com.kyuusanq3.mixauto.ui.dashboard.DashboardScreen
+import com.kyuusanq3.mixauto.ui.dashboard.dismissToBasePanel
+import com.kyuusanq3.mixauto.ui.firstparty.FirstPartyAppId
+import com.kyuusanq3.mixauto.ui.firstparty.ReminderChecklistPopup
+import com.kyuusanq3.mixauto.ui.firstparty.ReminderChecklistScreen
 import com.kyuusanq3.mixauto.ui.map.MapHostViewModel
 import com.kyuusanq3.mixauto.ui.media.MediaPlayerViewModel
 import com.kyuusanq3.mixauto.ui.onboarding.CURRENT_ONBOARDING_VERSION
@@ -125,6 +131,10 @@ class MainActivity : ComponentActivity() {
 
                     SideEffect {
                         navigationVoiceController.boostEnabled = launcherViewModel.navigationVoiceBoost
+                    }
+
+                    BackHandler(enabled = isDismissibleOverlayPanel(launcherViewModel.activePanel)) {
+                        launcherViewModel.setActivePanel(dismissToBasePanel(launcherViewModel.musicPaneEnabled))
                     }
 
                     DashboardScreen(
@@ -261,6 +271,33 @@ class MainActivity : ComponentActivity() {
                         )
                     }
 
+                    if (!showOnboarding && launcherViewModel.reminderPopupVisible) {
+                        ReminderChecklistPopup(
+                            items = launcherViewModel.reminderChecklistItems,
+                            checkedIndices = launcherViewModel.reminderCheckedIndices,
+                            onToggleChecked = launcherViewModel::toggleReminderChecked,
+                            onAllChecked = launcherViewModel::dismissReminderPopup,
+                            modifier = Modifier.fillMaxSize(),
+                        )
+                    }
+
+                    launcherViewModel.openFirstPartyApp?.let { appId ->
+                        when (appId) {
+                            FirstPartyAppId.REMINDER_CHECKLIST -> {
+                                ReminderChecklistScreen(
+                                    enabled = launcherViewModel.reminderChecklistEnabled,
+                                    items = launcherViewModel.reminderChecklistItems,
+                                    onToggleEnabled = launcherViewModel::setReminderChecklistEnabled,
+                                    onUpdateItem = launcherViewModel::updateReminderChecklistItem,
+                                    onAddItem = launcherViewModel::addReminderChecklistItem,
+                                    onRemoveItem = launcherViewModel::removeReminderChecklistItem,
+                                    onDismiss = launcherViewModel::closeFirstPartyApp,
+                                    modifier = Modifier.fillMaxSize(),
+                                )
+                            }
+                        }
+                    }
+
                     SnackbarHost(
                         hostState = snackbarHostState,
                         modifier = Modifier
@@ -282,10 +319,20 @@ class MainActivity : ComponentActivity() {
         super.onNewIntent(intent)
         Log.d("MixAutoShare", "MainActivity.onNewIntent: action=${intent.action} type=${intent.type}")
         setIntent(intent)
+        if (intent.action == Intent.ACTION_MAIN &&
+            intent.categories?.contains(Intent.CATEGORY_HOME) == true &&
+            ::launcherViewModel.isInitialized &&
+            isDismissibleOverlayPanel(launcherViewModel.activePanel)
+        ) {
+            launcherViewModel.setActivePanel(dismissToBasePanel(launcherViewModel.musicPaneEnabled))
+        }
         if (::mapHostViewModel.isInitialized) {
             mapHostViewModel.handleSharedIntent(intent)
         }
     }
+
+    private fun isDismissibleOverlayPanel(panel: ActivePanel): Boolean =
+        panel == ActivePanel.APP_DRAWER || panel == ActivePanel.SETTINGS
 
     override fun onResume() {
         super.onResume()

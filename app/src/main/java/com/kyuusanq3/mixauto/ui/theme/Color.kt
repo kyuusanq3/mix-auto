@@ -11,6 +11,7 @@ val CyanVariant = Color(0xFF00BCD4)
 val OnDark = Color(0xFFE1E1E1)
 val OnAccent = Color(0xFF000000)
 val ErrorRed = Color(0xFFCF6679)
+val SuccessGreen = Color(0xFF00C853)
 
 /** TomTom-style traffic flow colors for the status strip reel. */
 val TrafficFlowFree = Color(0xFF4CAF50)

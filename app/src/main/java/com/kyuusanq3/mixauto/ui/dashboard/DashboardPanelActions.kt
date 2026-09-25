@@ -2,6 +2,7 @@ package com.kyuusanq3.mixauto.ui.dashboard
 
 import com.kyuusanq3.mixauto.domain.map.CarMapEngine
 import com.kyuusanq3.mixauto.domain.map.SearchResultPlace
+import com.kyuusanq3.mixauto.ui.firstparty.FirstPartyAppId
 import com.kyuusanq3.mixauto.ui.settings.LauncherViewModel
 
 internal data class DashboardPanelActions(
@@ -10,6 +11,7 @@ internal data class DashboardPanelActions(
     val onOpenMapData: () -> Unit,
     val onDismissAppDrawer: () -> Unit,
     val onOpenLauncherSettingsFromDrawer: () -> Unit,
+    val onOpenFirstPartyApp: (FirstPartyAppId) -> Unit,
     val isDestinationPanelOpen: Boolean,
     val isMapSettingsPanelOpen: Boolean,
     val onToggleSearch: () -> Unit,
@@ -96,6 +98,10 @@ internal fun dashboardPanelActions(
         onOpenMapData = onOpenMapData,
         onDismissAppDrawer = { launcherViewModel.setActivePanel(dismissToBasePanel(musicPaneEnabled)) },
         onOpenLauncherSettingsFromDrawer = { launcherViewModel.setActivePanel(ActivePanel.SETTINGS) },
+        onOpenFirstPartyApp = { id ->
+            launcherViewModel.openFirstPartyApp(id)
+            launcherViewModel.setActivePanel(dismissToBasePanel(musicPaneEnabled))
+        },
         isDestinationPanelOpen =
             activePanel == ActivePanel.SEARCH ||
                 activePanel == ActivePanel.ADD_PLACE ||

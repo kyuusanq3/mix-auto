@@ -252,6 +252,25 @@ class LauncherPreferences(context: Context) {
             prefs.edit().putBoolean(KEY_OFFLINE_DETAIL_UPGRADE_BANNER_DISMISSED, value).apply()
         }
 
+    var reminderChecklistEnabled: Boolean
+        get() = prefs.getBoolean(KEY_REMINDER_CHECKLIST_ENABLED, false)
+        set(value) {
+            prefs.edit().putBoolean(KEY_REMINDER_CHECKLIST_ENABLED, value).apply()
+        }
+
+    var reminderChecklistItems: List<String>
+        get() {
+            val json = prefs.getString(KEY_REMINDER_CHECKLIST_ITEMS, null) ?: return emptyList()
+            return parseStringListJson(json)
+        }
+        set(value) {
+            val array = JSONArray()
+            value.take(MAX_REMINDER_CHECKLIST_ITEMS).forEach { item ->
+                array.put(item)
+            }
+            prefs.edit().putString(KEY_REMINDER_CHECKLIST_ITEMS, array.toString()).apply()
+        }
+
     companion object {
         private const val PREFS_NAME = "launcher_prefs"
         private const val KEY_LEFT_HAND_DRIVE = "lhd"
@@ -288,6 +307,9 @@ class LauncherPreferences(context: Context) {
         private const val KEY_REMEMBER_ENCOUNTERED_PLACES = "remember_encountered_places"
         private const val KEY_ALLOW_MAP_DOWNLOAD_MOBILE_DATA = "allow_map_download_mobile_data"
         private const val KEY_OFFLINE_DETAIL_UPGRADE_BANNER_DISMISSED = "offline_detail_upgrade_banner_dismissed"
+        private const val KEY_REMINDER_CHECKLIST_ENABLED = "reminder_checklist_enabled"
+        private const val KEY_REMINDER_CHECKLIST_ITEMS = "reminder_checklist_items"
+        const val MAX_REMINDER_CHECKLIST_ITEMS = 20
         const val DEFAULT_ALBUM_ART_MODE = "PLAIN"
         const val MAX_RECENT_DESTINATIONS = 10
         const val MAX_SAVED_PLACES = 50
@@ -322,6 +344,20 @@ class LauncherPreferences(context: Context) {
                     for (i in 0 until array.length()) {
                         val pkg = array.optString(i, "").trim()
                         if (pkg.isNotEmpty()) add(pkg)
+                    }
+                }
+            } catch (_: Exception) {
+                emptyList()
+            }
+        }
+
+        private fun parseStringListJson(json: String): List<String> {
+            return try {
+                val array = JSONArray(json)
+                buildList {
+                    for (i in 0 until array.length()) {
+                        val item = array.optString(i, "")
+                        if (item.isNotBlank()) add(item)
                     }
                 }
             } catch (_: Exception) {

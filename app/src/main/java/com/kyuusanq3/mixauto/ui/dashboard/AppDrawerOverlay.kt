@@ -3,6 +3,7 @@ package com.kyuusanq3.mixauto.ui.dashboard
 import android.util.Log
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -15,6 +16,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.material.icons.Icons
@@ -42,6 +44,9 @@ import com.kyuusanq3.mixauto.ui.components.AppContextDropdownMenu
 import com.kyuusanq3.mixauto.ui.components.PanelHeaderIconButton
 import com.kyuusanq3.mixauto.ui.components.PanelHeaderRow
 import com.kyuusanq3.mixauto.ui.components.rememberAppIcon
+import com.kyuusanq3.mixauto.ui.firstparty.FIRST_PARTY_APPS
+import com.kyuusanq3.mixauto.ui.firstparty.FirstPartyAppEntry
+import com.kyuusanq3.mixauto.ui.firstparty.FirstPartyAppId
 import com.kyuusanq3.mixauto.ui.theme.CarBodyText
 import com.kyuusanq3.mixauto.ui.theme.CarDimensions
 import com.kyuusanq3.mixauto.ui.theme.CarLabelText
@@ -58,6 +63,7 @@ fun AppDrawerOverlay(
     maxDockPinnedApps: Int,
     onToggleDockPin: (String) -> Unit,
     onOpenLauncherSettings: () -> Unit,
+    onOpenFirstPartyApp: (FirstPartyAppId) -> Unit,
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -69,6 +75,16 @@ fun AppDrawerOverlay(
             launchableApps
         } else {
             launchableApps.filter { app ->
+                app.label.contains(query, ignoreCase = true)
+            }
+        }
+    }
+
+    val filteredFirstPartyApps = remember(query) {
+        if (query.length < 1) {
+            FIRST_PARTY_APPS
+        } else {
+            FIRST_PARTY_APPS.filter { app ->
                 app.label.contains(query, ignoreCase = true)
             }
         }
@@ -123,7 +139,7 @@ fun AppDrawerOverlay(
             )
 
             when {
-                isLoading && filteredApps.isEmpty() -> {
+                isLoading && filteredApps.isEmpty() && filteredFirstPartyApps.isEmpty() -> {
                     Box(
                         modifier = Modifier
                             .fillMaxSize()
@@ -133,7 +149,7 @@ fun AppDrawerOverlay(
                         CircularProgressIndicator(color = ElectricCyan)
                     }
                 }
-                filteredApps.isEmpty() -> {
+                filteredApps.isEmpty() && filteredFirstPartyApps.isEmpty() -> {
                     Box(
                         modifier = Modifier
                             .fillMaxSize()
@@ -151,6 +167,27 @@ fun AppDrawerOverlay(
                         horizontalArrangement = Arrangement.spacedBy(CarDimensions.PaneGap),
                         verticalArrangement = Arrangement.spacedBy(CarDimensions.PaneGap),
                     ) {
+                        if (filteredFirstPartyApps.isNotEmpty()) {
+                            item(span = { GridItemSpan(maxLineSpan) }) {
+                                CarLabelText(
+                                    text = "Mix Auto",
+                                    modifier = Modifier.padding(
+                                        top = CarDimensions.PaneGap / 2,
+                                        bottom = CarDimensions.PaneGap / 2,
+                                    ),
+                                )
+                            }
+                            items(
+                                filteredFirstPartyApps,
+                                key = { it.id.name },
+                                span = { GridItemSpan(maxLineSpan) },
+                            ) { app ->
+                                FirstPartyAppRow(
+                                    app = app,
+                                    onLaunch = { onOpenFirstPartyApp(app.id) },
+                                )
+                            }
+                        }
                         items(filteredApps, key = { it.packageName }) { app ->
                             AppDrawerItem(
                                 app = app,
@@ -164,6 +201,42 @@ fun AppDrawerOverlay(
                     }
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun FirstPartyAppRow(
+    app: FirstPartyAppEntry,
+    onLaunch: () -> Unit,
+) {
+    ElevatedCard(
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = CarDimensions.MinTapTarget)
+            .clickable(onClick = onLaunch),
+        elevation = CardDefaults.elevatedCardElevation(defaultElevation = CarDimensions.CardElevation),
+        colors = CardDefaults.elevatedCardColors(
+            containerColor = MaterialTheme.colorScheme.surface,
+        ),
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(CarDimensions.PaneGap),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(CarDimensions.PaneGap),
+        ) {
+            Icon(
+                imageVector = app.icon,
+                contentDescription = app.label,
+                modifier = Modifier.size(CarDimensions.AppIconSize),
+                tint = MaterialTheme.colorScheme.primary,
+            )
+            CarLabelText(
+                text = app.label,
+                modifier = Modifier.weight(1f),
+            )
         }
     }
 }

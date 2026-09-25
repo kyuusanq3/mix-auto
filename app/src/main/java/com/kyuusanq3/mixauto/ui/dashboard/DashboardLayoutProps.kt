@@ -4,6 +4,7 @@ import com.kyuusanq3.mixauto.data.apps.LaunchableAppEntry
 import com.kyuusanq3.mixauto.domain.map.CarMapEngine
 import com.kyuusanq3.mixauto.domain.map.SearchResultPlace
 import com.kyuusanq3.mixauto.domain.media.MediaPlaybackState
+import com.kyuusanq3.mixauto.ui.firstparty.FirstPartyAppId
 import com.kyuusanq3.mixauto.ui.settings.AppUpdateState
 import com.kyuusanq3.mixauto.ui.settings.MapDataViewModel
 import java.io.File
@@ -108,6 +109,7 @@ internal data class DashboardAppDrawerProps(
     val dockPinnedPackages: List<String>,
     val onToggleDockPin: (String) -> Unit,
     val onOpenLauncherSettings: () -> Unit,
+    val onOpenFirstPartyApp: (FirstPartyAppId) -> Unit,
     val onDismiss: () -> Unit,
 )
 

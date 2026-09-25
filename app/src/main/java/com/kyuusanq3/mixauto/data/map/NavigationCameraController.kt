@@ -74,6 +74,16 @@ internal class NavigationCameraController(
     var navigationCameraTransitionActive: Boolean = false
         private set
 
+    /**
+     * True while a [CameraMode.TRACKING_GPS] engage transition we started is still in flight.
+     * `component.cameraMode` reports `TRACKING_GPS` synchronously the instant `setCameraMode()` is
+     * called, well before the transition animation actually completes — so any
+     * `paddingWhileTracking()` call issued while this is true (from *any* caller, including a
+     * separate `resumeRestore`/slider apply that races in mid-transition) is silently dropped by
+     * MapLibre. See [engageTrackingGpsWithPuckPadding].
+     */
+    private var pendingPuckTrackingTransition: Boolean = false
+
     /** Incremented to invalidate in-flight [enterNavigationCamera] callbacks after gesture / End nav. */
     private var cameraSessionId: Int = 0
 
@@ -97,6 +107,7 @@ internal class NavigationCameraController(
             lastDrivingSpeedMps = lastDrivingSpeedMps,
             isRouteOverviewActive = isRouteOverviewActive,
             navigationCameraTransitionActive = { navigationCameraTransitionActive },
+            puckTrackingTransitionPending = { pendingPuckTrackingTransition },
             shouldSmoothPuckMotion = shouldSmoothPuckMotion,
             forceLocationUpdateForImmediateRender = forceLocationUpdateForImmediateRender,
         )
@@ -424,10 +435,12 @@ internal class NavigationCameraController(
             viewportPadding.applyDrivingTrackingPadding(map, caller + "-already")
             return
         }
+        pendingPuckTrackingTransition = true
         component.setCameraMode(
             CameraMode.TRACKING_GPS,
             object : OnLocationCameraTransitionListener {
                 override fun onLocationCameraTransitionFinished(cameraMode: Int) {
+                    pendingPuckTrackingTransition = false
                     MixAutoPuckLog.event(
                         "engage",
                         "caller=" + caller +
@@ -437,6 +450,7 @@ internal class NavigationCameraController(
                 }
 
                 override fun onLocationCameraTransitionCanceled(cameraMode: Int) {
+                    pendingPuckTrackingTransition = false
                     MixAutoPuckLog.event(
                         "engage",
                         "caller=" + caller +
@@ -446,7 +460,14 @@ internal class NavigationCameraController(
                 }
             },
         )
-        viewportPadding.applyDrivingTrackingPadding(map, caller + "-immediate")
+        // Do NOT also call applyDrivingTrackingPadding() here: `setCameraMode()` already reports
+        // TRACKING_GPS synchronously while the transition animation is still running, so an
+        // immediate padding call here always lands mid-transition and is silently dropped by
+        // MapLibre — but the dedup cache in DrivingViewportPaddingController still records it as
+        // "engaged", which then makes the real `-finished`/`-canceled` apply above skip as a false
+        // no-op (`padSkip reason=keyUnchanged`) once the transition truly completes. This is why the
+        // puck could snap to screen center instead of the saved offset after POI preview → recenter.
+        // The transition listener above is always invoked and is the only reliable apply point.
     }
 
     fun activateFreeDriveTrackingMode(map: MapLibreMap) {

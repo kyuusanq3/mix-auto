@@ -265,6 +265,7 @@ fun DashboardScreen(
             dockPinnedPackages = dockPinnedPackages,
             onToggleDockPin = onToggleDockPin,
             onOpenLauncherSettings = panel.onOpenLauncherSettingsFromDrawer,
+            onOpenFirstPartyApp = panel.onOpenFirstPartyApp,
             onDismiss = panel.onDismissAppDrawer,
         ),
         showSecondaryPane = showSecondaryPane,
