@@ -16,6 +16,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.RadioButtonUnchecked
+import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
@@ -48,14 +49,15 @@ private const val COMPLETION_DISMISS_DELAY_MS = 900L
 fun ReminderChecklistPopup(
     items: List<String>,
     checkedIndices: Set<Int>,
+    confirmButtonMode: Boolean,
     onToggleChecked: (Int) -> Unit,
     onAllChecked: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val allChecked = items.isNotEmpty() && checkedIndices.size == items.size
 
-    LaunchedEffect(allChecked) {
-        if (allChecked) {
+    LaunchedEffect(allChecked, confirmButtonMode) {
+        if (allChecked && !confirmButtonMode) {
             delay(COMPLETION_DISMISS_DELAY_MS)
             onAllChecked()
         }
@@ -91,6 +93,16 @@ fun ReminderChecklistPopup(
                         allChecked = allChecked,
                         onToggle = { onToggleChecked(index) },
                     )
+                }
+            }
+            if (confirmButtonMode) {
+                Button(
+                    onClick = onAllChecked,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = CarDimensions.PaneGap),
+                ) {
+                    CarLabelText(text = "Confirm")
                 }
             }
         }

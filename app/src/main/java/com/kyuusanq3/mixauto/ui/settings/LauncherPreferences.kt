@@ -271,6 +271,27 @@ class LauncherPreferences(context: Context) {
             prefs.edit().putString(KEY_REMINDER_CHECKLIST_ITEMS, array.toString()).apply()
         }
 
+    /** When true, the boot popup only shows once per calendar day instead of every boot. */
+    var reminderChecklistOncePerDay: Boolean
+        get() = prefs.getBoolean(KEY_REMINDER_CHECKLIST_ONCE_PER_DAY, false)
+        set(value) {
+            prefs.edit().putBoolean(KEY_REMINDER_CHECKLIST_ONCE_PER_DAY, value).apply()
+        }
+
+    /** When true, the popup shows a single Confirm button instead of requiring each item tapped. */
+    var reminderChecklistConfirmButtonMode: Boolean
+        get() = prefs.getBoolean(KEY_REMINDER_CHECKLIST_CONFIRM_BUTTON_MODE, false)
+        set(value) {
+            prefs.edit().putBoolean(KEY_REMINDER_CHECKLIST_CONFIRM_BUTTON_MODE, value).apply()
+        }
+
+    /** Epoch day (`System.currentTimeMillis() / DAY_IN_MILLIS`) the boot popup last fully showed/dismissed. */
+    var reminderChecklistLastShownEpochDay: Long
+        get() = prefs.getLong(KEY_REMINDER_CHECKLIST_LAST_SHOWN_DAY, -1L)
+        set(value) {
+            prefs.edit().putLong(KEY_REMINDER_CHECKLIST_LAST_SHOWN_DAY, value).apply()
+        }
+
     companion object {
         private const val PREFS_NAME = "launcher_prefs"
         private const val KEY_LEFT_HAND_DRIVE = "lhd"
@@ -309,6 +330,9 @@ class LauncherPreferences(context: Context) {
         private const val KEY_OFFLINE_DETAIL_UPGRADE_BANNER_DISMISSED = "offline_detail_upgrade_banner_dismissed"
         private const val KEY_REMINDER_CHECKLIST_ENABLED = "reminder_checklist_enabled"
         private const val KEY_REMINDER_CHECKLIST_ITEMS = "reminder_checklist_items"
+        private const val KEY_REMINDER_CHECKLIST_ONCE_PER_DAY = "reminder_checklist_once_per_day"
+        private const val KEY_REMINDER_CHECKLIST_CONFIRM_BUTTON_MODE = "reminder_checklist_confirm_button_mode"
+        private const val KEY_REMINDER_CHECKLIST_LAST_SHOWN_DAY = "reminder_checklist_last_shown_day"
         const val MAX_REMINDER_CHECKLIST_ITEMS = 20
         const val DEFAULT_ALBUM_ART_MODE = "PLAIN"
         const val MAX_RECENT_DESTINATIONS = 10

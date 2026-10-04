@@ -275,6 +275,7 @@ class MainActivity : ComponentActivity() {
                         ReminderChecklistPopup(
                             items = launcherViewModel.reminderChecklistItems,
                             checkedIndices = launcherViewModel.reminderCheckedIndices,
+                            confirmButtonMode = launcherViewModel.reminderChecklistConfirmButtonMode,
                             onToggleChecked = launcherViewModel::toggleReminderChecked,
                             onAllChecked = launcherViewModel::dismissReminderPopup,
                             modifier = Modifier.fillMaxSize(),
@@ -287,7 +288,11 @@ class MainActivity : ComponentActivity() {
                                 ReminderChecklistScreen(
                                     enabled = launcherViewModel.reminderChecklistEnabled,
                                     items = launcherViewModel.reminderChecklistItems,
+                                    oncePerDay = launcherViewModel.reminderChecklistOncePerDay,
+                                    confirmButtonMode = launcherViewModel.reminderChecklistConfirmButtonMode,
                                     onToggleEnabled = launcherViewModel::setReminderChecklistEnabled,
+                                    onToggleOncePerDay = launcherViewModel::setReminderChecklistOncePerDay,
+                                    onToggleConfirmButtonMode = launcherViewModel::setReminderChecklistConfirmButtonMode,
                                     onUpdateItem = launcherViewModel::updateReminderChecklistItem,
                                     onAddItem = launcherViewModel::addReminderChecklistItem,
                                     onRemoveItem = launcherViewModel::removeReminderChecklistItem,

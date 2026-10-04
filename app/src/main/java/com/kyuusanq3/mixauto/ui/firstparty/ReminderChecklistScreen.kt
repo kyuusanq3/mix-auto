@@ -40,7 +40,11 @@ import com.kyuusanq3.mixauto.ui.theme.OledBlack
 fun ReminderChecklistScreen(
     enabled: Boolean,
     items: List<String>,
+    oncePerDay: Boolean,
+    confirmButtonMode: Boolean,
     onToggleEnabled: (Boolean) -> Unit,
+    onToggleOncePerDay: (Boolean) -> Unit,
+    onToggleConfirmButtonMode: (Boolean) -> Unit,
     onUpdateItem: (Int, String) -> Unit,
     onAddItem: (String) -> Unit,
     onRemoveItem: (Int) -> Unit,
@@ -70,6 +74,18 @@ fun ReminderChecklistScreen(
                 label = "Show checklist on startup",
                 checked = enabled,
                 onCheckedChange = onToggleEnabled,
+            )
+
+            SettingsSwitchRow(
+                label = "Only show once per day",
+                checked = oncePerDay,
+                onCheckedChange = onToggleOncePerDay,
+            )
+
+            SettingsSwitchRow(
+                label = "Use a single Confirm button instead of tapping each item",
+                checked = confirmButtonMode,
+                onCheckedChange = onToggleConfirmButtonMode,
             )
 
             CarLabelText(

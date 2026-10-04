@@ -54,8 +54,15 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
 
     val reminderChecklistEnabled: Boolean get() = reminderPrefs.reminderChecklistEnabled
     val reminderChecklistItems: List<String> get() = reminderPrefs.reminderChecklistItems
+    val reminderChecklistOncePerDay: Boolean get() = reminderPrefs.reminderChecklistOncePerDay
+    val reminderChecklistConfirmButtonMode: Boolean get() = reminderPrefs.reminderChecklistConfirmButtonMode
 
     fun setReminderChecklistEnabled(enabled: Boolean) = reminderPrefs.setEnabled(enabled)
+
+    fun setReminderChecklistOncePerDay(oncePerDay: Boolean) = reminderPrefs.setOncePerDay(oncePerDay)
+
+    fun setReminderChecklistConfirmButtonMode(confirmButtonMode: Boolean) =
+        reminderPrefs.setConfirmButtonMode(confirmButtonMode)
 
     fun addReminderChecklistItem(text: String) = reminderPrefs.addItem(text)
 
@@ -123,7 +130,9 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     }
 
     var reminderPopupVisible by mutableStateOf(
-        preferences.reminderChecklistEnabled && preferences.reminderChecklistItems.isNotEmpty(),
+        preferences.reminderChecklistEnabled &&
+            preferences.reminderChecklistItems.isNotEmpty() &&
+            reminderPrefs.shouldShowPopupNow(),
     )
         private set
 
@@ -141,6 +150,7 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     fun dismissReminderPopup() {
         reminderPopupVisible = false
         reminderCheckedIndices = emptySet()
+        reminderPrefs.markShownToday()
     }
 
     fun setActivePanel(panel: ActivePanel) {

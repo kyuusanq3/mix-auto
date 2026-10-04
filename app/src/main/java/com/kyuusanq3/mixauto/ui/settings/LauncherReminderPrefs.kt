@@ -17,9 +17,37 @@ internal class LauncherReminderPrefs(
     var reminderChecklistItems by mutableStateOf(preferences.reminderChecklistItems)
         private set
 
+    var reminderChecklistOncePerDay by mutableStateOf(preferences.reminderChecklistOncePerDay)
+        private set
+
+    var reminderChecklistConfirmButtonMode by mutableStateOf(preferences.reminderChecklistConfirmButtonMode)
+        private set
+
     fun setEnabled(enabled: Boolean) {
         reminderChecklistEnabled = enabled
         preferences.reminderChecklistEnabled = enabled
+    }
+
+    fun setOncePerDay(oncePerDay: Boolean) {
+        reminderChecklistOncePerDay = oncePerDay
+        preferences.reminderChecklistOncePerDay = oncePerDay
+    }
+
+    fun setConfirmButtonMode(confirmButtonMode: Boolean) {
+        reminderChecklistConfirmButtonMode = confirmButtonMode
+        preferences.reminderChecklistConfirmButtonMode = confirmButtonMode
+    }
+
+    /** Returns true if the boot popup should be shown right now given the once-per-day setting. */
+    fun shouldShowPopupNow(): Boolean {
+        if (!preferences.reminderChecklistOncePerDay) return true
+        val todayEpochDay = System.currentTimeMillis() / DAY_IN_MILLIS
+        return preferences.reminderChecklistLastShownEpochDay != todayEpochDay
+    }
+
+    /** Records that the popup was shown/dismissed today, for once-per-day gating. */
+    fun markShownToday() {
+        preferences.reminderChecklistLastShownEpochDay = System.currentTimeMillis() / DAY_IN_MILLIS
     }
 
     fun addItem(text: String) {
@@ -40,3 +68,5 @@ internal class LauncherReminderPrefs(
         preferences.reminderChecklistItems = reminderChecklistItems
     }
 }
+
+private const val DAY_IN_MILLIS = 24L * 60L * 60L * 1000L
