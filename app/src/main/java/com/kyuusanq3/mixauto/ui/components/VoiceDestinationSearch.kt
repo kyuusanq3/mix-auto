@@ -27,7 +27,10 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import com.kyuusanq3.mixauto.ui.settings.LauncherViewModel
 
 internal const val VOICE_SEARCH_TAG = "NavigationSearchOverlay"
@@ -47,33 +50,49 @@ internal fun speechErrorLabel(error: Int): String = when (error) {
 
 internal class SpeechSearchAudioFocus(context: Context) {
     private val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
-    private var focusRequest: AudioFocusRequest? = null
 
-    fun request() {
+    /**
+     * Built once and reused: abandoning focus requires the same [AudioFocusRequest] instance that
+     * was granted, so rebuilding it per session leaks a focus hold the launcher can never release.
+     */
+    private val focusRequest: AudioFocusRequest? =
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            // Not USAGE_VOICE_COMMUNICATION: that puts the head unit's audio HAL into call
+            // routing, which makes the system assistant report the mic as unavailable. We only
+            // need the focus grant to duck music while the driver speaks.
             val attributes = AudioAttributes.Builder()
-                .setUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION)
+                .setUsage(AudioAttributes.USAGE_ASSISTANCE_SONIFICATION)
                 .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
                 .build()
-            val request = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK)
+            AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK)
                 .setAudioAttributes(attributes)
                 .build()
-            focusRequest = request
-            audioManager.requestAudioFocus(request)
+        } else {
+            null
+        }
+
+    private var holdsFocus = false
+
+    fun request() {
+        if (holdsFocus) return
+        holdsFocus = true
+        if (focusRequest != null) {
+            audioManager.requestAudioFocus(focusRequest)
         } else {
             @Suppress("DEPRECATION")
             audioManager.requestAudioFocus(
                 null,
-                AudioManager.STREAM_VOICE_CALL,
+                AudioManager.STREAM_MUSIC,
                 AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK,
             )
         }
     }
 
     fun abandon() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            focusRequest?.let { audioManager.abandonAudioFocusRequest(it) }
-            focusRequest = null
+        if (!holdsFocus) return
+        holdsFocus = false
+        if (focusRequest != null) {
+            audioManager.abandonAudioFocusRequest(focusRequest)
         } else {
             @Suppress("DEPRECATION")
             audioManager.abandonAudioFocus(null)
@@ -118,10 +137,12 @@ internal fun rememberVoiceSearch(
             putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
             putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
             putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
-            // Default recognizer silence/no-speech timeouts are very short (often <1-2s) on
-            // AOSP head units and emulators, so the mic can close before the driver starts
-            // talking. Extend both the "no speech yet" and "user paused" windows.
-            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, 15_000L)
+            // Default recognizer silence timeouts are very short (often <1-2s) on AOSP head
+            // units, so the mic can close before the driver starts talking. Keep the minimum
+            // session short — it is a floor on the whole session, not a "wait for speech"
+            // window, so a long value holds the mic (blocking the system assistant) and delays
+            // results. The silence windows below are what actually tolerate a slow start.
+            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, 3_000L)
             putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 2_500L)
             putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 2_500L)
         }
@@ -201,6 +222,24 @@ internal fun rememberVoiceSearch(
             speechAudioFocus.abandon()
             speechRecognizer?.destroy()
         }
+    }
+
+    // As the default launcher Mix Auto is never destroyed, so the search overlay (and this
+    // recognizer) can stay composed in the background indefinitely — onDispose alone would keep
+    // the mic and audio focus held while another app, e.g. the system assistant, needs them.
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner, speechRecognizer) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_PAUSE) {
+                pendingVoiceRestart = false
+                recognizerSessionActive = false
+                isListening = false
+                speechRecognizer?.cancel()
+                speechAudioFocus.abandon()
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
     val recordAudioPermissionLauncher = rememberLauncherForActivityResult(

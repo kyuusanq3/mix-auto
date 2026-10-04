@@ -23,6 +23,9 @@ internal class LauncherReminderPrefs(
     var reminderChecklistConfirmButtonMode by mutableStateOf(preferences.reminderChecklistConfirmButtonMode)
         private set
 
+    var reminderChecklistLargeCardStyle by mutableStateOf(preferences.reminderChecklistLargeCardStyle)
+        private set
+
     fun setEnabled(enabled: Boolean) {
         reminderChecklistEnabled = enabled
         preferences.reminderChecklistEnabled = enabled
@@ -36,6 +39,11 @@ internal class LauncherReminderPrefs(
     fun setConfirmButtonMode(confirmButtonMode: Boolean) {
         reminderChecklistConfirmButtonMode = confirmButtonMode
         preferences.reminderChecklistConfirmButtonMode = confirmButtonMode
+    }
+
+    fun setLargeCardStyle(largeCardStyle: Boolean) {
+        reminderChecklistLargeCardStyle = largeCardStyle
+        preferences.reminderChecklistLargeCardStyle = largeCardStyle
     }
 
     /** Returns true if the boot popup should be shown right now given the once-per-day setting. */

@@ -12,8 +12,8 @@ android {
         applicationId = "com.kyuusanq3.mixauto"
         minSdk = 24
         targetSdk = 34
-        versionCode = 54
-        versionName = "0.1.8"
+        versionCode = 55
+        versionName = "0.1.9"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }

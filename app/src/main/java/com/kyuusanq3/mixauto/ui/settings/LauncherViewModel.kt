@@ -56,6 +56,7 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     val reminderChecklistItems: List<String> get() = reminderPrefs.reminderChecklistItems
     val reminderChecklistOncePerDay: Boolean get() = reminderPrefs.reminderChecklistOncePerDay
     val reminderChecklistConfirmButtonMode: Boolean get() = reminderPrefs.reminderChecklistConfirmButtonMode
+    val reminderChecklistLargeCardStyle: Boolean get() = reminderPrefs.reminderChecklistLargeCardStyle
 
     fun setReminderChecklistEnabled(enabled: Boolean) = reminderPrefs.setEnabled(enabled)
 
@@ -63,6 +64,9 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
 
     fun setReminderChecklistConfirmButtonMode(confirmButtonMode: Boolean) =
         reminderPrefs.setConfirmButtonMode(confirmButtonMode)
+
+    fun setReminderChecklistLargeCardStyle(largeCardStyle: Boolean) =
+        reminderPrefs.setLargeCardStyle(largeCardStyle)
 
     fun addReminderChecklistItem(text: String) = reminderPrefs.addItem(text)
 

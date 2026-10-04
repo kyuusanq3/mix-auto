@@ -285,6 +285,13 @@ class LauncherPreferences(context: Context) {
             prefs.edit().putBoolean(KEY_REMINDER_CHECKLIST_CONFIRM_BUTTON_MODE, value).apply()
         }
 
+    /** When true, popup checklist rows render as large cards (bigger tap target, text, icon). */
+    var reminderChecklistLargeCardStyle: Boolean
+        get() = prefs.getBoolean(KEY_REMINDER_CHECKLIST_LARGE_CARD_STYLE, false)
+        set(value) {
+            prefs.edit().putBoolean(KEY_REMINDER_CHECKLIST_LARGE_CARD_STYLE, value).apply()
+        }
+
     /** Epoch day (`System.currentTimeMillis() / DAY_IN_MILLIS`) the boot popup last fully showed/dismissed. */
     var reminderChecklistLastShownEpochDay: Long
         get() = prefs.getLong(KEY_REMINDER_CHECKLIST_LAST_SHOWN_DAY, -1L)
@@ -332,6 +339,7 @@ class LauncherPreferences(context: Context) {
         private const val KEY_REMINDER_CHECKLIST_ITEMS = "reminder_checklist_items"
         private const val KEY_REMINDER_CHECKLIST_ONCE_PER_DAY = "reminder_checklist_once_per_day"
         private const val KEY_REMINDER_CHECKLIST_CONFIRM_BUTTON_MODE = "reminder_checklist_confirm_button_mode"
+        private const val KEY_REMINDER_CHECKLIST_LARGE_CARD_STYLE = "reminder_checklist_large_card_style"
         private const val KEY_REMINDER_CHECKLIST_LAST_SHOWN_DAY = "reminder_checklist_last_shown_day"
         const val MAX_REMINDER_CHECKLIST_ITEMS = 20
         const val DEFAULT_ALBUM_ART_MODE = "PLAIN"

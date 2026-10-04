@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -50,6 +51,7 @@ fun ReminderChecklistPopup(
     items: List<String>,
     checkedIndices: Set<Int>,
     confirmButtonMode: Boolean,
+    largeCardStyle: Boolean,
     onToggleChecked: (Int) -> Unit,
     onAllChecked: () -> Unit,
     modifier: Modifier = Modifier,
@@ -78,10 +80,12 @@ fun ReminderChecklistPopup(
                 text = "Reminder Checklist",
                 style = MaterialTheme.typography.headlineMedium,
             )
-            CarLabelText(
-                text = "${checkedIndices.size} of ${items.size} checked",
-                modifier = Modifier.padding(top = CarDimensions.PaneGap / 2, bottom = CarDimensions.PaneGap),
-            )
+            if (!confirmButtonMode) {
+                CarLabelText(
+                    text = "${checkedIndices.size} of ${items.size} checked",
+                    modifier = Modifier.padding(top = CarDimensions.PaneGap / 2, bottom = CarDimensions.PaneGap),
+                )
+            }
             LazyColumn(
                 modifier = Modifier.fillMaxWidth().weight(1f),
                 verticalArrangement = Arrangement.spacedBy(CarDimensions.PaneGap),
@@ -91,18 +95,29 @@ fun ReminderChecklistPopup(
                         text = item,
                         isChecked = index in checkedIndices,
                         allChecked = allChecked,
+                        largeCardStyle = largeCardStyle,
+                        selectable = !confirmButtonMode,
                         onToggle = { onToggleChecked(index) },
                     )
                 }
             }
             if (confirmButtonMode) {
+                val confirmButtonHeight = if (largeCardStyle) CarDimensions.PrimaryTapTarget else CarDimensions.MinTapTarget
                 Button(
                     onClick = onAllChecked,
                     modifier = Modifier
                         .fillMaxWidth()
+                        .heightIn(min = confirmButtonHeight)
                         .padding(top = CarDimensions.PaneGap),
                 ) {
-                    CarLabelText(text = "Confirm")
+                    CarLabelText(
+                        text = "Confirm",
+                        style = if (largeCardStyle) {
+                            MaterialTheme.typography.titleMedium
+                        } else {
+                            MaterialTheme.typography.labelMedium
+                        },
+                    )
                 }
             }
         }
@@ -114,35 +129,54 @@ private fun ReminderChecklistPopupRow(
     text: String,
     isChecked: Boolean,
     allChecked: Boolean,
+    largeCardStyle: Boolean,
+    selectable: Boolean,
     onToggle: () -> Unit,
 ) {
     val accentColor = if (allChecked) SuccessGreen else ElectricCyan
-    val containerColor = if (isChecked) accentColor.copy(alpha = 0.16f) else DarkSurface
-    val borderColor = if (isChecked) accentColor else MaterialTheme.colorScheme.outline
+    val containerColor = if (selectable && isChecked) accentColor.copy(alpha = 0.16f) else DarkSurface
+    val borderColor = if (selectable && isChecked) accentColor else MaterialTheme.colorScheme.outline
+    val minHeight = if (largeCardStyle) CarDimensions.PrimaryTapTarget else CarDimensions.MinTapTarget
+    val cardPadding = if (largeCardStyle) CarDimensions.PaneGap * 2 else CarDimensions.PaneGap
+    val borderWidth = if (largeCardStyle) 2.dp else 1.5.dp
+    val iconSize = if (largeCardStyle) 36.dp else 24.dp
 
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .heightIn(min = CarDimensions.MinTapTarget)
+            .heightIn(min = minHeight)
             .clip(RoundedCornerShape(CarDimensions.CardCornerRadius))
-            .clickable(onClick = onToggle),
+            .then(if (selectable) Modifier.clickable(onClick = onToggle) else Modifier),
         colors = CardDefaults.cardColors(containerColor = containerColor),
-        border = BorderStroke(width = 1.5.dp, color = borderColor),
+        elevation = if (largeCardStyle) {
+            CardDefaults.cardElevation(defaultElevation = CarDimensions.CardElevation)
+        } else {
+            CardDefaults.cardElevation()
+        },
+        border = BorderStroke(width = borderWidth, color = borderColor),
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(CarDimensions.PaneGap),
+                .padding(cardPadding),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(CarDimensions.PaneGap),
         ) {
-            Icon(
-                imageVector = if (isChecked) Icons.Filled.CheckCircle else Icons.Filled.RadioButtonUnchecked,
-                contentDescription = null,
-                tint = if (isChecked) accentColor else MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+            if (selectable) {
+                Icon(
+                    imageVector = if (isChecked) Icons.Filled.CheckCircle else Icons.Filled.RadioButtonUnchecked,
+                    contentDescription = null,
+                    tint = if (isChecked) accentColor else MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(iconSize),
+                )
+            }
             CarBodyText(
                 text = text,
+                style = if (largeCardStyle) {
+                    MaterialTheme.typography.bodyLarge
+                } else {
+                    MaterialTheme.typography.bodyMedium
+                },
                 modifier = Modifier.weight(1f),
             )
         }

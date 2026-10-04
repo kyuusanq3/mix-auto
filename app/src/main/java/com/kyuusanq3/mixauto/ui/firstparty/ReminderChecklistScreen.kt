@@ -42,9 +42,11 @@ fun ReminderChecklistScreen(
     items: List<String>,
     oncePerDay: Boolean,
     confirmButtonMode: Boolean,
+    largeCardStyle: Boolean,
     onToggleEnabled: (Boolean) -> Unit,
     onToggleOncePerDay: (Boolean) -> Unit,
     onToggleConfirmButtonMode: (Boolean) -> Unit,
+    onToggleLargeCardStyle: (Boolean) -> Unit,
     onUpdateItem: (Int, String) -> Unit,
     onAddItem: (String) -> Unit,
     onRemoveItem: (Int) -> Unit,
@@ -86,6 +88,12 @@ fun ReminderChecklistScreen(
                 label = "Use a single Confirm button instead of tapping each item",
                 checked = confirmButtonMode,
                 onCheckedChange = onToggleConfirmButtonMode,
+            )
+
+            SettingsSwitchRow(
+                label = "Large card style (bigger items, easier to tap)",
+                checked = largeCardStyle,
+                onCheckedChange = onToggleLargeCardStyle,
             )
 
             CarLabelText(
