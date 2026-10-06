@@ -42,6 +42,8 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     val puckVerticalOffset: Float get() = mapPrefs.puckVerticalOffset
     val puckScale: Float get() = mapPrefs.puckScale
     val showTraffic: Boolean get() = mapPrefs.showTraffic
+    val nightModeEnabled: Boolean get() = mapPrefs.nightModeEnabled
+    val nightModeAuto: Boolean get() = mapPrefs.nightModeAuto
     val navigationVoiceEnabled: Boolean get() = mapPrefs.navigationVoiceEnabled
     val navigationVoiceVolume: Float get() = mapPrefs.navigationVoiceVolume
     val navigationVoiceBoost: Boolean get() = mapPrefs.navigationVoiceBoost
@@ -206,6 +208,10 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
 
     private var startVoiceOnSearchOpen = false
 
+    /** True only while the destination search recognizer has the mic open. */
+    var isVoiceSearchListening by mutableStateOf(false)
+        internal set
+
     fun triggerVoiceSearch() {
         _voiceSearchTrigger.tryEmit(Unit)
     }
@@ -297,6 +303,10 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     fun updateAlbumArtMode(mode: AlbumArtMode) = audioPrefs.updateAlbumArtMode(mode)
 
     fun toggleTraffic() = mapPrefs.toggleTraffic()
+
+    fun toggleNightMode() = mapPrefs.toggleNightMode()
+
+    fun toggleNightModeAuto() = mapPrefs.toggleNightModeAuto()
 
     fun toggleNavigationVoice() = mapPrefs.toggleNavigationVoice()
 

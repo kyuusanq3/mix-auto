@@ -44,6 +44,8 @@ fun MapSettingsPanelContent(
     useVectorTiles: Boolean,
     show3dBuildings: Boolean,
     showTraffic: Boolean,
+    nightModeEnabled: Boolean,
+    nightModeAuto: Boolean,
     navigationVoiceEnabled: Boolean,
     navigationVoiceVolume: Float,
     drivingZoom: Float,
@@ -56,6 +58,8 @@ fun MapSettingsPanelContent(
     onToggleVectorTiles: () -> Unit,
     onToggleShow3dBuildings: () -> Unit,
     onToggleTraffic: () -> Unit,
+    onToggleNightMode: () -> Unit,
+    onToggleNightModeAuto: () -> Unit,
     onToggleNavigationVoice: () -> Unit,
     onNavigationVoiceVolumeChange: (Float) -> Unit,
     onTestNavigationVoice: () -> Unit,
@@ -122,6 +126,13 @@ fun MapSettingsPanelContent(
                         onToggleShow3dBuildings()
                     }
                 },
+            )
+
+            NightModeSection(
+                nightModeEnabled = nightModeEnabled,
+                nightModeAuto = nightModeAuto,
+                onToggleNightMode = onToggleNightMode,
+                onToggleNightModeAuto = onToggleNightModeAuto,
             )
 
             SettingsSwitchRow(
@@ -392,6 +403,40 @@ private fun DrivingViewSettingsSection(
                 style = MaterialTheme.typography.labelMedium,
             )
         }
+    }
+}
+
+@Composable
+private fun NightModeSection(
+    nightModeEnabled: Boolean,
+    nightModeAuto: Boolean,
+    onToggleNightMode: () -> Unit,
+    onToggleNightModeAuto: () -> Unit,
+) {
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(CarDimensions.PaneGap),
+    ) {
+        SettingsSwitchRow(
+            label = "Night Mode (dim map)",
+            checked = nightModeEnabled || nightModeAuto,
+            enabled = !nightModeAuto,
+            onCheckedChange = { checked ->
+                if (checked != nightModeEnabled) {
+                    onToggleNightMode()
+                }
+            },
+        )
+
+        SettingsSwitchRow(
+            label = "Auto Night Mode (6 PM \u2013 6 AM)",
+            checked = nightModeAuto,
+            onCheckedChange = { checked ->
+                if (checked != nightModeAuto) {
+                    onToggleNightModeAuto()
+                }
+            },
+        )
     }
 }
 

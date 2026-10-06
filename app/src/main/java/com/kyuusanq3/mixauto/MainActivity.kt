@@ -125,7 +125,10 @@ class MainActivity : ComponentActivity() {
                         }
                     }
 
-                    SideEffect {
+                    // Keyed, not SideEffect: the dashboard recomposes every animation frame, and
+                    // re-asserting system bar visibility on the window that often churns insets
+                    // and can disturb overlay windows such as the system assistant.
+                    LaunchedEffect(launcherViewModel.showSystemStatusBar) {
                         applySystemBarVisibility(launcherViewModel.showSystemStatusBar)
                     }
 
@@ -161,6 +164,8 @@ class MainActivity : ComponentActivity() {
                     useVectorTiles = launcherViewModel.useVectorTiles,
                     show3dBuildings = launcherViewModel.show3dBuildings,
                     showTraffic = launcherViewModel.showTraffic,
+                    nightModeEnabled = launcherViewModel.nightModeEnabled,
+                    nightModeAuto = launcherViewModel.nightModeAuto,
                     navigationVoiceEnabled = launcherViewModel.navigationVoiceEnabled,
                     navigationVoiceVolume = launcherViewModel.navigationVoiceVolume,
                     tomTomApiKey = launcherViewModel.tomTomApiKey,
@@ -195,6 +200,8 @@ class MainActivity : ComponentActivity() {
                             launcherViewModel.tomTomApiKey,
                         )
                     },
+                    onToggleNightMode = launcherViewModel::toggleNightMode,
+                    onToggleNightModeAuto = launcherViewModel::toggleNightModeAuto,
                     onToggleNavigationVoice = {
                         launcherViewModel.toggleNavigationVoice()
                         mapEngine.setNavigationVoiceEnabled(launcherViewModel.navigationVoiceEnabled)
@@ -366,10 +373,17 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
-        if ((keyCode == KeyEvent.KEYCODE_VOICE_ASSIST || keyCode == KeyEvent.KEYCODE_SEARCH) &&
-            ::launcherViewModel.isInitialized &&
+        if (!::launcherViewModel.isInitialized) {
+            return super.onKeyDown(keyCode, event)
+        }
+        // The assist key belongs to the system assistant: only claim it while destination
+        // dictation already has the mic, so a press there does not hand the mic away mid-phrase.
+        // The search key still opens dictation whenever the search panel is up.
+        val claimAssistKey = keyCode == KeyEvent.KEYCODE_VOICE_ASSIST &&
+            launcherViewModel.isVoiceSearchListening
+        val claimSearchKey = keyCode == KeyEvent.KEYCODE_SEARCH &&
             launcherViewModel.isDestinationSearchOpen
-        ) {
+        if (claimAssistKey || claimSearchKey) {
             launcherViewModel.triggerVoiceSearch()
             return true
         }

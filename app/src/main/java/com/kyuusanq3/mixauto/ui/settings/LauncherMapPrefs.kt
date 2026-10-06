@@ -52,6 +52,12 @@ internal class LauncherMapPrefs(
     var showTraffic by mutableStateOf(preferences.showTraffic)
         private set
 
+    var nightModeEnabled by mutableStateOf(preferences.nightModeEnabled)
+        private set
+
+    var nightModeAuto by mutableStateOf(preferences.nightModeAuto)
+        private set
+
     var navigationVoiceEnabled by mutableStateOf(preferences.navigationVoiceEnabled)
         private set
 
@@ -96,6 +102,16 @@ internal class LauncherMapPrefs(
     fun toggleTraffic() {
         showTraffic = !showTraffic
         preferences.showTraffic = showTraffic
+    }
+
+    fun toggleNightMode() {
+        nightModeEnabled = !nightModeEnabled
+        preferences.nightModeEnabled = nightModeEnabled
+    }
+
+    fun toggleNightModeAuto() {
+        nightModeAuto = !nightModeAuto
+        preferences.nightModeAuto = nightModeAuto
     }
 
     fun toggleNavigationVoice() {

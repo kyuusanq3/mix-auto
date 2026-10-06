@@ -16,6 +16,8 @@ internal data class DashboardMapPaneProps(
     val onToggleMapSettings: () -> Unit,
     val isMapSettingsPanelOpen: Boolean,
     val reduceTopInsetBelowStatusStrip: Boolean,
+    val nightModeEnabled: Boolean = false,
+    val nightModeAuto: Boolean = false,
 )
 
 internal data class DashboardSecondaryPaneProps(
@@ -49,6 +51,8 @@ internal data class DashboardSecondaryPaneProps(
     val useVectorTiles: Boolean,
     val show3dBuildings: Boolean,
     val showTraffic: Boolean,
+    val nightModeEnabled: Boolean,
+    val nightModeAuto: Boolean,
     val navigationVoiceEnabled: Boolean,
     val navigationVoiceVolume: Float,
     val tomTomApiKey: String,
@@ -64,6 +68,8 @@ internal data class DashboardSecondaryPaneProps(
     val onToggleVectorTiles: () -> Unit,
     val onToggleShow3dBuildings: () -> Unit,
     val onToggleTraffic: () -> Unit,
+    val onToggleNightMode: () -> Unit,
+    val onToggleNightModeAuto: () -> Unit,
     val onToggleNavigationVoice: () -> Unit,
     val onNavigationVoiceVolumeChange: (Float) -> Unit,
     val onTestNavigationVoice: () -> Unit,

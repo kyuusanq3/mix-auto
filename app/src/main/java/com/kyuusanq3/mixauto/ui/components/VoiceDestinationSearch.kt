@@ -242,6 +242,12 @@ internal fun rememberVoiceSearch(
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
+    // MainActivity only claims the hardware assist key while we actually hold the mic.
+    DisposableEffect(isListening) {
+        launcherViewModel.isVoiceSearchListening = isListening
+        onDispose { launcherViewModel.isVoiceSearchListening = false }
+    }
+
     val recordAudioPermissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission(),
     ) { granted ->

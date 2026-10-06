@@ -75,25 +75,40 @@ internal class MapStyleController(
             if (layer !is LineLayer) return@forEach
             val layerId = layer.id
             if (!isAutomotiveRoadLineLayer(layerId)) return@forEach
-            val factor = automotiveRoadWidthFactor(layerId)
-            val zoomFactor = automotiveRoadWidthZoomFactor(layerId, factor)
             val widthProp = layer.lineWidth
             when {
                 widthProp.isExpression -> {
                     val expr = widthProp.expression ?: return@forEach
-                    layer.setProperties(
-                        PropertyFactory.lineWidth(
-                            Expression.product(zoomFactor, expr),
-                        ),
-                    )
+                    // MapLibre rejects wrapping one zoom interpolator in another
+                    // ("Only one zoom-based step or interpolate may be used"). The bundled
+                    // driving style already bakes the zoom-ramped boost into these
+                    // interpolators, so leave them as-is.
+                    if (containsZoomBasedInterpolation(expr)) return@forEach
+                    val factor = automotiveRoadWidthFactor(layerId)
+                    val zoomFactor = automotiveRoadWidthZoomFactor(layerId, factor)
+                    runCatching {
+                        layer.setProperties(
+                            PropertyFactory.lineWidth(
+                                Expression.product(zoomFactor, expr),
+                            ),
+                        )
+                    }.onFailure { error ->
+                        Log.w(TAG, "Skipping automotive width boost for $layerId", error)
+                    }
                 }
                 widthProp.isValue -> {
                     val value = widthProp.value ?: return@forEach
-                    layer.setProperties(
-                        PropertyFactory.lineWidth(
-                            Expression.product(zoomFactor, Expression.literal(value)),
-                        ),
-                    )
+                    val factor = automotiveRoadWidthFactor(layerId)
+                    val zoomFactor = automotiveRoadWidthZoomFactor(layerId, factor)
+                    runCatching {
+                        layer.setProperties(
+                            PropertyFactory.lineWidth(
+                                Expression.product(zoomFactor, Expression.literal(value)),
+                            ),
+                        )
+                    }.onFailure { error ->
+                        Log.w(TAG, "Skipping automotive width boost for $layerId", error)
+                    }
                 }
             }
         }

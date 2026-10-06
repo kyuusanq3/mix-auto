@@ -1,14 +1,21 @@
 package com.kyuusanq3.mixauto.ui.components
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.Lifecycle
@@ -16,6 +23,7 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.kyuusanq3.mixauto.domain.map.CarMapEngine
 import com.kyuusanq3.mixauto.ui.theme.CarDimensions
+import kotlinx.coroutines.delay
 
 @Composable
 fun CarMapViewContainer(
@@ -24,6 +32,8 @@ fun CarMapViewContainer(
     isDestinationPanelOpen: Boolean,
     onToggleMapSettings: () -> Unit,
     isMapSettingsPanelOpen: Boolean,
+    nightModeEnabled: Boolean = false,
+    nightModeAuto: Boolean = false,
     reduceTopInset: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
@@ -65,6 +75,23 @@ fun CarMapViewContainer(
             factory = { context -> engine.createMapView(context) },
             modifier = Modifier.fillMaxSize(),
         )
+
+        var isNightActive by remember { mutableStateOf(isNightModeActive(nightModeEnabled, nightModeAuto)) }
+        LaunchedEffect(nightModeEnabled, nightModeAuto) {
+            while (true) {
+                isNightActive = isNightModeActive(nightModeEnabled, nightModeAuto)
+                if (!nightModeAuto) break
+                val delayMs = 60_000L - (System.currentTimeMillis() % 60_000L)
+                delay(delayMs.coerceAtLeast(1_000L))
+            }
+        }
+        if (isNightActive) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black.copy(alpha = NIGHT_MODE_DIM_ALPHA)),
+            )
+        }
 
         NavHudOverlay(
             engine = engine,

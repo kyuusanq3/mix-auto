@@ -107,6 +107,18 @@ class LauncherPreferences(context: Context) {
             prefs.edit().putBoolean(KEY_SHOW_TRAFFIC, value).apply()
         }
 
+    var nightModeEnabled: Boolean
+        get() = prefs.getBoolean(KEY_NIGHT_MODE_ENABLED, false)
+        set(value) {
+            prefs.edit().putBoolean(KEY_NIGHT_MODE_ENABLED, value).apply()
+        }
+
+    var nightModeAuto: Boolean
+        get() = prefs.getBoolean(KEY_NIGHT_MODE_AUTO, false)
+        set(value) {
+            prefs.edit().putBoolean(KEY_NIGHT_MODE_AUTO, value).apply()
+        }
+
     var navigationVoiceEnabled: Boolean
         get() = prefs.getBoolean(KEY_NAVIGATION_VOICE_ENABLED, true)
         set(value) {
@@ -316,6 +328,8 @@ class LauncherPreferences(context: Context) {
         private const val KEY_PUCK_V_OFFSET = "puck_v_offset"
         private const val KEY_PUCK_SCALE = "puck_scale"
         private const val KEY_SHOW_TRAFFIC = "show_traffic"
+        private const val KEY_NIGHT_MODE_ENABLED = "night_mode_enabled"
+        private const val KEY_NIGHT_MODE_AUTO = "night_mode_auto"
         private const val KEY_NAVIGATION_VOICE_ENABLED = "navigation_voice_enabled"
         private const val KEY_NAVIGATION_VOICE_VOLUME = "navigation_voice_volume"
         private const val KEY_NAVIGATION_VOICE_BOOST = "navigation_voice_boost"
