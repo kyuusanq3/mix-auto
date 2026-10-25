@@ -9,7 +9,8 @@ OpenCode skills (same bodies): .opencode/skills/local-map-triage | local-map-fea
 
 ## Packages
 
-MainActivity.kt — entry; permissions; wires MapHostViewModel → DashboardScreen
+MainActivity.kt — entry; permissions; wires MapHostViewModel → DashboardScreen; boot audio wake waits for StartupTrace map-settled
+StartupTrace.kt — cold-start timing marks (Logcat MixAutoStartup + debug log) + map-settled gate (GPS snap or style+3 s) for deferred boot work
 domain/map/ — CarMapEngine port, MapUiState, SearchResultPlace (thin contracts)
 domain/media/ — MediaPlaybackState
 data/map/ — MapLibre facade + GPS/puck/camera/style/route/POI collaborators (mix-auto-map-engine.mdc)
@@ -74,7 +75,8 @@ LocationAcquisitionHelper.kt — permission/retry/poll GPS acquisition
 NavigationProgressEvaluator.kt — step advance / arrival / off-route tick (OffRouteDetector injected)
 NavigationCameraController.kt — free-drive / nav dive / cameraSessionId; applyFollowZoom; updateDrivingZoomForSpeed (GPS wired; fill body for speed zoom); updateNavigationZoomForDistance
 DrivingViewportPaddingController.kt — driving padding compute/apply + dedup caches
-MixAutoPuckLog.kt — puck/camera probe + cache file; Launcher Settings Share Debug Logs
+MixAutoPuckLog.kt — puck/camera probe + cache file; Launcher Settings Share/Save Debug Logs
+DebugLogcatCapture.kt — filtered logcat watch for crash/AA death; attached on debug share/save
 TopDownPoiCameraController.kt — POI preview / top-down explore camera
 NavigationZoom.kt — maneuver-distance follow zoom math (pure); append new formulas AFTER shouldApplyZoomChange + tests (Turn A); never nest inside targetZoomForManeuverDistance
 DrivingTilePrefetcher.kt — tile prefetch while driving + network gate

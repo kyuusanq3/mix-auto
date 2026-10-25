@@ -3,6 +3,7 @@ package com.kyuusanq3.mixauto.data.map
 import android.content.Context
 import android.view.View
 import android.view.ViewGroup
+import com.kyuusanq3.mixauto.StartupTrace
 import com.kyuusanq3.mixauto.domain.map.SearchResultPlace
 import org.maplibre.android.maps.MapLibreMap
 import org.maplibre.android.maps.MapView
@@ -56,6 +57,7 @@ internal class MapViewHostCoordinator(
         }
 
         onPrepareHost(context)
+        StartupTrace.mark("createMapView")
 
         return MapView(context).also { view ->
             setMapReleased(false)
@@ -106,6 +108,7 @@ internal class MapViewHostCoordinator(
             applyTrafficOverlay(style, trafficEnabled(), tomTomApiKey())
             apply3dBuildingVisibility(style, show3dBuildings())
             updateSavedPlacesLayer(savedPlacesCache())
+            StartupTrace.onStyleLoaded()
         }
     }
 

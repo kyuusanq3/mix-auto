@@ -2,6 +2,7 @@ package com.kyuusanq3.mixauto.data.map
 
 import android.content.Context
 import android.util.Log
+import com.kyuusanq3.mixauto.StartupTrace
 import com.kyuusanq3.mixauto.domain.map.MapUiState
 import com.kyuusanq3.mixauto.ui.settings.DeveloperSettings
 import com.kyuusanq3.mixauto.domain.map.SearchResultPlace
@@ -556,6 +557,7 @@ internal class NavigationCameraController(
         }
 
         setHasSnappedCameraToGps(true)
+        StartupTrace.markMapSettled("gps snap")
         updateUiState {
             it.copy(streetName = "Free Drive", isCameraDetached = false, isInTopDownView = false)
         }

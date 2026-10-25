@@ -10,6 +10,9 @@
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <uses-permission
+        android:name="android.permission.READ_LOGS"
+        tools:ignore="ProtectedPermissions" />
 
     <queries>
         <intent>
@@ -23,6 +26,9 @@
         <intent>
             <action android:name="android.media.browse.MediaBrowserService" />
         </intent>
+        <package android:name="com.google.android.projection.gearhead" />
+        <package android:name="com.google.android.gms.car" />
+        <package android:name="com.google.android.embedded.projection" />
     </queries>
 
     <application

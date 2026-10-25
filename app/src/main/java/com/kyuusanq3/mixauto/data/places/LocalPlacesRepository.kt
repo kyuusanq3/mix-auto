@@ -6,6 +6,7 @@ import android.net.Uri
 import android.util.Log
 import com.kyuusanq3.mixauto.domain.map.SearchResultPlace
 import java.io.File
+import kotlin.concurrent.thread
 
 class LocalPlacesRepository(context: Context) {
 
@@ -39,13 +40,17 @@ class LocalPlacesRepository(context: Context) {
 
     init {
         placesDir.mkdirs()
-        synchronized(dbLock) {
-            val savedIso = prefs.getString(KEY_ACTIVE_ISO, null)
-            when {
-                savedIso != null && databaseFile(savedIso).exists() ->
-                    openDatabaseUnlocked(savedIso)
-                else ->
-                    discoverAndOpenInstalledDatabaseUnlocked()
+        // Open off the main thread; callers needing the DB block on dbLock until this finishes.
+        thread(name = "mixauto-places-open", isDaemon = true) {
+            synchronized(dbLock) {
+                if (database?.isOpen == true) return@synchronized
+                val savedIso = prefs.getString(KEY_ACTIVE_ISO, null)
+                when {
+                    savedIso != null && databaseFile(savedIso).exists() ->
+                        openDatabaseUnlocked(savedIso)
+                    else ->
+                        discoverAndOpenInstalledDatabaseUnlocked()
+                }
             }
         }
     }

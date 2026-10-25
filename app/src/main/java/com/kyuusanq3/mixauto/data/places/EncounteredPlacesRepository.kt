@@ -23,9 +23,6 @@ class EncounteredPlacesRepository(context: Context) {
 
     init {
         placesDir.mkdirs()
-        synchronized(dbLock) {
-            openDatabaseUnlocked()
-        }
     }
 
     fun upsertAll(places: List<SearchResultPlace>, source: String) {

@@ -51,4 +51,24 @@ object DeveloperSettings {
      * false = hide dock music side control (default; audio player accessed via other means)
      */
     const val SHOW_DOCK_MUSIC_SIDE_CONTROL: Boolean = false
+
+    /**
+     * true  = live-watch logcat for crash / Android Auto lines (DebugLogcatCapture; starts ~20 s
+     *         after launch) so they are kept in Share/Save Debug Logs (default)
+     * false = no background logcat process; share/save still attaches a one-shot logcat dump
+     */
+    const val CAPTURE_SYSTEM_LOGCAT: Boolean = true
+
+    /**
+     * true  = speak "Continue on {street} for {distance}" after nav start and each step advance
+     * false = skip continue lines (default); ahead / turn / reroute / arrival cues unchanged
+     */
+    const val NAV_TTS_CONTINUE_CUES: Boolean = false
+
+    /**
+     * true  = speak the prepare cue (~12 s / 200 m before a turn) between ahead and turn
+     * false = skip prepare where the ahead cue applies (default); segments too short for ahead
+     *         (< NavTtsPhrases.SEGMENT_SKIP_AHEAD_M) keep prepare as their only early cue
+     */
+    const val NAV_TTS_PREPARE_CUES: Boolean = false
 }

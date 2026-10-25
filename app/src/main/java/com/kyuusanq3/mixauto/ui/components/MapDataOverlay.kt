@@ -130,6 +130,10 @@ fun MapDataSectionContent(
     val suggestedRegionId = viewModel.suggestedRegionId
     val density = LocalDensity.current.density
 
+    LaunchedEffect(Unit) {
+        viewModel.ensurePanelDataLoaded()
+    }
+
     LaunchedEffect(currentLat, currentLng) {
         viewModel.updateSuggestedRegion(currentLat, currentLng)
     }

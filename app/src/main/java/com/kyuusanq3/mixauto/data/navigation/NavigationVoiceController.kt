@@ -9,6 +9,7 @@ import android.os.Bundle
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
 import android.util.Log
+import com.kyuusanq3.mixauto.ui.settings.DeveloperSettings
 import java.util.Locale
 import java.util.concurrent.atomic.AtomicInteger
 
@@ -55,7 +56,14 @@ class NavigationVoiceController(context: Context) {
     private var arrivalUtterancePending = false
     private var arrivalCompletionCallback: (() -> Unit)? = null
 
-    init {
+    private var isShutDown = false
+
+    /**
+     * Binds the TTS engine. Deferred from construction so engine bind/startup does not compete
+     * with cold-start map work; cues before [ttsReady] are skipped, same as a slow engine.
+     */
+    fun initialize() {
+        if (tts != null || isShutDown) return
         tts = TextToSpeech(appContext) { status ->
             if (status == TextToSpeech.SUCCESS) {
                 tts?.language = Locale.getDefault()
@@ -95,6 +103,7 @@ class NavigationVoiceController(context: Context) {
     }
 
     fun onNavigationDrivingStarted(firstStep: NavStepPhrase, trafficPhrase: String? = null) {
+        initialize()
         if (!enabled || !ttsReady) return
         if (navStartSpoken) return
         navStartSpoken = true
@@ -104,9 +113,11 @@ class NavigationVoiceController(context: Context) {
         trafficPhrase?.takeIf { it.isNotBlank() }?.let { phrase ->
             speak(phrase, flush = false)
         }
-        NavTtsPhrases.buildContinuePhrase(firstStep)?.let { phrase ->
-            speak(phrase, flush = false)
-            continueAnnounced = true
+        if (DeveloperSettings.NAV_TTS_CONTINUE_CUES) {
+            NavTtsPhrases.buildContinuePhrase(firstStep)?.let { phrase ->
+                speak(phrase, flush = false)
+                continueAnnounced = true
+            }
         }
     }
 
@@ -184,9 +195,11 @@ class NavigationVoiceController(context: Context) {
         trackedStepIndex = stepIndex
         resetManeuverFlags()
 
-        NavTtsPhrases.buildContinuePhrase(newStep)?.let { phrase ->
-            continueAnnounced = true
-            speak(phrase, flush = false)
+        if (DeveloperSettings.NAV_TTS_CONTINUE_CUES) {
+            NavTtsPhrases.buildContinuePhrase(newStep)?.let { phrase ->
+                continueAnnounced = true
+                speak(phrase, flush = false)
+            }
         }
     }
 
@@ -225,6 +238,7 @@ class NavigationVoiceController(context: Context) {
 
     /** Preview phrase for map settings; ignores [enabled] so volume can be tested while voice nav is off. */
     fun speakPreview(text: String) {
+        initialize()
         if (!ttsReady || text.isBlank()) return
         speak(text, flush = true, force = true)
     }
@@ -239,6 +253,7 @@ class NavigationVoiceController(context: Context) {
     }
 
     fun shutdown() {
+        isShutDown = true
         arrivalUtterancePending = false
         arrivalCompletionCallback = null
         onNavigationEnded()
@@ -269,7 +284,7 @@ class NavigationVoiceController(context: Context) {
         timeToTurnSec <= EARLY_WARNING_SEC
 
     private fun allowedPhasesForSegment(segmentLengthM: Float): Set<ManeuverPhase> {
-        return when {
+        val phases = when {
             segmentLengthM < NavTtsPhrases.SEGMENT_TURN_ONLY_M -> setOf(ManeuverPhase.TURN)
             segmentLengthM < NavTtsPhrases.SEGMENT_SKIP_AHEAD_M ->
                 setOf(ManeuverPhase.PREPARE, ManeuverPhase.TURN)
@@ -277,6 +292,9 @@ class NavigationVoiceController(context: Context) {
                 setOf(ManeuverPhase.AHEAD, ManeuverPhase.PREPARE, ManeuverPhase.TURN)
             else -> setOf(ManeuverPhase.AHEAD, ManeuverPhase.PREPARE, ManeuverPhase.TURN)
         }
+        // Without ahead (short segments), prepare is the only early cue — keep it.
+        val dropPrepare = !DeveloperSettings.NAV_TTS_PREPARE_CUES && ManeuverPhase.AHEAD in phases
+        return if (dropPrepare) phases - ManeuverPhase.PREPARE else phases
     }
 
     /**

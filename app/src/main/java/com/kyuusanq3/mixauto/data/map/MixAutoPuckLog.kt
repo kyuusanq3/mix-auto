@@ -1,10 +1,15 @@
 package com.kyuusanq3.mixauto.data.map
 
 import android.content.ClipData
+import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
+import android.os.Build
+import android.os.Environment
 import android.os.Handler
 import android.os.Looper
+import android.provider.MediaStore
 import android.util.Log
 import android.widget.Toast
 import androidx.core.content.FileProvider
@@ -18,7 +23,8 @@ import org.maplibre.android.location.modes.CameraMode
 
 /**
  * Puck centering vs flicker probe. Also persists a shareable text file.
- * Settings: Launcher Settings → Share Debug Logs.
+ * Share/save also attaches filtered logcat lines about crashes / Android Auto.
+ * Settings: Launcher Settings → Share Debug Logs / Save Debug Logs.
  */
 internal object MixAutoPuckLog {
     const val TAG = "MixAutoPuck"
@@ -37,6 +43,7 @@ internal object MixAutoPuckLog {
         val app = context.applicationContext
         appContext = app
         writer.execute { ensureLogFile(app) }
+        DebugLogcatCapture.start(app)
     }
 
     fun event(name: String, detail: String) {
@@ -55,6 +62,55 @@ internal object MixAutoPuckLog {
         writer.execute {
             val snapshot = writeShareSnapshot(app)
             mainHandler.post { launchShare(context, snapshot) }
+        }
+    }
+
+    fun suggestedFileName(): String {
+        val stamp = SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US).format(Date())
+        return "mix-auto-puck-$stamp.txt"
+    }
+
+    fun save(context: Context, onNeedPicker: (String) -> Unit) {
+        val app = context.applicationContext
+        install(app)
+        writer.execute {
+            val snapshot = writeShareSnapshot(app)
+            if (!snapshot.exists() || snapshot.length() == 0L) {
+                mainHandler.post {
+                    Toast.makeText(context, "No debug logs yet", Toast.LENGTH_SHORT).show()
+                }
+                return@execute
+            }
+            val name = suggestedFileName()
+            val savedToDownloads = saveToPublicDownloads(app, snapshot, name)
+            mainHandler.post {
+                if (savedToDownloads) {
+                    Toast.makeText(
+                        context,
+                        "Saved to Downloads/$name",
+                        Toast.LENGTH_LONG,
+                    ).show()
+                } else {
+                    onNeedPicker(name)
+                }
+            }
+        }
+    }
+
+    fun saveToUri(context: Context, uri: Uri) {
+        val app = context.applicationContext
+        install(app)
+        writer.execute {
+            val snapshot = writeShareSnapshot(app)
+            val ok = runCatching {
+                app.contentResolver.openOutputStream(uri)?.use { out ->
+                    snapshot.inputStream().use { input -> input.copyTo(out) }
+                } != null
+            }.getOrDefault(false)
+            mainHandler.post {
+                val message = if (ok) "Saved debug logs" else "Could not save debug logs"
+                Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
+            }
         }
     }
 
@@ -130,7 +186,50 @@ internal object MixAutoPuckLog {
         ensureLogFile(app)
         val snapshot = File(debugDir(app), SHARE_NAME)
         logFile(app).copyTo(snapshot, overwrite = true)
+        DebugLogcatCapture.appendToSnapshot(app, snapshot)
         return snapshot
+    }
+
+    private fun saveToPublicDownloads(app: Context, snapshot: File, displayName: String): Boolean {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            return saveViaMediaStore(app, snapshot, displayName)
+        }
+        val dir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+        if (!dir.exists() && !dir.mkdirs()) return false
+        return runCatching {
+            snapshot.copyTo(File(dir, displayName), overwrite = true)
+            true
+        }.getOrDefault(false)
+    }
+
+    @androidx.annotation.RequiresApi(Build.VERSION_CODES.Q)
+    private fun saveViaMediaStore(app: Context, snapshot: File, displayName: String): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return false
+        val values = ContentValues().apply {
+            put(MediaStore.MediaColumns.DISPLAY_NAME, displayName)
+            put(MediaStore.MediaColumns.MIME_TYPE, "text/plain")
+            put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS)
+            put(MediaStore.MediaColumns.IS_PENDING, 1)
+        }
+        val resolver = app.contentResolver
+        val collection = MediaStore.Downloads.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+        val uri = runCatching { resolver.insert(collection, values) }.getOrNull() ?: return false
+        return try {
+            val written = resolver.openOutputStream(uri)?.use { out ->
+                snapshot.inputStream().use { input -> input.copyTo(out) }
+            } != null
+            if (!written) {
+                resolver.delete(uri, null, null)
+                return false
+            }
+            values.clear()
+            values.put(MediaStore.MediaColumns.IS_PENDING, 0)
+            resolver.update(uri, values, null, null)
+            true
+        } catch (_: Exception) {
+            runCatching { resolver.delete(uri, null, null) }
+            false
+        }
     }
 
     private fun launchShare(context: Context, snapshot: File) {

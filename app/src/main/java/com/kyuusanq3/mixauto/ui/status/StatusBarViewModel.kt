@@ -13,6 +13,7 @@ import com.kyuusanq3.mixauto.data.weather.OpenMeteoClient
 import com.kyuusanq3.mixauto.data.weather.WeatherSnapshot
 import kotlin.math.abs
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
 
@@ -38,24 +39,33 @@ class StatusBarViewModel(application: Application) : AndroidViewModel(applicatio
 
     private var lastRequestedLat: Double? = null
     private var lastRequestedLng: Double? = null
+    private var lastWeatherRequestMs = 0L
+    private var weatherJob: Job? = null
 
     private var lastTrafficLat: Double? = null
     private var lastTrafficLng: Double? = null
     private var lastTrafficApiKey: String? = null
 
     fun refreshWeather(latitude: Double, longitude: Double) {
-        if (
-            latitude == lastRequestedLat &&
-            longitude == lastRequestedLng &&
-            weatherState.snapshot != null &&
-            weatherState.cityName != null
-        ) {
+        val prevLat = lastRequestedLat
+        val prevLng = lastRequestedLng
+        val now = System.currentTimeMillis()
+        val nearLastRequest = prevLat != null &&
+            prevLng != null &&
+            abs(prevLat - latitude) < WEATHER_COORD_SKIP_DELTA &&
+            abs(prevLng - longitude) < WEATHER_COORD_SKIP_DELTA
+        val inFlight = weatherJob?.isActive == true
+        val minIntervalMs = if (weatherState.snapshot != null) WEATHER_REFRESH_MS else WEATHER_RETRY_MS
+        val recent = now - lastWeatherRequestMs < minIntervalMs
+        if (nearLastRequest && (inFlight || recent)) {
             return
         }
         lastRequestedLat = latitude
         lastRequestedLng = longitude
+        lastWeatherRequestMs = now
         weatherState = weatherState.copy(isLoading = weatherState.snapshot == null)
-        viewModelScope.launch {
+        weatherJob?.cancel()
+        weatherJob = viewModelScope.launch {
             val weatherDeferred = async(Dispatchers.IO) {
                 OpenMeteoClient.fetchCurrentWeather(latitude, longitude)
             }
@@ -104,8 +114,11 @@ class StatusBarViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     fun clearWeather() {
+        weatherJob?.cancel()
+        weatherJob = null
         lastRequestedLat = null
         lastRequestedLng = null
+        lastWeatherRequestMs = 0L
         weatherState = WeatherUiState()
     }
 
@@ -119,5 +132,14 @@ class StatusBarViewModel(application: Application) : AndroidViewModel(applicatio
     companion object {
         /** Skip refetch until the puck moves roughly this far (degrees). */
         private const val TRAFFIC_COORD_SKIP_DELTA = 0.015
+
+        /** Skip weather refetch until the puck moves roughly this far (degrees, ~2 km). */
+        private const val WEATHER_COORD_SKIP_DELTA = 0.02
+
+        /** Refetch weather at the same spot after this long. */
+        private const val WEATHER_REFRESH_MS = 15 * 60 * 1000L
+
+        /** Retry interval at the same spot while no weather snapshot has loaded yet. */
+        private const val WEATHER_RETRY_MS = 60 * 1000L
     }
 }

@@ -11,6 +11,7 @@ import android.os.Bundle
 import android.provider.Settings
 import android.util.Log
 import android.view.KeyEvent
+import android.view.ViewTreeObserver
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
@@ -34,11 +35,14 @@ import androidx.core.content.FileProvider
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.kyuusanq3.mixauto.data.media.MediaSessionRepository
 import com.kyuusanq3.mixauto.data.navigation.NavTtsPhrases
+import com.kyuusanq3.mixauto.data.map.DebugLogcatCapture
 import com.kyuusanq3.mixauto.data.map.MixAutoPuckLog
 import com.kyuusanq3.mixauto.domain.map.CarMapEngine
 import com.kyuusanq3.mixauto.ui.dashboard.ActivePanel
@@ -60,6 +64,8 @@ import com.kyuusanq3.mixauto.ui.settings.MapDataViewModel
 import com.kyuusanq3.mixauto.ui.settings.MapDataViewModelFactory
 import com.kyuusanq3.mixauto.ui.theme.MixAutoTheme
 import java.io.File
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
 
@@ -70,6 +76,7 @@ class MainActivity : ComponentActivity() {
 
     private var showOnboarding by mutableStateOf(false)
     private var pendingOnboardingSteps = emptyList<OnboardingStep>()
+    private var bootAudioJob: Job? = null
 
     private val locationPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions(),
@@ -86,15 +93,21 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         MixAutoPuckLog.install(applicationContext)
+        StartupTrace.mark("MainActivity.onCreate savedState=" + (savedInstanceState != null))
+        markFirstDraw()
         launcherPreferences = LauncherPreferences(this)
         applyLauncherMode(launcherPreferences.isLauncherMode)
-        mapHostViewModel = ViewModelProvider(this)[MapHostViewModel::class.java]
+        mapHostViewModel = StartupTrace.measure("MapHostViewModel") {
+            ViewModelProvider(this)[MapHostViewModel::class.java]
+        }
         val mapEngine: CarMapEngine = mapHostViewModel.mapEngine
         val navigationVoiceController = mapHostViewModel.navigationVoiceController
         mapHostViewModel.handleSharedIntent(intent)
 
         MediaSessionRepository.getInstance(this)
-        launcherViewModel = ViewModelProvider(this)[LauncherViewModel::class.java]
+        launcherViewModel = StartupTrace.measure("LauncherViewModel") {
+            ViewModelProvider(this)[LauncherViewModel::class.java]
+        }
         appUpdateViewModel = ViewModelProvider(this)[AppUpdateViewModel::class.java]
         pendingOnboardingSteps = pendingOnboardingSteps(launcherPreferences.onboardingVersion)
         val shouldShowOnboarding = launcherPreferences.onboardingVersion < CURRENT_ONBOARDING_VERSION &&
@@ -322,12 +335,27 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+        StartupTrace.mark("setContent done")
         if (!shouldShowOnboarding && savedInstanceState == null) {
             appUpdateViewModel.checkForUpdate(autoPrompt = true)
         }
         if (!shouldShowOnboarding) {
             requestLocationPermissionIfNeeded()
         }
+    }
+
+    private fun markFirstDraw() {
+        val decorView = window.decorView
+        decorView.viewTreeObserver.addOnDrawListener(object : ViewTreeObserver.OnDrawListener {
+            private var marked = false
+            override fun onDraw() {
+                if (marked) return
+                marked = true
+                StartupTrace.mark("first draw")
+                // Listeners cannot be removed from inside onDraw.
+                decorView.post { decorView.viewTreeObserver.removeOnDrawListener(this) }
+            }
+        })
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -349,8 +377,14 @@ class MainActivity : ComponentActivity() {
     private fun isDismissibleOverlayPanel(panel: ActivePanel): Boolean =
         panel == ActivePanel.APP_DRAWER || panel == ActivePanel.SETTINGS
 
+    override fun onPause() {
+        MixAutoPuckLog.event("lifecycle", "pause " + DebugLogcatCapture.hostState(this))
+        super.onPause()
+    }
+
     override fun onResume() {
         super.onResume()
+        MixAutoPuckLog.event("lifecycle", "resume " + DebugLogcatCapture.hostState(this))
         if (::launcherPreferences.isInitialized) {
             applySystemBarVisibility(launcherPreferences.showSystemStatusBar)
         }
@@ -360,10 +394,23 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    override fun onStop() {
+        MixAutoPuckLog.event("lifecycle", "stop " + DebugLogcatCapture.hostState(this))
+        super.onStop()
+    }
+
     private fun refreshMediaSessionsAndBootAudio() {
         val repository = MediaSessionRepository.getInstance(this)
         repository.refreshSessions()
-        if (::launcherViewModel.isInitialized) {
+        if (!::launcherViewModel.isInitialized) return
+        if (bootAudioJob?.isActive == true) return
+        // Waking the default player can foreground it and bounce back to Mix Auto, which
+        // pauses/resumes the MapView — wait until style load + first GPS snap are done.
+        bootAudioJob = lifecycleScope.launch {
+            StartupTrace.awaitMapSettled(BOOT_AUDIO_MAX_WAIT_MS)
+            // User left while waiting: retry on the next onResume instead of pulling them back.
+            if (!lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) return@launch
+            StartupTrace.mark("boot audio wake")
             repository.ensureDefaultPlayerIfNeeded(
                 launcherViewModel.defaultAudioPackage.takeIf { it.isNotBlank() },
                 launcherViewModel.audioFallbackResumeLink.takeIf { it.isNotBlank() },
@@ -468,6 +515,7 @@ class MainActivity : ComponentActivity() {
 
     companion object {
         private const val LAUNCHER_ALIAS_REGISTER_DELAY_MS = 200L
+        private const val BOOT_AUDIO_MAX_WAIT_MS = 10_000L
     }
 
     private fun launchApkInstall(apkFile: File) {

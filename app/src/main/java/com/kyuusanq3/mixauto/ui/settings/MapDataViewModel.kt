@@ -86,9 +86,11 @@ class MapDataViewModel(
             launcherPreferences.allowMapDownloadOnMobileData,
         )
 
+    private var catalogRequested = false
+
     init {
-        loadCatalog()
-        refreshOfflineRegions()
+        // Catalog fetch + region re-list run on first Map Data open (ensurePanelDataLoaded),
+        // not at boot; OfflineMapRepository.init already lists regions once.
         viewModelScope.launch {
             offlineMapRepository.installStates.collect { states ->
                 val failed = states.values.firstOrNull {
@@ -131,7 +133,22 @@ class MapDataViewModel(
         }
     }
 
+    /** Idempotent: first call fetches the country catalog; later calls only refresh region states. */
+    fun ensurePanelDataLoaded() {
+        refreshOfflineRegions()
+        if (catalogRequested) return
+        catalogRequested = true
+        if (isTransferInProgress()) {
+            viewModelScope.launch {
+                withContext(Dispatchers.IO) { fetchCatalog() }.onSuccess { catalogPacks = it }
+            }
+        } else {
+            loadCatalog()
+        }
+    }
+
     fun loadCatalog() {
+        catalogRequested = true
         viewModelScope.launch {
             _uiState.value = MapDataUiState.LoadingCatalog
             val result = withContext(Dispatchers.IO) { fetchCatalog() }

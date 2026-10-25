@@ -5,6 +5,7 @@ import android.content.Intent
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.kyuusanq3.mixauto.StartupTrace
 import com.kyuusanq3.mixauto.data.map.GoogleMapsShareParser
 import com.kyuusanq3.mixauto.data.map.MapLibreEngineImpl
 import com.kyuusanq3.mixauto.data.map.OfflineMapRepository
@@ -30,11 +31,17 @@ import kotlinx.coroutines.withContext
  */
 class MapHostViewModel(application: Application) : AndroidViewModel(application) {
 
-    val localPlacesRepository = LocalPlacesRepository(application)
+    val localPlacesRepository = StartupTrace.measure("LocalPlacesRepository") {
+        LocalPlacesRepository(application)
+    }
 
-    val encounteredPlacesRepository = EncounteredPlacesRepository(application)
+    val encounteredPlacesRepository = StartupTrace.measure("EncounteredPlacesRepository") {
+        EncounteredPlacesRepository(application)
+    }
 
-    val offlineMapRepository = OfflineMapRepository(application)
+    val offlineMapRepository = StartupTrace.measure("OfflineMapRepository") {
+        OfflineMapRepository(application)
+    }
 
     val navigationVoiceController: NavigationVoiceController
 
@@ -53,23 +60,37 @@ class MapHostViewModel(application: Application) : AndroidViewModel(application)
             volume = prefs.navigationVoiceVolume
             boostEnabled = prefs.navigationVoiceBoost
         }
-        mapEngine = MapLibreEngineImpl(
-            localPlaces = localPlacesRepository,
-            encounteredPlaces = encounteredPlacesRepository,
-            navigationVoice = navigationVoiceController,
-            offlineMapRepository = offlineMapRepository,
-            initialUseVectorTiles = prefs.useVectorTiles,
-            initialShow3dBuildings = prefs.show3dBuildings,
-            initialDrivingZoom = prefs.drivingZoom.toDouble(),
-            initialDrivingTilt = prefs.drivingTilt.toDouble(),
-            initialPuckHOffset = prefs.puckHorizontalOffset,
-            initialPuckVOffset = prefs.puckVerticalOffset,
-            initialPuckScale = prefs.puckScale,
-            initialRememberEncounteredPlaces = prefs.rememberEncounteredPlaces,
-        ).also { engine ->
-            engine.setTrafficEnabled(prefs.showTraffic, prefs.tomTomApiKey)
+        mapEngine = StartupTrace.measure("MapLibreEngineImpl") {
+            MapLibreEngineImpl(
+                localPlaces = localPlacesRepository,
+                encounteredPlaces = encounteredPlacesRepository,
+                navigationVoice = navigationVoiceController,
+                offlineMapRepository = offlineMapRepository,
+                initialUseVectorTiles = prefs.useVectorTiles,
+                initialShow3dBuildings = prefs.show3dBuildings,
+                initialDrivingZoom = prefs.drivingZoom.toDouble(),
+                initialDrivingTilt = prefs.drivingTilt.toDouble(),
+                initialPuckHOffset = prefs.puckHorizontalOffset,
+                initialPuckVOffset = prefs.puckVerticalOffset,
+                initialPuckScale = prefs.puckScale,
+                initialRememberEncounteredPlaces = prefs.rememberEncounteredPlaces,
+            ).also { engine ->
+                engine.setTrafficEnabled(prefs.showTraffic, prefs.tomTomApiKey)
+            }
         }
-        OfflineMapDownloadService.resumeIfNeeded(getApplication())
+        viewModelScope.launch {
+            StartupTrace.awaitMapSettled(DEFERRED_BOOT_WORK_MAX_WAIT_MS)
+            StartupTrace.measure("NavigationVoiceController.initialize") {
+                navigationVoiceController.initialize()
+            }
+            val pendingResume = runCatching { offlineMapRepository.findPendingResumeRegion() }
+                .onFailure { e -> Log.w(TAG, "Offline resume check failed", e) }
+                .getOrNull()
+            StartupTrace.mark("offline resume check pending=" + (pendingResume?.regionId ?: "none"))
+            if (pendingResume != null) {
+                OfflineMapDownloadService.resumeIfNeeded(getApplication())
+            }
+        }
     }
 
     /** Called from onCreate (cold start) and onNewIntent (already running, singleTask). */
@@ -203,5 +224,8 @@ class MapHostViewModel(application: Application) : AndroidViewModel(application)
     companion object {
         private const val TAG = "MixAutoShare"
         private const val SHARE_ERROR_MESSAGE = "Couldn't read that shared location"
+
+        /** Upper bound on how long TTS init / offline resume wait for the map to settle. */
+        private const val DEFERRED_BOOT_WORK_MAX_WAIT_MS = 10_000L
     }
 }

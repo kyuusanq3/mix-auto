@@ -1,5 +1,7 @@
 package com.kyuusanq3.mixauto.ui.settings
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -15,6 +17,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import android.widget.Toast
 import com.kyuusanq3.mixauto.data.map.MixAutoPuckLog
 import com.kyuusanq3.mixauto.ui.components.AppUpdateSection
 import com.kyuusanq3.mixauto.ui.components.PanelHeaderRow
@@ -155,6 +158,13 @@ internal fun SettingsContent(
             )
 
             val context = LocalContext.current
+            val saveLogsLauncher = rememberLauncherForActivityResult(
+                ActivityResultContracts.CreateDocument("text/plain"),
+            ) { uri ->
+                if (uri != null) {
+                    MixAutoPuckLog.saveToUri(context, uri)
+                }
+            }
             Column(
                 modifier = Modifier.fillMaxWidth(),
                 verticalArrangement = Arrangement.spacedBy(4.dp),
@@ -164,7 +174,7 @@ internal fun SettingsContent(
                     style = MaterialTheme.typography.bodyLarge,
                 )
                 CarLabelText(
-                    text = "Puck and camera probe from this drive. Share after you see the bug.",
+                    text = "Puck/camera probe plus crash and Android Auto process-death lines. Share or save after the bug.",
                     style = MaterialTheme.typography.labelMedium,
                 )
                 Button(
@@ -174,6 +184,25 @@ internal fun SettingsContent(
                         .height(CarDimensions.MinTapTarget),
                 ) {
                     CarBodyText(text = "Share Debug Logs")
+                }
+                Button(
+                    onClick = {
+                        MixAutoPuckLog.save(context) { name ->
+                            val launched = runCatching { saveLogsLauncher.launch(name) }.isSuccess
+                            if (!launched) {
+                                Toast.makeText(
+                                    context,
+                                    "Could not save debug logs",
+                                    Toast.LENGTH_SHORT,
+                                ).show()
+                            }
+                        }
+                    },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(CarDimensions.MinTapTarget),
+                ) {
+                    CarBodyText(text = "Save Debug Logs")
                 }
             }
         }
