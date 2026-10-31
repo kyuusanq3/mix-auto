@@ -338,7 +338,6 @@ internal class PoiQueryCoordinator(
 
     private companion object {
         private val VECTOR_POI_LAYER_IDS = arrayOf("poi_r1", "poi_r7", "poi_r20", "poi_transit")
-        private const val MIN_POI_ZOOM = 13.0
         private const val MAX_POI_PINS = 100
         private const val POI_CACHE_SEARCH_LIMIT = 15
         private const val NEARBY_SEARCH_BBOX_DELTA = 0.5

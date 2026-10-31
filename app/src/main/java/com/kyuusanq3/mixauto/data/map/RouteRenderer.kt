@@ -209,7 +209,7 @@ internal class RouteRenderer(
             PropertyFactory.lineWidth(ROUTE_WIDTH),
             PropertyFactory.lineCap(Property.LINE_CAP_ROUND),
             PropertyFactory.lineJoin(Property.LINE_JOIN_ROUND),
-            PropertyFactory.lineOpacity(0.9f),
+            PropertyFactory.lineOpacity(1f),
         )
         val anchor = resolveAnchorLayerId(style)
         if (anchor != null) {

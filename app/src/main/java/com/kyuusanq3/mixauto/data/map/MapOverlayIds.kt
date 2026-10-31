@@ -26,7 +26,7 @@ internal const val SAVED_PLACES_LAYER_ID = "mix-saved-layer"
 internal const val EMPTY_POI_GEOJSON = """{"type":"FeatureCollection","features":[]}"""
 internal const val EMPTY_CUSTOM_PIN_GEOJSON = """{"type":"FeatureCollection","features":[]}"""
 
-internal const val MIN_POI_ZOOM = 13.0
+internal const val MIN_POI_ZOOM = 12.0
 internal const val MAX_POI_PINS = 100
 internal const val POI_DEBOUNCE_MS = 400L
 internal const val BBOX_PADDING_FACTOR = 1.5

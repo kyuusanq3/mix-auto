@@ -254,9 +254,10 @@ internal class PoiOverlayRenderer(
             }
             return
         }
+        // Phase 3: no mixPoiOverlayActive term — an empty/seeding mix cache must not let native
+        // poi_r1/r7/r20 pop in at z15/16/17. Native stays for low zoom, top-down, POI preview.
         val showLiberty = when {
             zoom < minPoiZoom -> true
-            !mixPoiOverlayActive -> true
             isInTopDownView || hasSelectedPoi -> true
             else -> false
         }
