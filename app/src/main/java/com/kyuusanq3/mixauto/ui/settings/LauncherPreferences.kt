@@ -311,6 +311,53 @@ class LauncherPreferences(context: Context) {
             prefs.edit().putLong(KEY_REMINDER_CHECKLIST_LAST_SHOWN_DAY, value).apply()
         }
 
+    /**
+     * Shows a Mix Auto glance card (time, weather, traffic, now-playing) as a system overlay
+     * when the configured navigation app is launched from the shortcut dock. Requires
+     * SYSTEM_ALERT_WINDOW; the overlay is only started when the user grants that permission.
+     */
+    var floatingWindowEnabled: Boolean
+        get() = prefs.getBoolean(KEY_FLOATING_WINDOW_ENABLED, false)
+        set(value) {
+            prefs.edit().putBoolean(KEY_FLOATING_WINDOW_ENABLED, value).apply()
+        }
+
+    /** Package launched from the dock that should raise the Mix Auto glance card. */
+    var floatingWindowNavPackage: String
+        get() = prefs.getString(KEY_FLOATING_WINDOW_NAV_PACKAGE, DEFAULT_FLOATING_WINDOW_NAV_PACKAGE)
+            ?.ifBlank { DEFAULT_FLOATING_WINDOW_NAV_PACKAGE }
+            ?: DEFAULT_FLOATING_WINDOW_NAV_PACKAGE
+        set(value) {
+            prefs.edit()
+                .putString(
+                    KEY_FLOATING_WINDOW_NAV_PACKAGE,
+                    value.ifBlank { DEFAULT_FLOATING_WINDOW_NAV_PACKAGE },
+                )
+                .apply()
+        }
+
+    /** Horizontal overlay position, 0 (left) to 100 (right), stored in 10% steps. */
+    var floatingWindowHorizontalPercent: Int
+        get() = quantizeFloatingWindowPercent(
+            prefs.getInt(KEY_FLOATING_WINDOW_H_PERCENT, DEFAULT_FLOATING_WINDOW_H_PERCENT),
+        )
+        set(value) {
+            prefs.edit()
+                .putInt(KEY_FLOATING_WINDOW_H_PERCENT, quantizeFloatingWindowPercent(value))
+                .apply()
+        }
+
+    /** Vertical overlay position, 0 (top) to 100 (bottom), stored in 10% steps. */
+    var floatingWindowVerticalPercent: Int
+        get() = quantizeFloatingWindowPercent(
+            prefs.getInt(KEY_FLOATING_WINDOW_V_PERCENT, DEFAULT_FLOATING_WINDOW_V_PERCENT),
+        )
+        set(value) {
+            prefs.edit()
+                .putInt(KEY_FLOATING_WINDOW_V_PERCENT, quantizeFloatingWindowPercent(value))
+                .apply()
+        }
+
     companion object {
         private const val PREFS_NAME = "launcher_prefs"
         private const val KEY_LEFT_HAND_DRIVE = "lhd"
@@ -355,6 +402,13 @@ class LauncherPreferences(context: Context) {
         private const val KEY_REMINDER_CHECKLIST_CONFIRM_BUTTON_MODE = "reminder_checklist_confirm_button_mode"
         private const val KEY_REMINDER_CHECKLIST_LARGE_CARD_STYLE = "reminder_checklist_large_card_style"
         private const val KEY_REMINDER_CHECKLIST_LAST_SHOWN_DAY = "reminder_checklist_last_shown_day"
+        private const val KEY_FLOATING_WINDOW_ENABLED = "floating_window_enabled"
+        private const val KEY_FLOATING_WINDOW_NAV_PACKAGE = "floating_window_nav_package"
+        private const val KEY_FLOATING_WINDOW_H_PERCENT = "floating_window_h_percent"
+        private const val KEY_FLOATING_WINDOW_V_PERCENT = "floating_window_v_percent"
+        const val DEFAULT_FLOATING_WINDOW_NAV_PACKAGE = "com.google.android.apps.maps"
+        const val DEFAULT_FLOATING_WINDOW_H_PERCENT = 100
+        const val DEFAULT_FLOATING_WINDOW_V_PERCENT = 0
         const val MAX_REMINDER_CHECKLIST_ITEMS = 20
         const val DEFAULT_ALBUM_ART_MODE = "PLAIN"
         const val MAX_RECENT_DESTINATIONS = 10
@@ -371,6 +425,9 @@ class LauncherPreferences(context: Context) {
         const val MIN_NAVIGATION_VOICE_VOLUME = 0.5f
         const val MAX_NAVIGATION_VOICE_VOLUME = 1.0f
         const val DEFAULT_NAVIGATION_VOICE_VOLUME = 1.0f
+
+        fun quantizeFloatingWindowPercent(raw: Int): Int =
+            ((raw.coerceIn(0, 100) + 5) / 10) * 10
 
         private fun placeToJson(place: SearchResultPlace): JSONObject =
             JSONObject().apply {

@@ -45,10 +45,12 @@ import com.kyuusanq3.mixauto.data.navigation.NavTtsPhrases
 import com.kyuusanq3.mixauto.data.map.DebugLogcatCapture
 import com.kyuusanq3.mixauto.data.map.MixAutoPuckLog
 import com.kyuusanq3.mixauto.domain.map.CarMapEngine
+import com.kyuusanq3.mixauto.service.FloatingWindowService
 import com.kyuusanq3.mixauto.ui.dashboard.ActivePanel
 import com.kyuusanq3.mixauto.ui.dashboard.DashboardScreen
 import com.kyuusanq3.mixauto.ui.dashboard.dismissToBasePanel
 import com.kyuusanq3.mixauto.ui.firstparty.FirstPartyAppId
+import com.kyuusanq3.mixauto.ui.firstparty.FloatingWindowScreen
 import com.kyuusanq3.mixauto.ui.firstparty.ReminderChecklistPopup
 import com.kyuusanq3.mixauto.ui.firstparty.ReminderChecklistScreen
 import com.kyuusanq3.mixauto.ui.map.MapHostViewModel
@@ -323,6 +325,21 @@ class MainActivity : ComponentActivity() {
                                     modifier = Modifier.fillMaxSize(),
                                 )
                             }
+                            FirstPartyAppId.FLOATING_WINDOW -> {
+                                FloatingWindowScreen(
+                                    enabled = launcherViewModel.floatingWindowEnabled,
+                                    navPackage = launcherViewModel.floatingWindowNavPackage,
+                                    horizontalPercent = launcherViewModel.floatingWindowHorizontalPercent,
+                                    verticalPercent = launcherViewModel.floatingWindowVerticalPercent,
+                                    launchableApps = launcherViewModel.launchableApps,
+                                    onSetEnabled = launcherViewModel::updateFloatingWindowEnabled,
+                                    onNavPackageChange = launcherViewModel::updateFloatingWindowNavPackage,
+                                    onHorizontalPercentChange = launcherViewModel::updateFloatingWindowHorizontalPercent,
+                                    onVerticalPercentChange = launcherViewModel::updateFloatingWindowVerticalPercent,
+                                    onDismiss = launcherViewModel::closeFirstPartyApp,
+                                    modifier = Modifier.fillMaxSize(),
+                                )
+                            }
                         }
                     }
 
@@ -388,6 +405,8 @@ class MainActivity : ComponentActivity() {
         if (::launcherPreferences.isInitialized) {
             applySystemBarVisibility(launcherPreferences.showSystemStatusBar)
         }
+        // User came back to Mix Auto -- the glance card has done its job (if it was up).
+        FloatingWindowService.stop(this)
         refreshMediaSessionsAndBootAudio()
         if (::mapHostViewModel.isInitialized && hasLocationPermission()) {
             mapHostViewModel.mapEngine.retryLocationActivation()

@@ -1,0 +1,110 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/mix_auto_floating_root"
+    android:layout_width="wrap_content"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:background="@drawable/floating_window_bg"
+    android:paddingHorizontal="14dp"
+    android:paddingVertical="10dp"
+    android:minWidth="180dp">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical">
+
+        <TextView
+            android:id="@+id/mix_auto_floating_time"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:textColor="#00E5FF"
+            android:textStyle="bold"
+            android:textSize="20sp"
+            android:fontFamily="sans-serif-medium"
+            android:includeFontPadding="false"
+            tools:ignore="HardcodedText"
+            xmlns:tools="http://schemas.android.com/tools"
+            android:text="--:--" />
+
+        <TextView
+            android:id="@+id/mix_auto_floating_weather"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:layout_marginStart="10dp"
+            android:textColor="#FFFFFFFF"
+            android:textSize="14sp"
+            android:gravity="end"
+            android:maxLines="1"
+            android:ellipsize="end"
+            android:includeFontPadding="false"
+            tools:ignore="HardcodedText"
+            xmlns:tools="http://schemas.android.com/tools"
+            android:text="" />
+    </LinearLayout>
+
+    <TextView
+        android:id="@+id/mix_auto_floating_traffic"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="4dp"
+        android:textColor="#FFCFCFCF"
+        android:textSize="12sp"
+        android:maxLines="1"
+        android:ellipsize="end"
+        android:includeFontPadding="false"
+        android:visibility="gone"
+        tools:ignore="HardcodedText"
+        xmlns:tools="http://schemas.android.com/tools"
+        android:text="" />
+
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="1dp"
+        android:layout_marginVertical="8dp"
+        android:background="#30FFFFFF" />
+
+    <TextView
+        android:id="@+id/mix_auto_floating_track_title"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:textColor="#FFFFFFFF"
+        android:textSize="14sp"
+        android:textStyle="bold"
+        android:maxLines="1"
+        android:ellipsize="end"
+        android:includeFontPadding="false"
+        tools:ignore="HardcodedText"
+        xmlns:tools="http://schemas.android.com/tools"
+        android:text="Nothing playing" />
+
+    <TextView
+        android:id="@+id/mix_auto_floating_track_artist"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:textColor="#B3FFFFFF"
+        android:textSize="12sp"
+        android:maxLines="1"
+        android:ellipsize="end"
+        android:includeFontPadding="false"
+        android:visibility="gone"
+        tools:ignore="HardcodedText"
+        xmlns:tools="http://schemas.android.com/tools"
+        android:text="" />
+
+    <TextView
+        android:id="@+id/mix_auto_floating_hint"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="6dp"
+        android:textColor="#8000E5FF"
+        android:textSize="10sp"
+        android:gravity="end"
+        android:includeFontPadding="false"
+        tools:ignore="HardcodedText"
+        xmlns:tools="http://schemas.android.com/tools"
+        android:text="Tap to return to Mix Auto" />
+
+</LinearLayout>

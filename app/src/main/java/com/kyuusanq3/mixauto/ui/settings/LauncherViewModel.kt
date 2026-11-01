@@ -110,6 +110,41 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     var musicPaneEnabled by mutableStateOf(preferences.musicPaneEnabled)
         private set
 
+    var floatingWindowEnabled by mutableStateOf(preferences.floatingWindowEnabled)
+        private set
+
+    var floatingWindowNavPackage by mutableStateOf(preferences.floatingWindowNavPackage)
+        private set
+
+    var floatingWindowHorizontalPercent by mutableStateOf(preferences.floatingWindowHorizontalPercent)
+        private set
+
+    var floatingWindowVerticalPercent by mutableStateOf(preferences.floatingWindowVerticalPercent)
+        private set
+
+    fun updateFloatingWindowEnabled(enabled: Boolean) {
+        floatingWindowEnabled = enabled
+        preferences.floatingWindowEnabled = enabled
+    }
+
+    fun updateFloatingWindowNavPackage(packageName: String) {
+        val resolved = packageName.ifBlank { LauncherPreferences.DEFAULT_FLOATING_WINDOW_NAV_PACKAGE }
+        floatingWindowNavPackage = resolved
+        preferences.floatingWindowNavPackage = resolved
+    }
+
+    fun updateFloatingWindowHorizontalPercent(percent: Int) {
+        val stepped = LauncherPreferences.quantizeFloatingWindowPercent(percent)
+        floatingWindowHorizontalPercent = stepped
+        preferences.floatingWindowHorizontalPercent = stepped
+    }
+
+    fun updateFloatingWindowVerticalPercent(percent: Int) {
+        val stepped = LauncherPreferences.quantizeFloatingWindowPercent(percent)
+        floatingWindowVerticalPercent = stepped
+        preferences.floatingWindowVerticalPercent = stepped
+    }
+
     var isAudioPlayerMinimized by mutableStateOf(false)
         internal set
 

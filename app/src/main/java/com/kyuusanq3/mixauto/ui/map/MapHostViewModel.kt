@@ -6,6 +6,7 @@ import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.kyuusanq3.mixauto.StartupTrace
+import com.kyuusanq3.mixauto.data.floatingwindow.FloatingWindowState
 import com.kyuusanq3.mixauto.data.map.GoogleMapsShareParser
 import com.kyuusanq3.mixauto.data.map.MapLibreEngineImpl
 import com.kyuusanq3.mixauto.data.map.OfflineMapRepository
@@ -89,6 +90,12 @@ class MapHostViewModel(application: Application) : AndroidViewModel(application)
             StartupTrace.mark("offline resume check pending=" + (pendingResume?.regionId ?: "none"))
             if (pendingResume != null) {
                 OfflineMapDownloadService.resumeIfNeeded(getApplication())
+            }
+        }
+        // Keep the floating-window service's view of GPS in sync with the live engine state.
+        viewModelScope.launch {
+            mapEngine.uiState.collect { state ->
+                FloatingWindowState.update(state.currentLat, state.currentLng)
             }
         }
     }

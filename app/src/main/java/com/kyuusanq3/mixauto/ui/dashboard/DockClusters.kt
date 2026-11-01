@@ -30,9 +30,11 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.dp
+import com.kyuusanq3.mixauto.service.FloatingWindowService
 import com.kyuusanq3.mixauto.ui.components.AppContextDropdownMenu
 import com.kyuusanq3.mixauto.ui.components.launchAppByPackage
 import com.kyuusanq3.mixauto.ui.components.rememberAppIcon
+import com.kyuusanq3.mixauto.ui.settings.LauncherPreferences
 import com.kyuusanq3.mixauto.ui.theme.CarDimensions
 import com.kyuusanq3.mixauto.ui.theme.ElectricCyan
 
@@ -114,6 +116,8 @@ internal fun CenterDockCluster(
     iconSize: Dp,
     itemSpacing: Dp,
     isLeftHandDrive: Boolean,
+    floatingWindowEnabled: Boolean,
+    floatingWindowNavPackage: String,
     onToggleDockPin: (String) -> Unit,
 ) {
     if (isHorizontal) {
@@ -131,6 +135,8 @@ internal fun CenterDockCluster(
                         iconSize = iconSize,
                         isPinnedToDock = true,
                         canAddToDock = true,
+                        floatingWindowEnabled = floatingWindowEnabled,
+                        floatingWindowNavPackage = floatingWindowNavPackage,
                         onToggleDockPin = { onToggleDockPin(packageName) },
                     )
                 }
@@ -151,6 +157,8 @@ internal fun CenterDockCluster(
                         iconSize = iconSize,
                         isPinnedToDock = true,
                         canAddToDock = true,
+                        floatingWindowEnabled = floatingWindowEnabled,
+                        floatingWindowNavPackage = floatingWindowNavPackage,
                         onToggleDockPin = { onToggleDockPin(packageName) },
                     )
                 }
@@ -169,6 +177,8 @@ private fun PinnedDockAppItem(
     iconSize: Dp,
     isPinnedToDock: Boolean,
     canAddToDock: Boolean,
+    floatingWindowEnabled: Boolean,
+    floatingWindowNavPackage: String,
     onToggleDockPin: () -> Unit,
 ) {
     val context = LocalContext.current
@@ -194,7 +204,18 @@ private fun PinnedDockAppItem(
             modifier = Modifier
                 .size(tapTarget)
                 .combinedClickable(
-                    onClick = { launchAppByPackage(context, packageName) },
+                    onClick = {
+                        launchAppByPackage(context, packageName)
+                        val triggerPackage = floatingWindowNavPackage.ifBlank {
+                            LauncherPreferences.DEFAULT_FLOATING_WINDOW_NAV_PACKAGE
+                        }
+                        if (floatingWindowEnabled &&
+                            packageName == triggerPackage &&
+                            FloatingWindowService.canShowOverlay(context)
+                        ) {
+                            FloatingWindowService.start(context)
+                        }
+                    },
                     onLongClick = { showMenu = true },
                 ),
             contentAlignment = Alignment.Center,

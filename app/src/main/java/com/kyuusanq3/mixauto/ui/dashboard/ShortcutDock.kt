@@ -87,6 +87,8 @@ fun ShortcutDock(
     mediaState: MediaPlaybackState,
     voiceSearchAvailable: Boolean = true,
     dockPinnedPackages: List<String> = emptyList(),
+    floatingWindowEnabled: Boolean = false,
+    floatingWindowNavPackage: String = "",
     onToggleDockPin: (String) -> Unit = {},
     onTogglePanel: (ActivePanel) -> Unit,
     onVoiceSearch: () -> Unit = {},
@@ -140,6 +142,8 @@ fun ShortcutDock(
                         iconSize = iconSize,
                         itemSpacing = itemSpacing,
                         isLeftHandDrive = isLeftHandDrive,
+                        floatingWindowEnabled = floatingWindowEnabled,
+                        floatingWindowNavPackage = floatingWindowNavPackage,
                         onToggleDockPin = onToggleDockPin,
                     )
                     if (isLeftHandDrive) {
@@ -240,6 +244,8 @@ fun ShortcutDock(
                             iconSize = iconSize,
                             itemSpacing = itemSpacing,
                             isLeftHandDrive = isLeftHandDrive,
+                            floatingWindowEnabled = floatingWindowEnabled,
+                            floatingWindowNavPackage = floatingWindowNavPackage,
                             onToggleDockPin = onToggleDockPin,
                         )
                     }
