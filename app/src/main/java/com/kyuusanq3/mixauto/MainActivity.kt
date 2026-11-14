@@ -49,6 +49,7 @@ import com.kyuusanq3.mixauto.service.FloatingWindowService
 import com.kyuusanq3.mixauto.ui.dashboard.ActivePanel
 import com.kyuusanq3.mixauto.ui.dashboard.DashboardScreen
 import com.kyuusanq3.mixauto.ui.dashboard.dismissToBasePanel
+import com.kyuusanq3.mixauto.ui.firstparty.AndroidAutoScreen
 import com.kyuusanq3.mixauto.ui.firstparty.FirstPartyAppId
 import com.kyuusanq3.mixauto.ui.firstparty.FloatingWindowScreen
 import com.kyuusanq3.mixauto.ui.firstparty.ReminderChecklistPopup
@@ -321,6 +322,12 @@ class MainActivity : ComponentActivity() {
                                     onUpdateItem = launcherViewModel::updateReminderChecklistItem,
                                     onAddItem = launcherViewModel::addReminderChecklistItem,
                                     onRemoveItem = launcherViewModel::removeReminderChecklistItem,
+                                    onDismiss = launcherViewModel::closeFirstPartyApp,
+                                    modifier = Modifier.fillMaxSize(),
+                                )
+                            }
+                            FirstPartyAppId.ANDROID_AUTO -> {
+                                AndroidAutoScreen(
                                     onDismiss = launcherViewModel::closeFirstPartyApp,
                                     modifier = Modifier.fillMaxSize(),
                                 )
