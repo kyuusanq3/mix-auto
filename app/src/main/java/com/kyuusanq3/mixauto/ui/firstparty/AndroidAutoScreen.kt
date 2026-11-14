@@ -1,11 +1,7 @@
 package com.kyuusanq3.mixauto.ui.firstparty
 
-import android.content.ActivityNotFoundException
-import android.content.ComponentName
 import android.content.Context
-import android.content.Intent
 import android.content.pm.PackageManager
-import android.widget.Toast
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -16,9 +12,15 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import com.kyuusanq3.mixauto.data.androidauto.AndroidAutoSelfSession
+import com.kyuusanq3.mixauto.data.androidauto.InstalledAndroidAuto
 import com.kyuusanq3.mixauto.ui.components.PanelHeaderRow
 import com.kyuusanq3.mixauto.ui.theme.CarBodyText
 import com.kyuusanq3.mixauto.ui.theme.CarDimensions
@@ -26,19 +28,6 @@ import com.kyuusanq3.mixauto.ui.theme.ElectricCyan
 import com.kyuusanq3.mixauto.ui.theme.OledBlack
 
 private const val GEARHEAD_PACKAGE = "com.google.android.projection.gearhead"
-private const val SETTINGS_ACTIVITY =
-    "com.google.android.projection.gearhead.companion.settings.DefaultSettingsActivity"
-private const val WIRELESS_STARTUP_ACTIVITY =
-    "com.google.android.apps.auto.wireless.setup.service.impl.WirelessStartupActivity"
-private const val START_WIRELESS_PROJECTION =
-    "com.google.android.projection.gearhead.START_WIRELESS_PROJECTION"
-private const val LOCAL_HOST = "127.0.0.1"
-private const val DIRECT_PROJECTION_PORT = 5288
-
-internal data class InstalledAndroidAuto(
-    val versionName: String,
-    val usesHeadUnitServer: Boolean,
-)
 
 internal fun installedAndroidAuto(context: Context): InstalledAndroidAuto? {
     val versionName = readGearheadVersionName(context) ?: return null
@@ -59,48 +48,6 @@ internal fun androidAutoUsesHeadUnitServer(versionName: String): Boolean {
     return major > 17 || (major == 17 && minor >= 4)
 }
 
-internal fun startInstalledAndroidAuto(context: Context): String {
-    val installed = installedAndroidAuto(context)
-        ?: return "Android Auto is not installed"
-    return if (installed.usesHeadUnitServer) {
-        openAndroidAutoSettings(context, installed.versionName)
-    } else {
-        startAndroidAutoDirectly(context, installed.versionName)
-    }
-}
-
-private fun startAndroidAutoDirectly(context: Context, versionName: String): String {
-    val intent = Intent(START_WIRELESS_PROJECTION).apply {
-        component = ComponentName(GEARHEAD_PACKAGE, WIRELESS_STARTUP_ACTIVITY)
-        putExtra("PARAM_HOST_ADDRESS", LOCAL_HOST)
-        putExtra("PARAM_SERVICE_PORT", DIRECT_PROJECTION_PORT)
-        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-    }
-    return try {
-        context.startActivity(intent)
-        "Started Android Auto $versionName directly"
-    } catch (_: ActivityNotFoundException) {
-        openAndroidAutoSettings(context, versionName)
-    } catch (_: SecurityException) {
-        openAndroidAutoSettings(context, versionName)
-    }
-}
-
-private fun openAndroidAutoSettings(context: Context, versionName: String): String {
-    val intent = Intent().apply {
-        component = ComponentName(GEARHEAD_PACKAGE, SETTINGS_ACTIVITY)
-        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-    }
-    return try {
-        context.startActivity(intent)
-        "Opened Android Auto $versionName. Tap Version ten times, then Start head unit server."
-    } catch (_: ActivityNotFoundException) {
-        "Android Auto is installed, but its screen could not be opened"
-    } catch (_: SecurityException) {
-        "Android Auto is installed, but its screen could not be opened"
-    }
-}
-
 private fun readGearheadVersionName(context: Context): String? {
     return try {
         @Suppress("DEPRECATION")
@@ -117,17 +64,30 @@ fun AndroidAutoScreen(
 ) {
     val context = LocalContext.current
     val installed = remember { installedAndroidAuto(context) }
-    val status = when {
+    var sessionStatus by remember { mutableStateOf("") }
+    var sessionRunning by remember { mutableStateOf(false) }
+    val session = remember {
+        AndroidAutoSelfSession(
+            context = context,
+            onStatus = { sessionStatus = it },
+            onRunning = { sessionRunning = it },
+        )
+    }
+    DisposableEffect(session) {
+        onDispose { session.stop() }
+    }
+    val idleStatus = when {
         installed == null -> "Android Auto is not installed on this unit."
         installed.usesHeadUnitServer ->
-            "Android Auto ${installed.versionName} is installed. This version connects through the head unit server."
+            "Android Auto ${installed.versionName} is installed. Turn on Start head unit server, then start self mode. Mix Auto connects on this device."
         else ->
-            "Android Auto ${installed.versionName} is installed. This version starts directly and does not use the head unit server."
+            "Android Auto ${installed.versionName} is installed. Self mode waits for it on this device."
     }
+    val status = sessionStatus.ifEmpty { idleStatus }
     val buttonLabel = when {
         installed == null -> "Android Auto is not installed"
-        installed.usesHeadUnitServer -> "Open Android Auto"
-        else -> "Start Android Auto"
+        sessionRunning -> "Stop self mode"
+        else -> "Start self mode"
     }
 
     Surface(
@@ -149,15 +109,12 @@ fun AndroidAutoScreen(
             CarBodyText(
                 text = status,
                 modifier = Modifier.padding(vertical = CarDimensions.PaneGap),
-                maxLines = 6,
+                maxLines = 8,
             )
             Button(
                 onClick = {
-                    Toast.makeText(
-                        context,
-                        startInstalledAndroidAuto(context),
-                        Toast.LENGTH_LONG,
-                    ).show()
+                    val current = installed ?: return@Button
+                    if (sessionRunning) session.stop() else session.start(current)
                 },
                 enabled = installed != null,
                 modifier = Modifier
