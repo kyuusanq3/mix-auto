@@ -105,6 +105,6 @@
         android:includeFontPadding="false"
         tools:ignore="HardcodedText"
         xmlns:tools="http://schemas.android.com/tools"
-        android:text="Tap to return to Mix Auto" />
+        android:text="@string/floating_return_hint" />
 
 </LinearLayout>

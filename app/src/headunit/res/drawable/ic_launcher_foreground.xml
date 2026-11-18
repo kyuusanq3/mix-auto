@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Same pin as Mix Auto, amber instead of cyan so the two icons read apart. -->
+    <path
+        android:fillColor="#FFB300"
+        android:pathData="M54,21 A24,24 0 1,1 53.99,21 Z" />
+    <path
+        android:fillColor="#FFB300"
+        android:pathData="M38,45 L70,45 L54,92 Z" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M54,36 A6,6 0 1,1 53.99,36 Z" />
+</vector>

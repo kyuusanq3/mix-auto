@@ -24,7 +24,9 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import com.kyuusanq3.mixauto.R
 import com.kyuusanq3.mixauto.ui.settings.AppUpdateState
 import com.kyuusanq3.mixauto.ui.theme.CarBodyText
 import com.kyuusanq3.mixauto.ui.theme.CarDimensions
@@ -82,7 +84,7 @@ fun AppUpdatePrompts(
         if (showDownloadBanner) {
             val version = (uiState as AppUpdateState.Available).versionName
             AppUpdateTopBanner(
-                message = "Mix Auto v$version is available",
+                message = stringResource(R.string.app_name) + " v$version is available",
                 primaryLabel = "Download",
                 onPrimary = onDownloadUpdate,
                 onLater = onDismissDownloadOffer,

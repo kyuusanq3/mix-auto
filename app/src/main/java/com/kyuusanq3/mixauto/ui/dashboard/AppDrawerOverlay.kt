@@ -39,6 +39,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
+import com.kyuusanq3.mixauto.R
 import com.kyuusanq3.mixauto.BuildConfig
 import com.kyuusanq3.mixauto.data.apps.LaunchableAppEntry
 import com.kyuusanq3.mixauto.ui.components.AppContextDropdownMenu
@@ -181,7 +183,7 @@ fun AppDrawerOverlay(
                         if (filteredFirstPartyApps.isNotEmpty()) {
                             item(span = { GridItemSpan(maxLineSpan) }) {
                                 CarLabelText(
-                                    text = "Mix Auto",
+                                    text = stringResource(R.string.app_name),
                                     modifier = Modifier.padding(
                                         top = CarDimensions.PaneGap / 2,
                                         bottom = CarDimensions.PaneGap / 2,

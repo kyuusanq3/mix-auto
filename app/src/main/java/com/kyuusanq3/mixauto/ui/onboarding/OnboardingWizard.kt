@@ -43,6 +43,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
+import com.kyuusanq3.mixauto.R
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
@@ -271,8 +273,11 @@ private fun StepContent(
             style = MaterialTheme.typography.headlineMedium,
             modifier = Modifier.padding(bottom = CarDimensions.PaneGap),
         )
+        val appName = stringResource(R.string.app_name)
+        val locationBody = stringResource(R.string.onboarding_location_body, appName)
+        val body = if (step.id == OnboardingStepId.LOCATION) locationBody else step.body
         CarBodyText(
-            text = step.body,
+            text = body,
             style = MaterialTheme.typography.bodyLarge,
             maxLines = 5,
             modifier = Modifier.padding(horizontal = CarDimensions.PaneGap),

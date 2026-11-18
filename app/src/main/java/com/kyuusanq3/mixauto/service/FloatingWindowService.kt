@@ -128,7 +128,7 @@ class FloatingWindowService : Service() {
         }
         val pendingIntent = PendingIntent.getActivity(this, 0, tapIntent, pendingFlags)
         val notification: Notification = NotificationCompat.Builder(this, channelId)
-            .setContentTitle("Mix Auto glance")
+            .setContentTitle(getString(R.string.app_name) + " glance")
             .setContentText("Showing a floating card while another app is in front")
             .setSmallIcon(R.mipmap.ic_launcher)
             .setOngoing(true)
@@ -144,10 +144,10 @@ class FloatingWindowService : Service() {
             if (manager.getNotificationChannel(CHANNEL_ID) == null) {
                 val channel = NotificationChannel(
                     CHANNEL_ID,
-                    "Mix Auto floating window",
+                    getString(R.string.app_name) + " floating window",
                     NotificationManager.IMPORTANCE_LOW,
                 ).apply {
-                    description = "Keeps the Mix Auto glance card visible over other apps."
+                    description = "Keeps the " + getString(R.string.app_name) + " glance card visible over other apps."
                     setShowBadge(false)
                 }
                 manager.createNotificationChannel(channel)

@@ -19,6 +19,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
+import com.kyuusanq3.mixauto.R
 import com.kyuusanq3.mixauto.data.androidauto.AndroidAutoSelfSession
 import com.kyuusanq3.mixauto.data.androidauto.InstalledAndroidAuto
 import com.kyuusanq3.mixauto.ui.components.PanelHeaderRow
@@ -63,6 +65,7 @@ fun AndroidAutoScreen(
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
+    val appName = stringResource(R.string.app_name)
     val installed = remember { installedAndroidAuto(context) }
     var sessionStatus by remember { mutableStateOf("") }
     var sessionRunning by remember { mutableStateOf(false) }
@@ -79,7 +82,7 @@ fun AndroidAutoScreen(
     val idleStatus = when {
         installed == null -> "Android Auto is not installed on this unit."
         installed.usesHeadUnitServer ->
-            "Android Auto ${installed.versionName} is installed. Turn on Start head unit server, then start self mode. Mix Auto connects on this device."
+            "Android Auto ${installed.versionName} is installed. Turn on Start head unit server, then start self mode. $appName connects on this device."
         else ->
             "Android Auto ${installed.versionName} is installed. Self mode waits for it on this device."
     }

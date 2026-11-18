@@ -59,8 +59,9 @@ android {
         }
         create("headunit") {
             dimension = "target"
-            // Same applicationId as standard — this is a separate signer, not a separate app;
-            // installing it requires uninstalling the standard build first (and vice versa).
+            // Own package so this APK installs beside standard Mix Auto. Display name and
+            // launcher icon come from src/headunit/res (Max Auto, amber pin).
+            applicationId = "com.kyuusanq3.maxauto"
             versionNameSuffix = "-headunit"
             buildConfigField("boolean", "HEADUNIT_SYSTEM", "true")
         }
@@ -93,23 +94,41 @@ android {
     }
 }
 
-// Force the headunit flavor (debug and release) onto the platform-signed config so
-// android:sharedUserId="android.uid.system" in src/headunit/AndroidManifest.xml actually
-// resolves to uid 1000 on a matching device/emulator. AGP 8 exposes ApplicationVariant
-// .signingConfig as a read-only val; setSigningConfig still exists on the implementation.
+// Headunit APKs must be signed with the platform key so android:sharedUserId="android.uid.system"
+// resolves to uid 1000. AGP 8.6 does not expose a settable variant signingConfig (the reflective
+// setSigningConfig hook never matches), so re-sign the assembled headunit APK in place with
+// apksigner from the newest build-tools. Only runs when headunit-signing.properties exists.
 afterEvaluate {
     if (!hasHeadunitSigning) return@afterEvaluate
-    val platform = android.signingConfigs.getByName("headunitPlatform")
-    android.applicationVariants.configureEach {
-        if (flavorName != "headunit") return@configureEach
-        val setter = javaClass.methods.firstOrNull { method ->
-            method.name == "setSigningConfig" && method.parameterCount == 1
-        }
-        if (setter != null) {
-            setter.invoke(this, platform)
-            logger.lifecycle("headunit signing: $name -> headunitPlatform")
-        } else {
-            logger.warn("headunit signing: setSigningConfig missing on $name — sign with apksigner")
+    tasks.matching { it.name == "assembleHeadunitDebug" || it.name == "assembleHeadunitRelease" }.configureEach {
+        doLast {
+            val buildToolsDir = File(android.sdkDirectory, "build-tools").listFiles()
+                ?.filter { it.isDirectory }
+                ?.maxByOrNull { it.name }
+                ?: throw GradleException("headunit signing: no build-tools under ${android.sdkDirectory}")
+            val isWindows = System.getProperty("os.name").startsWith("Windows")
+            val apksigner = File(buildToolsDir, if (isWindows) "apksigner.bat" else "apksigner")
+            val buildType = name.removePrefix("assembleHeadunit").lowercase()
+            val apkDir = layout.buildDirectory.dir("outputs/apk/headunit/$buildType").get().asFile
+            val apks = apkDir.listFiles { f -> f.name.endsWith(".apk") }.orEmpty()
+            if (apks.isEmpty()) throw GradleException("headunit signing: no APK in $apkDir")
+            val storeFile = headunitSigningProps.getProperty("storeFile")
+            val storePass = headunitSigningProps.getProperty("storePassword")
+            val keyAlias = headunitSigningProps.getProperty("keyAlias")
+            val keyPass = headunitSigningProps.getProperty("keyPassword")
+            apks.forEach { apk ->
+                val proc = ProcessBuilder(
+                    apksigner.absolutePath, "sign",
+                    "--ks", storeFile,
+                    "--ks-key-alias", keyAlias,
+                    "--ks-pass", "pass:$storePass",
+                    "--key-pass", "pass:$keyPass",
+                    apk.absolutePath,
+                ).redirectErrorStream(true).start()
+                val output = proc.inputStream.bufferedReader().readText()
+                if (proc.waitFor() != 0) throw GradleException("headunit signing failed for ${apk.name}:\n$output")
+                logger.lifecycle("headunit signing: ${apk.name} -> platform key")
+            }
         }
     }
 }

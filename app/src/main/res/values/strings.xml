@@ -1,3 +1,5 @@
 <resources>
     <string name="app_name">Mix Auto</string>
+    <string name="floating_return_hint">Tap to return to Mix Auto</string>
+    <string name="onboarding_location_body">%1$s uses your location for the map puck, turn-by-turn navigation, and nearby destination search.</string>
 </resources>

@@ -7,6 +7,8 @@ import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
+import com.kyuusanq3.mixauto.R
 import com.kyuusanq3.mixauto.ui.components.PanelHeaderRow
 import com.kyuusanq3.mixauto.ui.components.SettingsSwitchRow
 import com.kyuusanq3.mixauto.ui.theme.CarBodyText
@@ -42,15 +44,16 @@ fun MapSourceScreen(
                 closeContentDescription = "Close Map Source",
             )
 
+            val appName = stringResource(R.string.app_name)
             SettingsSwitchRow(
-                label = "Use Google Maps instead of Mix Auto Maps",
+                label = "Use Google Maps instead of $appName Maps",
                 checked = useEmbeddedGoogleMaps,
                 onCheckedChange = onSetUseEmbeddedGoogleMaps,
             )
 
             CarBodyText(
-                text = "Shows Google Maps embedded in the map pane instead of Mix Auto's " +
-                    "built-in map. Requires Google Maps to be installed. Mix Auto search, " +
+                text = "Shows Google Maps embedded in the map pane instead of $appName's " +
+                    "built-in map. Requires Google Maps to be installed. $appName search, " +
                     "routing, and map settings are unavailable while this is on.",
                 modifier = Modifier.padding(top = CarDimensions.PaneGap),
                 maxLines = 6,
