@@ -91,8 +91,13 @@ class AppUpdateViewModel(application: Application) : AndroidViewModel(applicatio
         viewModelScope.launch {
             _uiState.value = AppUpdateState.Downloading(progress = 0f)
             var lastReportedPercent = -1
+            val apkUrl = availableUpdate?.apkUrl
+            if (apkUrl.isNullOrEmpty()) {
+                _uiState.value = AppUpdateState.Error("Download failed")
+                return@launch
+            }
             val result = withContext(Dispatchers.IO) {
-                repository.downloadApk { progress ->
+                repository.downloadApk(apkUrl) { progress ->
                     val percent = (progress * 100).roundToInt()
                     if (progress < 1f && percent == lastReportedPercent) return@downloadApk
                     lastReportedPercent = percent

@@ -56,6 +56,8 @@ android {
         create("standard") {
             dimension = "target"
             buildConfigField("boolean", "HEADUNIT_SYSTEM", "false")
+            buildConfigField("String", "UPDATE_TAG_PREFIX", "\"\"")
+            buildConfigField("String", "UPDATE_ASSET_NAME", "\"mix-auto.apk\"")
         }
         create("headunit") {
             dimension = "target"
@@ -64,6 +66,10 @@ android {
             applicationId = "com.kyuusanq3.maxauto"
             versionNameSuffix = "-headunit"
             buildConfigField("boolean", "HEADUNIT_SYSTEM", "true")
+            // Own GitHub release line. releases/latest stays Mix Auto; Max Auto lists
+            // tags max-auto-v* and downloads max-auto.apk from the newest match.
+            buildConfigField("String", "UPDATE_TAG_PREFIX", "\"max-auto-v\"")
+            buildConfigField("String", "UPDATE_ASSET_NAME", "\"max-auto.apk\"")
         }
     }
 
