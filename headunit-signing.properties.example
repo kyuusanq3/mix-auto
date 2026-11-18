@@ -1,0 +1,16 @@
+# Copy to headunit-signing.properties at the repo root (gitignored) and fill in paths.
+# Convert the public AOSP platform test key into a JKS/PKCS12 first, e.g.:
+#
+#   keytool-importkeypair -k headunit-platform.jks -p android -pk8 platform.pk8 \
+#     -cert platform.x509.pem -alias platform
+#
+# Or with OpenSSL + keytool. The resulting cert SHA-256 must match the S10A platform
+# cert: c8a2e9bccf597c2fb6dc66bee293fc13f2fc47ec77bc6b2b0d52c11f51192ab8
+#
+# Without this file, assembleHeadunit* still builds but signs with the standard
+# release keystore — that APK will not install as android.uid.system.
+
+storeFile=C:/path/to/headunit-platform.jks
+storePassword=android
+keyAlias=platform
+keyPassword=android

@@ -18,6 +18,8 @@ internal data class DashboardMapPaneProps(
     val reduceTopInsetBelowStatusStrip: Boolean,
     val nightModeEnabled: Boolean = false,
     val nightModeAuto: Boolean = false,
+    /** Headunit Map Source switch — when true (and HEADUNIT_SYSTEM), show EmbeddedMapFrame. */
+    val useEmbeddedGoogleMaps: Boolean = false,
 )
 
 internal data class DashboardSecondaryPaneProps(
@@ -53,6 +55,7 @@ internal data class DashboardSecondaryPaneProps(
     val showTraffic: Boolean,
     val nightModeEnabled: Boolean,
     val nightModeAuto: Boolean,
+    val useEmbeddedGoogleMaps: Boolean = false,
     val navigationVoiceEnabled: Boolean,
     val navigationVoiceVolume: Float,
     val tomTomApiKey: String,
@@ -105,6 +108,7 @@ internal data class DashboardDockProps(
     val dockPinnedPackages: List<String>,
     val floatingWindowEnabled: Boolean,
     val floatingWindowNavPackage: String,
+    val useEmbeddedGoogleMaps: Boolean = false,
     val onToggleDockPin: (String) -> Unit,
     val onTogglePanel: (ActivePanel) -> Unit,
     val onVoiceSearch: () -> Unit,

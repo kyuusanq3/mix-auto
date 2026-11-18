@@ -30,6 +30,9 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.dp
+import com.kyuusanq3.mixauto.BuildConfig
+import com.kyuusanq3.mixauto.data.map.EmbeddedMapDisplay
+import com.kyuusanq3.mixauto.data.map.EmbeddedMapHost
 import com.kyuusanq3.mixauto.service.FloatingWindowService
 import com.kyuusanq3.mixauto.ui.components.AppContextDropdownMenu
 import com.kyuusanq3.mixauto.ui.components.launchAppByPackage
@@ -118,6 +121,7 @@ internal fun CenterDockCluster(
     isLeftHandDrive: Boolean,
     floatingWindowEnabled: Boolean,
     floatingWindowNavPackage: String,
+    useEmbeddedGoogleMaps: Boolean = false,
     onToggleDockPin: (String) -> Unit,
 ) {
     if (isHorizontal) {
@@ -137,6 +141,7 @@ internal fun CenterDockCluster(
                         canAddToDock = true,
                         floatingWindowEnabled = floatingWindowEnabled,
                         floatingWindowNavPackage = floatingWindowNavPackage,
+                        useEmbeddedGoogleMaps = useEmbeddedGoogleMaps,
                         onToggleDockPin = { onToggleDockPin(packageName) },
                     )
                 }
@@ -159,6 +164,7 @@ internal fun CenterDockCluster(
                         canAddToDock = true,
                         floatingWindowEnabled = floatingWindowEnabled,
                         floatingWindowNavPackage = floatingWindowNavPackage,
+                        useEmbeddedGoogleMaps = useEmbeddedGoogleMaps,
                         onToggleDockPin = { onToggleDockPin(packageName) },
                     )
                 }
@@ -179,6 +185,7 @@ private fun PinnedDockAppItem(
     canAddToDock: Boolean,
     floatingWindowEnabled: Boolean,
     floatingWindowNavPackage: String,
+    useEmbeddedGoogleMaps: Boolean = false,
     onToggleDockPin: () -> Unit,
 ) {
     val context = LocalContext.current
@@ -205,6 +212,16 @@ private fun PinnedDockAppItem(
                 .size(tapTarget)
                 .combinedClickable(
                     onClick = {
+                        val embedTarget = EmbeddedMapDisplay.resolveTargetPackage()
+                        val embedActive =
+                            BuildConfig.HEADUNIT_SYSTEM &&
+                                useEmbeddedGoogleMaps &&
+                                packageName == embedTarget
+                        if (embedActive && EmbeddedMapHost.relaunchTarget()) {
+                            // Keep Maps on the map-pane virtual display; do not raise
+                            // Floating Window over an already-embedded Maps session.
+                            return@combinedClickable
+                        }
                         launchAppByPackage(context, packageName)
                         val triggerPackage = floatingWindowNavPackage.ifBlank {
                             LauncherPreferences.DEFAULT_FLOATING_WINDOW_NAV_PACKAGE

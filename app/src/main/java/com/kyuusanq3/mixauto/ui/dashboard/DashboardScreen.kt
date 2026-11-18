@@ -181,6 +181,7 @@ fun DashboardScreen(
             reduceTopInsetBelowStatusStrip = reduceTopInsetBelowStatusStrip,
             nightModeEnabled = nightModeEnabled,
             nightModeAuto = nightModeAuto,
+            useEmbeddedGoogleMaps = launcherViewModel.useEmbeddedGoogleMaps,
         ),
         secondaryPane = DashboardSecondaryPaneProps(
             activePanel = activePanel,
@@ -215,6 +216,7 @@ fun DashboardScreen(
             showTraffic = showTraffic,
             nightModeEnabled = nightModeEnabled,
             nightModeAuto = nightModeAuto,
+            useEmbeddedGoogleMaps = launcherViewModel.useEmbeddedGoogleMaps,
             navigationVoiceEnabled = navigationVoiceEnabled,
             navigationVoiceVolume = navigationVoiceVolume,
             tomTomApiKey = tomTomApiKey,
@@ -266,6 +268,7 @@ fun DashboardScreen(
             dockPinnedPackages = dockPinnedPackages,
             floatingWindowEnabled = launcherViewModel.floatingWindowEnabled,
             floatingWindowNavPackage = launcherViewModel.floatingWindowNavPackage,
+            useEmbeddedGoogleMaps = launcherViewModel.useEmbeddedGoogleMaps,
             onToggleDockPin = onToggleDockPin,
             onTogglePanel = panel.onTogglePanel,
             onVoiceSearch = panel.onVoiceSearch,

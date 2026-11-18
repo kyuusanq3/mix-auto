@@ -44,6 +44,7 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     val showTraffic: Boolean get() = mapPrefs.showTraffic
     val nightModeEnabled: Boolean get() = mapPrefs.nightModeEnabled
     val nightModeAuto: Boolean get() = mapPrefs.nightModeAuto
+    val useEmbeddedGoogleMaps: Boolean get() = mapPrefs.useEmbeddedGoogleMaps
     val navigationVoiceEnabled: Boolean get() = mapPrefs.navigationVoiceEnabled
     val navigationVoiceVolume: Float get() = mapPrefs.navigationVoiceVolume
     val navigationVoiceBoost: Boolean get() = mapPrefs.navigationVoiceBoost
@@ -342,6 +343,9 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     fun toggleNightMode() = mapPrefs.toggleNightMode()
 
     fun toggleNightModeAuto() = mapPrefs.toggleNightModeAuto()
+
+    fun updateUseEmbeddedGoogleMaps(enabled: Boolean) =
+        mapPrefs.updateUseEmbeddedGoogleMaps(enabled)
 
     fun toggleNavigationVoice() = mapPrefs.toggleNavigationVoice()
 

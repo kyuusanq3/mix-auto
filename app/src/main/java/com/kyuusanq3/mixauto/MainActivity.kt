@@ -52,6 +52,7 @@ import com.kyuusanq3.mixauto.ui.dashboard.dismissToBasePanel
 import com.kyuusanq3.mixauto.ui.firstparty.AndroidAutoScreen
 import com.kyuusanq3.mixauto.ui.firstparty.FirstPartyAppId
 import com.kyuusanq3.mixauto.ui.firstparty.FloatingWindowScreen
+import com.kyuusanq3.mixauto.ui.firstparty.MapSourceScreen
 import com.kyuusanq3.mixauto.ui.firstparty.ReminderChecklistPopup
 import com.kyuusanq3.mixauto.ui.firstparty.ReminderChecklistScreen
 import com.kyuusanq3.mixauto.ui.map.MapHostViewModel
@@ -343,6 +344,15 @@ class MainActivity : ComponentActivity() {
                                     onNavPackageChange = launcherViewModel::updateFloatingWindowNavPackage,
                                     onHorizontalPercentChange = launcherViewModel::updateFloatingWindowHorizontalPercent,
                                     onVerticalPercentChange = launcherViewModel::updateFloatingWindowVerticalPercent,
+                                    onDismiss = launcherViewModel::closeFirstPartyApp,
+                                    modifier = Modifier.fillMaxSize(),
+                                )
+                            }
+                            FirstPartyAppId.MAP_SOURCE -> {
+                                MapSourceScreen(
+                                    useEmbeddedGoogleMaps = launcherViewModel.useEmbeddedGoogleMaps,
+                                    onSetUseEmbeddedGoogleMaps =
+                                        launcherViewModel::updateUseEmbeddedGoogleMaps,
                                     onDismiss = launcherViewModel::closeFirstPartyApp,
                                     modifier = Modifier.fillMaxSize(),
                                 )

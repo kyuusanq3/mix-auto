@@ -21,4 +21,6 @@ dependencyResolutionManagement {
 
 rootProject.name = "My Application"
 include(":app")
+include(":embed-probe")
+project(":embed-probe").projectDir = file("tools/embed-probe")
  

@@ -18,12 +18,14 @@ if (-not $env:JAVA_HOME) {
 }
 $env:Path = "$env:JAVA_HOME\bin;$env:Path"
 
-& "$repoRoot\gradlew.bat" assembleDebug
+# Product flavors: standard (default sideload) + headunit (platform-signed). Verify the
+# standard debug APK; headunit is assembled separately when headunit-signing.properties exists.
+& "$repoRoot\gradlew.bat" assembleStandardDebug
 $exitCode = $LASTEXITCODE
 
 if ($exitCode -eq 0 -and $UnitTestCompile) {
     Write-Host "verify-debug: compiling unit tests (-UnitTestCompile)"
-    & "$repoRoot\gradlew.bat" :app:compileDebugUnitTestKotlin
+    & "$repoRoot\gradlew.bat" :app:compileStandardDebugUnitTestKotlin
     $exitCode = $LASTEXITCODE
 }
 

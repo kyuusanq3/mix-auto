@@ -1,8 +1,24 @@
+import java.io.FileInputStream
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.detekt)
 }
+
+// Headunit flavor signing: AOSP platform test key, converted to a keystore outside the repo
+// (never check in platform.pk8 / platform.x509.pem or the converted keystore). See
+// docs/headunit-s10a-qcm6125.md and .cursor/rules for why this is required for the
+// android:sharedUserId="android.uid.system" embed path. Absent file = build falls back to
+// the standard release signing config (harmless; just won't run as uid 1000 on device).
+val headunitSigningPropsFile = rootProject.file("headunit-signing.properties")
+val headunitSigningProps = Properties().apply {
+    if (headunitSigningPropsFile.exists()) {
+        FileInputStream(headunitSigningPropsFile).use { load(it) }
+    }
+}
+val hasHeadunitSigning = headunitSigningPropsFile.exists()
 
 android {
     namespace = "com.kyuusanq3.mixauto"
@@ -25,6 +41,29 @@ android {
             keyAlias = "mixauto"
             keyPassword = "mixauto123"
         }
+        if (hasHeadunitSigning) {
+            create("headunitPlatform") {
+                storeFile = file(headunitSigningProps.getProperty("storeFile"))
+                storePassword = headunitSigningProps.getProperty("storePassword")
+                keyAlias = headunitSigningProps.getProperty("keyAlias")
+                keyPassword = headunitSigningProps.getProperty("keyPassword")
+            }
+        }
+    }
+
+    flavorDimensions += "target"
+    productFlavors {
+        create("standard") {
+            dimension = "target"
+            buildConfigField("boolean", "HEADUNIT_SYSTEM", "false")
+        }
+        create("headunit") {
+            dimension = "target"
+            // Same applicationId as standard — this is a separate signer, not a separate app;
+            // installing it requires uninstalling the standard build first (and vice versa).
+            versionNameSuffix = "-headunit"
+            buildConfigField("boolean", "HEADUNIT_SYSTEM", "true")
+        }
     }
 
     buildTypes {
@@ -37,6 +76,7 @@ android {
             signingConfig = signingConfigs.getByName("release")
         }
     }
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_1_8
         targetCompatibility = JavaVersion.VERSION_1_8
@@ -50,6 +90,27 @@ android {
     }
     composeOptions {
         kotlinCompilerExtensionVersion = libs.versions.composeCompiler.get()
+    }
+}
+
+// Force the headunit flavor (debug and release) onto the platform-signed config so
+// android:sharedUserId="android.uid.system" in src/headunit/AndroidManifest.xml actually
+// resolves to uid 1000 on a matching device/emulator. AGP 8 exposes ApplicationVariant
+// .signingConfig as a read-only val; setSigningConfig still exists on the implementation.
+afterEvaluate {
+    if (!hasHeadunitSigning) return@afterEvaluate
+    val platform = android.signingConfigs.getByName("headunitPlatform")
+    android.applicationVariants.configureEach {
+        if (flavorName != "headunit") return@configureEach
+        val setter = javaClass.methods.firstOrNull { method ->
+            method.name == "setSigningConfig" && method.parameterCount == 1
+        }
+        if (setter != null) {
+            setter.invoke(this, platform)
+            logger.lifecycle("headunit signing: $name -> headunitPlatform")
+        } else {
+            logger.warn("headunit signing: setSigningConfig missing on $name — sign with apksigner")
+        }
     }
 }
 

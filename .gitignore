@@ -27,6 +27,11 @@ render.experimental.xml
 *.jks
 *.keystore
 
+# Headunit flavor platform signing (AOSP test key material / converted keystore config)
+*.pk8
+*.pem
+headunit-signing.properties
+
 # Google Services (e.g. APIs or Firebase)
 google-services.json
 

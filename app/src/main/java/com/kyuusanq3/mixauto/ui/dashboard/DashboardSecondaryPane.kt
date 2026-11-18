@@ -9,6 +9,8 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.kyuusanq3.mixauto.BuildConfig
+import com.kyuusanq3.mixauto.data.map.EmbeddedMapHost
 import com.kyuusanq3.mixauto.domain.map.CarMapEngine
 import com.kyuusanq3.mixauto.domain.map.SearchResultPlace
 import com.kyuusanq3.mixauto.domain.media.MediaPlaybackState
@@ -71,6 +73,7 @@ internal fun DashboardSecondaryPane(
     showTraffic: Boolean,
     nightModeEnabled: Boolean,
     nightModeAuto: Boolean,
+    useEmbeddedGoogleMaps: Boolean = false,
     navigationVoiceEnabled: Boolean,
     navigationVoiceVolume: Float,
     tomTomApiKey: String,
@@ -148,6 +151,7 @@ internal fun DashboardSecondaryPane(
         showTraffic = showTraffic,
         nightModeEnabled = nightModeEnabled,
         nightModeAuto = nightModeAuto,
+        useEmbeddedGoogleMaps = useEmbeddedGoogleMaps,
         navigationVoiceEnabled = navigationVoiceEnabled,
         navigationVoiceVolume = navigationVoiceVolume,
         tomTomApiKey = tomTomApiKey,
@@ -228,6 +232,7 @@ private fun MediaOrSettingsPane(
     showTraffic: Boolean,
     nightModeEnabled: Boolean,
     nightModeAuto: Boolean,
+    useEmbeddedGoogleMaps: Boolean = false,
     navigationVoiceEnabled: Boolean,
     navigationVoiceVolume: Float,
     tomTomApiKey: String,
@@ -320,7 +325,13 @@ private fun MediaOrSettingsPane(
                             if (savedPlaces.any { saved -> isSavedPlaceMatch(saved, poi) }) {
                                 onUpdateSavedPlace(namedPoi)
                             }
-                            mapEngine.navigateToCoordinates(poi.latitude, poi.longitude)
+                            val embedActive =
+                                BuildConfig.HEADUNIT_SYSTEM && useEmbeddedGoogleMaps
+                            if (embedActive) {
+                                EmbeddedMapHost.navigateTo(poi.latitude, poi.longitude)
+                            } else {
+                                mapEngine.navigateToCoordinates(poi.latitude, poi.longitude)
+                            }
                         },
                         onSelectNearby = { mapEngine.focusOnPoi(it) },
                         onDismiss = onDismissSelectedPoi,

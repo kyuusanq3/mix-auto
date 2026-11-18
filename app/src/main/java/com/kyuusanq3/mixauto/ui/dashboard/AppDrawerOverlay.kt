@@ -39,6 +39,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import com.kyuusanq3.mixauto.BuildConfig
 import com.kyuusanq3.mixauto.data.apps.LaunchableAppEntry
 import com.kyuusanq3.mixauto.ui.components.AppContextDropdownMenu
 import com.kyuusanq3.mixauto.ui.components.PanelHeaderIconButton
@@ -80,11 +81,21 @@ fun AppDrawerOverlay(
         }
     }
 
-    val filteredFirstPartyApps = remember(query) {
-        if (query.length < 1) {
+    // Map Source (Mix Auto vs embedded Google Maps) only applies to the headunit-signed flavor —
+    // on standard builds there is no second map engine to switch to.
+    val availableFirstPartyApps = remember {
+        if (BuildConfig.HEADUNIT_SYSTEM) {
             FIRST_PARTY_APPS
         } else {
-            FIRST_PARTY_APPS.filter { app ->
+            FIRST_PARTY_APPS.filter { it.id != FirstPartyAppId.MAP_SOURCE }
+        }
+    }
+
+    val filteredFirstPartyApps = remember(query, availableFirstPartyApps) {
+        if (query.length < 1) {
+            availableFirstPartyApps
+        } else {
+            availableFirstPartyApps.filter { app ->
                 app.label.contains(query, ignoreCase = true)
             }
         }

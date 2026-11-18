@@ -14,7 +14,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.zIndex
+import com.kyuusanq3.mixauto.BuildConfig
 import com.kyuusanq3.mixauto.ui.components.CarMapViewContainer
+import com.kyuusanq3.mixauto.ui.components.EmbeddedMapFrame
 import com.kyuusanq3.mixauto.ui.components.MapMediaDividerHandle
 import com.kyuusanq3.mixauto.ui.settings.LauncherPreferences
 import com.kyuusanq3.mixauto.ui.theme.CarDimensions
@@ -58,6 +60,7 @@ internal fun DashboardSecondaryPaneSlot(
         showTraffic = props.showTraffic,
         nightModeEnabled = props.nightModeEnabled,
         nightModeAuto = props.nightModeAuto,
+        useEmbeddedGoogleMaps = props.useEmbeddedGoogleMaps,
         navigationVoiceEnabled = props.navigationVoiceEnabled,
         navigationVoiceVolume = props.navigationVoiceVolume,
         tomTomApiKey = props.tomTomApiKey,
@@ -136,6 +139,7 @@ private fun DashboardHorizontalDock(
         dockPinnedPackages = dock.dockPinnedPackages,
         floatingWindowEnabled = dock.floatingWindowEnabled,
         floatingWindowNavPackage = dock.floatingWindowNavPackage,
+        useEmbeddedGoogleMaps = dock.useEmbeddedGoogleMaps,
         onToggleDockPin = dock.onToggleDockPin,
         onTogglePanel = dock.onTogglePanel,
         onVoiceSearch = dock.onVoiceSearch,
@@ -159,6 +163,7 @@ private fun DashboardVerticalDock(
         dockPinnedPackages = dock.dockPinnedPackages,
         floatingWindowEnabled = dock.floatingWindowEnabled,
         floatingWindowNavPackage = dock.floatingWindowNavPackage,
+        useEmbeddedGoogleMaps = dock.useEmbeddedGoogleMaps,
         onToggleDockPin = dock.onToggleDockPin,
         onTogglePanel = dock.onTogglePanel,
         onVoiceSearch = dock.onVoiceSearch,
@@ -171,17 +176,29 @@ private fun DashboardMapView(
     map: DashboardMapPaneProps,
     modifier: Modifier,
 ) {
-    CarMapViewContainer(
-        engine = map.mapEngine,
-        onToggleSearch = map.onToggleSearch,
-        isDestinationPanelOpen = map.isDestinationPanelOpen,
-        onToggleMapSettings = map.onToggleMapSettings,
-        isMapSettingsPanelOpen = map.isMapSettingsPanelOpen,
-        nightModeEnabled = map.nightModeEnabled,
-        nightModeAuto = map.nightModeAuto,
-        reduceTopInset = map.reduceTopInsetBelowStatusStrip,
-        modifier = modifier,
-    )
+    val showEmbedded =
+        BuildConfig.HEADUNIT_SYSTEM && map.useEmbeddedGoogleMaps
+    if (showEmbedded) {
+        EmbeddedMapFrame(
+            engine = map.mapEngine,
+            nightModeEnabled = map.nightModeEnabled,
+            nightModeAuto = map.nightModeAuto,
+            reduceTopInset = map.reduceTopInsetBelowStatusStrip,
+            modifier = modifier,
+        )
+    } else {
+        CarMapViewContainer(
+            engine = map.mapEngine,
+            onToggleSearch = map.onToggleSearch,
+            isDestinationPanelOpen = map.isDestinationPanelOpen,
+            onToggleMapSettings = map.onToggleMapSettings,
+            isMapSettingsPanelOpen = map.isMapSettingsPanelOpen,
+            nightModeEnabled = map.nightModeEnabled,
+            nightModeAuto = map.nightModeAuto,
+            reduceTopInset = map.reduceTopInsetBelowStatusStrip,
+            modifier = modifier,
+        )
+    }
 }
 
 @Composable

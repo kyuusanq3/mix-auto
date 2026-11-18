@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Headunit flavor manifest overlay. Merged on top of src/main/AndroidManifest.xml only for the
+  `headunit` product flavor. Requires the APK to be signed with the target unit's platform
+  certificate (see headunit-signing.properties / docs/headunit-s10a-qcm6125.md) — without a
+  matching signer, android:sharedUserId is rejected at install time (INSTALL_FAILED_
+  SHARED_USER_INCOMPATIBLE) rather than silently ignored.
+
+  android:sharedUserId="android.uid.system" + a platform-matching signature is what lets this
+  build run as uid 1000 (same precedent as com.miniaa.launcher on the S10A unit) and reach the
+  signature / signature|privileged permissions below needed to embed Google Maps on a second,
+  trusted virtual display inside the map pane. It does not reach privileged-only permissions —
+  those require a priv-app install plus an allowlist, which is an image change.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    android:sharedUserId="android.uid.system">
+
+    <uses-permission android:name="android.permission.ADD_TRUSTED_DISPLAY" />
+    <uses-permission android:name="android.permission.INJECT_EVENTS" />
+    <uses-permission android:name="android.permission.INTERNAL_SYSTEM_WINDOW" />
+    <uses-permission android:name="android.permission.ACTIVITY_EMBEDDING" />
+    <uses-permission android:name="android.permission.MANAGE_ACTIVITY_TASKS" />
+
+    <queries>
+        <package android:name="com.google.android.apps.maps" />
+    </queries>
+
+</manifest>

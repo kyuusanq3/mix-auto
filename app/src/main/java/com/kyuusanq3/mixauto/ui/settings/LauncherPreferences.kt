@@ -113,6 +113,13 @@ class LauncherPreferences(context: Context) {
             prefs.edit().putBoolean(KEY_NIGHT_MODE_ENABLED, value).apply()
         }
 
+    /** Headunit flavor only — Map Source first-party app switch; no-op on the standard flavor. */
+    var useEmbeddedGoogleMaps: Boolean
+        get() = prefs.getBoolean(KEY_USE_EMBEDDED_GOOGLE_MAPS, false)
+        set(value) {
+            prefs.edit().putBoolean(KEY_USE_EMBEDDED_GOOGLE_MAPS, value).apply()
+        }
+
     var nightModeAuto: Boolean
         get() = prefs.getBoolean(KEY_NIGHT_MODE_AUTO, false)
         set(value) {
@@ -377,6 +384,7 @@ class LauncherPreferences(context: Context) {
         private const val KEY_SHOW_TRAFFIC = "show_traffic"
         private const val KEY_NIGHT_MODE_ENABLED = "night_mode_enabled"
         private const val KEY_NIGHT_MODE_AUTO = "night_mode_auto"
+        private const val KEY_USE_EMBEDDED_GOOGLE_MAPS = "use_embedded_google_maps"
         private const val KEY_NAVIGATION_VOICE_ENABLED = "navigation_voice_enabled"
         private const val KEY_NAVIGATION_VOICE_VOLUME = "navigation_voice_volume"
         private const val KEY_NAVIGATION_VOICE_BOOST = "navigation_voice_boost"
