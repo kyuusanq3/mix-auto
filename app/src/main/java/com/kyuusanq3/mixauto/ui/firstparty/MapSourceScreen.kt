@@ -53,6 +53,7 @@ fun MapSourceScreen(
                     "built-in map. Requires Google Maps to be installed. Mix Auto search, " +
                     "routing, and map settings are unavailable while this is on.",
                 modifier = Modifier.padding(top = CarDimensions.PaneGap),
+                maxLines = 6,
             )
         }
     }
