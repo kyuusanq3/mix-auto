@@ -104,8 +104,6 @@ internal data class DashboardDockProps(
     val mediaState: MediaPlaybackState,
     val voiceSearchAvailable: Boolean,
     val dockPinnedPackages: List<String>,
-    val floatingWindowEnabled: Boolean,
-    val floatingWindowNavPackage: String,
     val onToggleDockPin: (String) -> Unit,
     val onTogglePanel: (ActivePanel) -> Unit,
     val onVoiceSearch: () -> Unit,

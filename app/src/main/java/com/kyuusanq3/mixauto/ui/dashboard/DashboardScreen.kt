@@ -266,8 +266,6 @@ fun DashboardScreen(
             mediaState = mediaState,
             voiceSearchAvailable = voiceSearchAvailable,
             dockPinnedPackages = dockPinnedPackages,
-            floatingWindowEnabled = launcherViewModel.floatingWindowEnabled,
-            floatingWindowNavPackage = launcherViewModel.floatingWindowNavPackage,
             onToggleDockPin = onToggleDockPin,
             onTogglePanel = panel.onTogglePanel,
             onVoiceSearch = panel.onVoiceSearch,

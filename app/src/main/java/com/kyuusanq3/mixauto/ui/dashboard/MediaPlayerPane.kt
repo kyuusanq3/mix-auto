@@ -113,6 +113,7 @@ fun MediaPlayerPane(
     val onToggleLikeState = rememberUpdatedState(onToggleLike)
     val supportsLikeState = rememberUpdatedState(mediaState.supportsLike)
     val hasActiveSessionState = rememberUpdatedState(mediaState.hasActiveSession)
+    val sourcePackageState = rememberUpdatedState(mediaState.sourcePackage)
     // pointerInput below is keyed on (hasActiveSession, supportsLike, swipeThresholdPx) only —
     // albumArtMode must go through rememberUpdatedState too, or a long-press after switching
     // modes reopens the picker pre-selecting the stale mode from when the gesture was last set up.
@@ -230,6 +231,12 @@ fun MediaPlayerPane(
                                     coroutineScope {
                                         launch {
                                             detectTapGestures(
+                                                onTap = {
+                                                    val sourcePackage = sourcePackageState.value
+                                                    if (hasActiveSessionState.value && sourcePackage.isNotBlank()) {
+                                                        launchAppByPackage(context, sourcePackage)
+                                                    }
+                                                },
                                                 onDoubleTap = {
                                                     if (hasActiveSessionState.value) {
                                                         onPlayPauseState.value()

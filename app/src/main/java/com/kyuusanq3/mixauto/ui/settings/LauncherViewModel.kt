@@ -20,6 +20,7 @@ import com.kyuusanq3.mixauto.domain.map.SearchResultPlace
 import com.kyuusanq3.mixauto.ui.components.canLaunchApp
 import com.kyuusanq3.mixauto.ui.dashboard.ActivePanel
 import com.kyuusanq3.mixauto.ui.dashboard.AlbumArtMode
+import com.kyuusanq3.mixauto.ui.dashboard.AudioMeterStyle
 import com.kyuusanq3.mixauto.ui.dashboard.DockShortcutIconSize
 import com.kyuusanq3.mixauto.ui.firstparty.FirstPartyAppId
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -38,6 +39,7 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     val showAlbumArtControls: Boolean get() = audioPrefs.showAlbumArtControls
     val resumeAudioOnStartup: Boolean get() = audioPrefs.resumeAudioOnStartup
     val albumArtMode: AlbumArtMode get() = audioPrefs.albumArtMode
+    val audioMeterStyle: AudioMeterStyle get() = audioPrefs.audioMeterStyle
 
     val limitSearchDistance: Boolean get() = mapPrefs.limitSearchDistance
     val useVectorTiles: Boolean get() = mapPrefs.useVectorTiles
@@ -125,7 +127,7 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     var floatingWindowEnabled by mutableStateOf(preferences.floatingWindowEnabled)
         private set
 
-    var floatingWindowNavPackage by mutableStateOf(preferences.floatingWindowNavPackage)
+    var floatingWindowWidthPercent by mutableStateOf(preferences.floatingWindowWidthPercent)
         private set
 
     var floatingWindowHorizontalPercent by mutableStateOf(preferences.floatingWindowHorizontalPercent)
@@ -139,10 +141,10 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         preferences.floatingWindowEnabled = enabled
     }
 
-    fun updateFloatingWindowNavPackage(packageName: String) {
-        val resolved = packageName.ifBlank { LauncherPreferences.DEFAULT_FLOATING_WINDOW_NAV_PACKAGE }
-        floatingWindowNavPackage = resolved
-        preferences.floatingWindowNavPackage = resolved
+    fun updateFloatingWindowWidthPercent(percent: Int) {
+        val stepped = LauncherPreferences.quantizeFloatingWindowWidthPercent(percent)
+        floatingWindowWidthPercent = stepped
+        preferences.floatingWindowWidthPercent = stepped
     }
 
     fun updateFloatingWindowHorizontalPercent(percent: Int) {
@@ -405,6 +407,8 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     fun updatePuckScale(value: Float) = mapPrefs.updatePuckScale(value)
 
     fun updateAlbumArtMode(mode: AlbumArtMode) = audioPrefs.updateAlbumArtMode(mode)
+
+    fun updateAudioMeterStyle(style: AudioMeterStyle) = audioPrefs.updateAudioMeterStyle(style)
 
     fun toggleTraffic() = mapPrefs.toggleTraffic()
 

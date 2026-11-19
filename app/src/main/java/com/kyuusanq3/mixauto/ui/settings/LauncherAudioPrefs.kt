@@ -6,6 +6,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import com.kyuusanq3.mixauto.ui.components.canLaunchApp
 import com.kyuusanq3.mixauto.ui.dashboard.AlbumArtMode
+import com.kyuusanq3.mixauto.ui.dashboard.AudioMeterStyle
 
 /**
  * Default player / resume / album-art prefs extracted from [LauncherViewModel].
@@ -28,6 +29,9 @@ internal class LauncherAudioPrefs(
         private set
 
     var albumArtMode by mutableStateOf(AlbumArtMode.fromPreference(preferences.albumArtMode))
+        private set
+
+    var audioMeterStyle by mutableStateOf(AudioMeterStyle.fromPreference(preferences.audioMeterStyle))
         private set
 
     fun updateDefaultAudioPackage(packageName: String) {
@@ -53,6 +57,11 @@ internal class LauncherAudioPrefs(
     fun updateAlbumArtMode(mode: AlbumArtMode) {
         albumArtMode = mode
         preferences.albumArtMode = mode.name
+    }
+
+    fun updateAudioMeterStyle(style: AudioMeterStyle) {
+        audioMeterStyle = style
+        preferences.audioMeterStyle = style.name
     }
 
     private fun loadValidatedDefaultAudioPackage(): String {

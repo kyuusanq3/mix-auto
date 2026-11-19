@@ -41,6 +41,10 @@ import com.kyuusanq3.mixauto.ui.theme.OledBlack
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 
+/** Top-down and recenter controls are 1.5x [CarDimensions.MinTapTarget] (64 dp -> 96 dp). */
+private val MapCameraActionSize = CarDimensions.MinTapTarget * 1.5f
+private val MapCameraActionIconSize = 36.dp
+
 internal val MapLibreAttributionReserveDp = 40.dp
 internal val SpeedCircleSize = 54.dp
 internal val SpeedCircleBottomInset = 4.dp
@@ -202,12 +206,13 @@ internal fun MapToolbarOverlay(
                 IconButton(
                     onClick = { engine.enterTopDownView() },
                     modifier = Modifier
-                        .size(CarDimensions.MinTapTarget)
+                        .size(MapCameraActionSize)
                         .background(OledBlack.copy(alpha = 0.72f), MaterialTheme.shapes.small),
                 ) {
                     Icon(
                         imageVector = Icons.Filled.CropFree,
                         contentDescription = "Top-down view",
+                        modifier = Modifier.size(MapCameraActionIconSize),
                         tint = MaterialTheme.colorScheme.primary,
                     )
                 }
@@ -216,7 +221,7 @@ internal fun MapToolbarOverlay(
             IconButton(
                 onClick = { engine.recenterCamera() },
                 modifier = Modifier
-                    .size(CarDimensions.MinTapTarget)
+                    .size(MapCameraActionSize)
                     .background(OledBlack.copy(alpha = 0.72f), MaterialTheme.shapes.small),
             ) {
                 Icon(
@@ -226,6 +231,7 @@ internal fun MapToolbarOverlay(
                     } else {
                         "Recenter map"
                     },
+                    modifier = Modifier.size(MapCameraActionIconSize),
                     tint = MaterialTheme.colorScheme.primary,
                 )
             }

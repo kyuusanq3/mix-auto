@@ -66,7 +66,8 @@ private const val IMMERSIVE_VISUALIZER_BAR_COUNT = 24
 
 /**
  * Immersive now-playing layout: opaque album-art background, title/artist at top,
- * thin bar visualizer at bottom. Long-press opens Audio Settings (not art-mode picker).
+ * meter at the bottom (zigzag progress line by default, or spectrum bars).
+ * Long-press opens Audio Settings (not art-mode picker).
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -94,6 +95,7 @@ fun ImmersiveMediaPlayerContent(
     val onToggleLikeState = rememberUpdatedState(onToggleLike)
     val supportsLikeState = rememberUpdatedState(mediaState.supportsLike)
     val hasActiveSessionState = rememberUpdatedState(mediaState.hasActiveSession)
+    val sourcePackageState = rememberUpdatedState(mediaState.sourcePackage)
     val onOpenAudioSettingsState = rememberUpdatedState(onOpenAudioSettings)
     val fallbackResumeLink = launcherViewModel.audioFallbackResumeLink.takeIf { it.isNotBlank() }
     val showIdleLinkFallback = !mediaState.hasActiveSession && fallbackResumeLink != null
@@ -173,6 +175,12 @@ fun ImmersiveMediaPlayerContent(
                     coroutineScope {
                         launch {
                             detectTapGestures(
+                                onTap = {
+                                    val sourcePackage = sourcePackageState.value
+                                    if (hasActiveSessionState.value && sourcePackage.isNotBlank()) {
+                                        launchAppByPackage(context, sourcePackage)
+                                    }
+                                },
                                 onDoubleTap = {
                                     if (hasActiveSessionState.value) {
                                         onPlayPauseState.value()
@@ -316,17 +324,26 @@ fun ImmersiveMediaPlayerContent(
 
                         Spacer(modifier = Modifier.weight(1f))
 
-                        AnimatedSpectrumVisualizer(
-                            barCount = IMMERSIVE_VISUALIZER_BAR_COUNT,
-                            isPlaying = mediaState.isPlaying,
-                            playbackPositionMs = mediaState.playbackPositionMs,
-                            maxHeightFraction = 0.92f,
-                            barAlpha = 1f,
-                            barLayout = VisualizerBarLayout.THIN,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(ImmersiveVisualizerHeight),
-                        )
+                        val meterModifier = Modifier
+                            .fillMaxWidth()
+                            .height(ImmersiveVisualizerHeight)
+                        when (launcherViewModel.audioMeterStyle) {
+                            AudioMeterStyle.BARS -> AnimatedSpectrumVisualizer(
+                                barCount = IMMERSIVE_VISUALIZER_BAR_COUNT,
+                                isPlaying = mediaState.isPlaying,
+                                playbackPositionMs = mediaState.playbackPositionMs,
+                                maxHeightFraction = 0.92f,
+                                barAlpha = 1f,
+                                barLayout = VisualizerBarLayout.THIN,
+                                modifier = meterModifier,
+                            )
+                            AudioMeterStyle.PROGRESS_LINE -> PlaybackProgressLine(
+                                isPlaying = mediaState.isPlaying,
+                                playbackPositionMs = mediaState.playbackPositionMs,
+                                durationMs = mediaState.durationMs,
+                                modifier = meterModifier,
+                            )
+                        }
 
                         if (launcherViewModel.showAlbumArtControls) {
                             Row(

@@ -8,6 +8,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
+import android.os.PowerManager
 import android.provider.Settings
 import android.util.Log
 import android.view.KeyEvent
@@ -335,12 +336,12 @@ class MainActivity : ComponentActivity() {
                             FirstPartyAppId.FLOATING_WINDOW -> {
                                 FloatingWindowScreen(
                                     enabled = launcherViewModel.floatingWindowEnabled,
-                                    navPackage = launcherViewModel.floatingWindowNavPackage,
+                                    isLauncherMode = launcherViewModel.isLauncherMode,
+                                    widthPercent = launcherViewModel.floatingWindowWidthPercent,
                                     horizontalPercent = launcherViewModel.floatingWindowHorizontalPercent,
                                     verticalPercent = launcherViewModel.floatingWindowVerticalPercent,
-                                    launchableApps = launcherViewModel.launchableApps,
                                     onSetEnabled = launcherViewModel::updateFloatingWindowEnabled,
-                                    onNavPackageChange = launcherViewModel::updateFloatingWindowNavPackage,
+                                    onWidthPercentChange = launcherViewModel::updateFloatingWindowWidthPercent,
                                     onHorizontalPercentChange = launcherViewModel::updateFloatingWindowHorizontalPercent,
                                     onVerticalPercentChange = launcherViewModel::updateFloatingWindowVerticalPercent,
                                     onDismiss = launcherViewModel::closeFirstPartyApp,
@@ -425,7 +426,31 @@ class MainActivity : ComponentActivity() {
 
     override fun onStop() {
         MixAutoPuckLog.event("lifecycle", "stop " + DebugLogcatCapture.hostState(this))
+        if (shouldShowFloatingWindowOnLeave()) {
+            FloatingWindowService.start(this)
+        }
         super.onStop()
+    }
+
+    private fun shouldShowFloatingWindowOnLeave(): Boolean {
+        if (isChangingConfigurations || isFinishing) return false
+        if (!::launcherPreferences.isInitialized) return false
+        if (!launcherPreferences.floatingWindowEnabled) return false
+        if (!isDefaultHomeLauncher()) return false
+        if (!FloatingWindowService.canShowOverlay(this)) return false
+        val power = getSystemService(POWER_SERVICE) as? PowerManager
+        if (power != null && !power.isInteractive) return false
+        return true
+    }
+
+    private fun isDefaultHomeLauncher(): Boolean {
+        if (!launcherPreferences.isLauncherMode) return false
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            val roleManager = getSystemService(RoleManager::class.java) ?: return true
+            if (!roleManager.isRoleAvailable(RoleManager.ROLE_HOME)) return true
+            return roleManager.isRoleHeld(RoleManager.ROLE_HOME)
+        }
+        return true
     }
 
     private fun refreshMediaSessionsAndBootAudio() {

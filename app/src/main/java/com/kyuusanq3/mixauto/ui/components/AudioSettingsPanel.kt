@@ -2,9 +2,11 @@ package com.kyuusanq3.mixauto.ui.components
 
 import android.content.Intent
 import android.net.Uri
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -17,6 +19,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.runtime.Composable
@@ -25,11 +28,13 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.kyuusanq3.mixauto.data.media.MediaSessionRepository
+import com.kyuusanq3.mixauto.ui.dashboard.AudioMeterStyle
 import com.kyuusanq3.mixauto.ui.dashboard.GestureHintDialog
 import com.kyuusanq3.mixauto.ui.settings.LauncherViewModel
 import com.kyuusanq3.mixauto.ui.theme.CarBodyText
@@ -75,11 +80,13 @@ fun AudioSettingsPanelContent(
                     onClose = onDismiss,
                     closeContentDescription = "Close audio settings",
                     compact = true,
+                    largeActions = true,
                     trailingContent = {
                         PanelHeaderIconButton(
                             onClick = { showGestureHint = true },
                             contentDescription = "Playback gesture help",
                             icon = Icons.Filled.Info,
+                            large = true,
                         )
                     },
                 )
@@ -119,13 +126,31 @@ fun AudioSettingsPanelContent(
                     modifier = Modifier.padding(bottom = CarDimensions.PaneGap / 2),
                 )
 
+                CarBodyText(
+                    text = "Now playing display",
+                    style = MaterialTheme.typography.bodyLarge,
+                    modifier = Modifier.padding(top = CarDimensions.PaneGap / 2),
+                )
+                AudioMeterStyle.entries.forEach { style ->
+                    AudioMeterStyleOption(
+                        label = style.label,
+                        selected = launcherViewModel.audioMeterStyle == style,
+                        onSelect = { launcherViewModel.updateAudioMeterStyle(style) },
+                    )
+                }
+                CarLabelText(
+                    text = "The progress line shows how far the track has played. Bars are the animated spectrum.",
+                    style = MaterialTheme.typography.labelMedium,
+                    modifier = Modifier.padding(bottom = CarDimensions.PaneGap / 2),
+                )
+
                 SettingsSwitchRow(
                     label = "Show playback buttons on album art",
                     checked = launcherViewModel.showAlbumArtControls,
                     onCheckedChange = launcherViewModel::updateShowAlbumArtControls,
                 )
                 CarLabelText(
-                    text = "Off by default — double-tap to play/pause, swipe to skip or like.",
+                    text = "Off by default. Tap album art to open the player, double-tap to play or pause, swipe to skip or like.",
                     style = MaterialTheme.typography.labelMedium,
                 )
             }
@@ -148,6 +173,30 @@ fun AudioSettingsPanelContent(
                 )
             }
         }
+    }
+}
+
+@Composable
+private fun AudioMeterStyleOption(
+    label: String,
+    selected: Boolean,
+    onSelect: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(CarDimensions.MinTapTarget)
+            .clickable(onClick = onSelect),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        RadioButton(
+            selected = selected,
+            onClick = onSelect,
+        )
+        CarBodyText(
+            text = label,
+            style = MaterialTheme.typography.bodyLarge,
+        )
     }
 }
 
