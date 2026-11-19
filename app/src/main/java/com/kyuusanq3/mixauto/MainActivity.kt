@@ -415,6 +415,9 @@ class MainActivity : ComponentActivity() {
         // User came back to Mix Auto -- the glance card has done its job (if it was up).
         FloatingWindowService.stop(this)
         refreshMediaSessionsAndBootAudio()
+        if (::launcherViewModel.isInitialized) {
+            launcherViewModel.ensureLaunchableAppsLoaded()
+        }
         if (::mapHostViewModel.isInitialized && hasLocationPermission()) {
             mapHostViewModel.mapEngine.retryLocationActivation()
         }

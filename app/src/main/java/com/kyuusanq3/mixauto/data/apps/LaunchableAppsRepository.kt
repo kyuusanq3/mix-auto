@@ -12,20 +12,10 @@ class LaunchableAppsRepository(context: Context) {
     private val appContext = context.applicationContext
     private val mutex = Mutex()
 
-    @Volatile
-    private var cachedApps: List<LaunchableAppEntry>? = null
-
     suspend fun getLaunchableApps(): List<LaunchableAppEntry> = mutex.withLock {
-        cachedApps?.let { return it }
-        val apps = withContext(Dispatchers.Default) {
+        withContext(Dispatchers.Default) {
             loadLaunchableApps(appContext.packageManager, appContext.packageName)
         }
-        cachedApps = apps
-        apps
-    }
-
-    fun invalidate() {
-        cachedApps = null
     }
 
     private fun loadLaunchableApps(

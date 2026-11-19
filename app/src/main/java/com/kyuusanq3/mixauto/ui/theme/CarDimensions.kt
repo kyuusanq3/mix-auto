@@ -12,6 +12,9 @@ object CarDimensions {
     val PanelHeaderIconSize = 32.dp
     val PanelCompactHeaderTapTarget = 40.dp
     val PanelCompactHeaderIconSize = 28.dp
+    /** Star, close, and settings gear on launcher / map settings headers. */
+    val SettingsHeaderTapTarget = 72.dp
+    val SettingsHeaderIconSize = 40.dp
     val CardCornerRadius = 16.dp
     val PaneGap = 8.dp
     val DockItemSpacing = 12.dp

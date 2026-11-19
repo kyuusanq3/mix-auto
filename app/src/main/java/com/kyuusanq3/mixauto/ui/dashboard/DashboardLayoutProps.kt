@@ -18,6 +18,7 @@ internal data class DashboardMapPaneProps(
     val reduceTopInsetBelowStatusStrip: Boolean,
     val nightModeEnabled: Boolean = false,
     val nightModeAuto: Boolean = false,
+    val activePanel: ActivePanel,
 )
 
 internal data class DashboardSecondaryPaneProps(

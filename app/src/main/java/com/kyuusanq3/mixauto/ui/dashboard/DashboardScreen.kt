@@ -132,7 +132,8 @@ fun DashboardScreen(
             activePanel == ActivePanel.ADD_PLACE ||
             activePanel == ActivePanel.POI_DETAIL ||
             activePanel == ActivePanel.MAP_DATA ||
-            activePanel == ActivePanel.AUDIO_SETTINGS
+            activePanel == ActivePanel.AUDIO_SETTINGS ||
+            activePanel == ActivePanel.SETTINGS
     val audioPlayerMinimized =
         launcherViewModel.isAudioPlayerMinimized && activePanel == ActivePanel.MEDIA
     val effectiveMapMediaRatio = when {
@@ -181,6 +182,7 @@ fun DashboardScreen(
             reduceTopInsetBelowStatusStrip = reduceTopInsetBelowStatusStrip,
             nightModeEnabled = nightModeEnabled,
             nightModeAuto = nightModeAuto,
+            activePanel = activePanel,
         ),
         secondaryPane = DashboardSecondaryPaneProps(
             activePanel = activePanel,

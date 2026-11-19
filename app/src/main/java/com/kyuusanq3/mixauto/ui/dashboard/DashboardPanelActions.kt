@@ -52,7 +52,7 @@ internal fun dashboardPanelActions(
                 }
             }
             ActivePanel.SETTINGS -> when (activePanel) {
-                ActivePanel.SETTINGS -> launcherViewModel.setActivePanel(dismissToBasePanel(musicPaneEnabled))
+                ActivePanel.SETTINGS -> launcherViewModel.setActivePanel(ActivePanel.APP_DRAWER)
                 else -> launcherViewModel.setActivePanel(ActivePanel.SETTINGS)
             }
             ActivePanel.APP_DRAWER -> when (activePanel) {
@@ -76,7 +76,12 @@ internal fun dashboardPanelActions(
             launcherViewModel.isDestinationSearchOpen = false
             launcherViewModel.clearDestinationSearchState()
         }
-        launcherViewModel.setActivePanel(dismissToBasePanel(musicPaneEnabled))
+        val nextPanel = if (activePanel == ActivePanel.SETTINGS) {
+            ActivePanel.APP_DRAWER
+        } else {
+            dismissToBasePanel(musicPaneEnabled)
+        }
+        launcherViewModel.setActivePanel(nextPanel)
     }
     val onOpenMapData = {
         if (activePanel == ActivePanel.SEARCH) {

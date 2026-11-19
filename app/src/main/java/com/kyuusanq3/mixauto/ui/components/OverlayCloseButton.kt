@@ -16,16 +16,17 @@ fun OverlayCloseButton(
     contentDescription: String,
     modifier: Modifier = Modifier,
     compact: Boolean = false,
+    large: Boolean = false,
 ) {
-    val tapTarget = if (compact) {
-        CarDimensions.PanelCompactHeaderTapTarget
-    } else {
-        CarDimensions.PanelHeaderTapTarget
+    val tapTarget = when {
+        large -> CarDimensions.SettingsHeaderTapTarget
+        compact -> CarDimensions.PanelCompactHeaderTapTarget
+        else -> CarDimensions.PanelHeaderTapTarget
     }
-    val iconSize = if (compact) {
-        CarDimensions.PanelCompactHeaderIconSize
-    } else {
-        CarDimensions.PanelHeaderIconSize
+    val iconSize = when {
+        large -> CarDimensions.SettingsHeaderIconSize
+        compact -> CarDimensions.PanelCompactHeaderIconSize
+        else -> CarDimensions.PanelHeaderIconSize
     }
     IconButton(
         onClick = onClick,

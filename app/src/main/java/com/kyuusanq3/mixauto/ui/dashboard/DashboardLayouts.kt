@@ -16,6 +16,7 @@ import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.zIndex
 import com.kyuusanq3.mixauto.ui.components.CarMapViewContainer
 import com.kyuusanq3.mixauto.ui.components.MapMediaDividerHandle
+import com.kyuusanq3.mixauto.ui.settings.HeadUnitInfoPane
 import com.kyuusanq3.mixauto.ui.settings.LauncherPreferences
 import com.kyuusanq3.mixauto.ui.theme.CarDimensions
 
@@ -171,6 +172,10 @@ private fun DashboardMapView(
     map: DashboardMapPaneProps,
     modifier: Modifier,
 ) {
+    if (map.activePanel == ActivePanel.SETTINGS) {
+        HeadUnitInfoPane(modifier = modifier)
+        return
+    }
     CarMapViewContainer(
         engine = map.mapEngine,
         onToggleSearch = map.onToggleSearch,

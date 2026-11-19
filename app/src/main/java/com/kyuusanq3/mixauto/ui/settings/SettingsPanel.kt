@@ -2,8 +2,10 @@ package com.kyuusanq3.mixauto.ui.settings
 
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -11,12 +13,15 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.viewmodel.compose.viewModel
 import android.widget.Toast
 import com.kyuusanq3.mixauto.data.map.MixAutoPuckLog
 import com.kyuusanq3.mixauto.ui.components.AppUpdateSection
@@ -71,6 +76,7 @@ internal fun SettingsContent(
                 title = "Launcher Settings",
                 onClose = onDismiss,
                 closeContentDescription = "Close settings",
+                largeActions = true,
             )
 
             SettingsSwitchRow(
@@ -117,6 +123,8 @@ internal fun SettingsContent(
                     style = MaterialTheme.typography.labelMedium,
                 )
             }
+
+            AppDrawerSettingsSection()
 
             if (DeveloperSettings.SHOW_STATUS_STRIP) {
                 SettingsSwitchRow(
@@ -206,5 +214,77 @@ internal fun SettingsContent(
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun AppDrawerSettingsSection(
+    launcherViewModel: LauncherViewModel = viewModel(),
+) {
+    val columnCount = launcherViewModel.appDrawerColumnCount
+    val pagingMode = launcherViewModel.appDrawerPagingMode
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        CarBodyText(
+            text = "App drawer columns",
+            style = MaterialTheme.typography.bodyLarge,
+        )
+        Slider(
+            value = columnCount.toFloat(),
+            onValueChange = { raw ->
+                launcherViewModel.updateAppDrawerColumnCount(raw.roundToInt())
+            },
+            valueRange = LauncherPreferences.MIN_APP_DRAWER_COLUMNS.toFloat()..
+                LauncherPreferences.MAX_APP_DRAWER_COLUMNS.toFloat(),
+            steps = 2,
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(CarDimensions.MinTapTarget),
+        )
+        CarLabelText(
+            text = "$columnCount columns",
+            style = MaterialTheme.typography.labelMedium,
+        )
+        CarBodyText(
+            text = "App drawer movement",
+            style = MaterialTheme.typography.bodyLarge,
+        )
+        AppDrawerPagingMode.entries.forEach { mode ->
+            AppDrawerPagingOption(
+                label = mode.label,
+                selected = pagingMode == mode,
+                onSelect = { launcherViewModel.updateAppDrawerPagingMode(mode) },
+            )
+        }
+        CarLabelText(
+            text = "Scroll is continuous. Swipe horizontal and swipe vertical move one page at a time.",
+            style = MaterialTheme.typography.labelMedium,
+        )
+    }
+}
+
+@Composable
+private fun AppDrawerPagingOption(
+    label: String,
+    selected: Boolean,
+    onSelect: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(CarDimensions.MinTapTarget)
+            .clickable(onClick = onSelect),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        RadioButton(
+            selected = selected,
+            onClick = onSelect,
+        )
+        CarBodyText(
+            text = label,
+            style = MaterialTheme.typography.bodyLarge,
+        )
     }
 }

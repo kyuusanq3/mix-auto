@@ -95,6 +95,7 @@ fun MapSettingsPanelContent(
                 onClose = onDismiss,
                 closeContentDescription = "Close map settings",
                 compact = true,
+                largeActions = true,
             )
 
             SettingsSwitchRow(

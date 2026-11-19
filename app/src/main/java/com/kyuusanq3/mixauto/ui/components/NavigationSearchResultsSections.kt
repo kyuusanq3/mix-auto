@@ -40,18 +40,18 @@ internal fun NavigationSearchHeaderActions(
     ) {
         IconButton(
             onClick = onOpenAddFromLink,
-            modifier = Modifier.size(CarDimensions.PanelCompactHeaderTapTarget),
+            modifier = Modifier.size(CarDimensions.SettingsHeaderTapTarget),
         ) {
             Icon(
                 imageVector = Icons.Filled.Add,
                 contentDescription = "Add place from Google Maps link",
-                modifier = Modifier.size(CarDimensions.PanelCompactHeaderIconSize),
+                modifier = Modifier.size(CarDimensions.SettingsHeaderIconSize),
                 tint = MaterialTheme.colorScheme.primary,
             )
         }
         IconButton(
             onClick = onToggleSavedFilter,
-            modifier = Modifier.size(CarDimensions.PanelCompactHeaderTapTarget),
+            modifier = Modifier.size(CarDimensions.SettingsHeaderTapTarget),
         ) {
             Icon(
                 imageVector = if (savedFilterActive) {
@@ -64,7 +64,7 @@ internal fun NavigationSearchHeaderActions(
                 } else {
                     "Show saved places only"
                 },
-                modifier = Modifier.size(CarDimensions.PanelCompactHeaderIconSize),
+                modifier = Modifier.size(CarDimensions.SettingsHeaderIconSize),
                 tint = if (savedFilterActive) {
                     Color(0xFFFFD700)
                 } else {
