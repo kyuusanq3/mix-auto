@@ -20,6 +20,7 @@ internal data class DashboardMapPaneProps(
     val nightModeAuto: Boolean = false,
     /** Headunit Map Source switch — when true (and HEADUNIT_SYSTEM), show EmbeddedMapFrame. */
     val useEmbeddedGoogleMaps: Boolean = false,
+    val activePanel: ActivePanel,
 )
 
 internal data class DashboardSecondaryPaneProps(
@@ -106,8 +107,6 @@ internal data class DashboardDockProps(
     val mediaState: MediaPlaybackState,
     val voiceSearchAvailable: Boolean,
     val dockPinnedPackages: List<String>,
-    val floatingWindowEnabled: Boolean,
-    val floatingWindowNavPackage: String,
     val useEmbeddedGoogleMaps: Boolean = false,
     val onToggleDockPin: (String) -> Unit,
     val onTogglePanel: (ActivePanel) -> Unit,

@@ -38,6 +38,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.kyuusanq3.mixauto.data.map.TrafficFlowLevel
 import com.kyuusanq3.mixauto.domain.map.CarMapEngine
 import com.kyuusanq3.mixauto.domain.media.MediaPlaybackState
+import com.kyuusanq3.mixauto.ui.settings.LauncherViewModel
 import com.kyuusanq3.mixauto.ui.status.StatusBarViewModel
 import com.kyuusanq3.mixauto.ui.theme.CarDimensions
 import com.kyuusanq3.mixauto.ui.theme.DeepCharcoal
@@ -68,6 +69,7 @@ internal fun AudioPlayerMinimizedSidebar(
     modifier: Modifier = Modifier,
 ) {
     val statusBarViewModel: StatusBarViewModel = viewModel()
+    val audioMeterStyle = viewModel<LauncherViewModel>().audioMeterStyle
     val mapUiState by mapEngine.uiState.collectAsStateWithLifecycle()
     val weatherState = statusBarViewModel.weatherState
     val trafficState = statusBarViewModel.trafficState
@@ -161,6 +163,7 @@ internal fun AudioPlayerMinimizedSidebar(
             timeStyle = timeStyle,
             trafficTint = trafficTint,
             mediaState = mediaState,
+            audioMeterStyle = audioMeterStyle,
             modifier = modifier,
         )
         return
@@ -239,11 +242,10 @@ internal fun AudioPlayerMinimizedSidebar(
             verticalArrangement = Arrangement.spacedBy(ITEM_GAP, Alignment.Bottom),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            DockMiniVisualizer(
-                isPlaying = mediaState.isPlaying,
-                playbackPositionMs = mediaState.playbackPositionMs,
-                barCount = 5,
-                wide = true,
+            MinimizedPlaybackMeter(
+                mediaState = mediaState,
+                audioMeterStyle = audioMeterStyle,
+                wideBars = true,
                 modifier = Modifier.fillMaxWidth().height(56.dp),
             )
             BoxWithConstraints(
@@ -277,6 +279,7 @@ private fun PortraitMinimizedBar(
     timeStyle: androidx.compose.ui.text.TextStyle,
     trafficTint: Color,
     mediaState: MediaPlaybackState,
+    audioMeterStyle: AudioMeterStyle,
     modifier: Modifier = Modifier,
 ) {
     val barTimeStyle = timeStyle.copy(fontSize = 20.sp, lineHeight = 24.sp)
@@ -317,12 +320,48 @@ private fun PortraitMinimizedBar(
             tint = trafficTint,
             modifier = Modifier.size(22.dp),
         )
-        Spacer(modifier = Modifier.weight(1f))
-        DockMiniVisualizer(
+        if (audioMeterStyle == AudioMeterStyle.PROGRESS_LINE) {
+            MinimizedPlaybackMeter(
+                mediaState = mediaState,
+                audioMeterStyle = audioMeterStyle,
+                wideBars = false,
+                modifier = Modifier
+                    .weight(1f)
+                    .height(28.dp),
+            )
+        } else {
+            Spacer(modifier = Modifier.weight(1f))
+            MinimizedPlaybackMeter(
+                mediaState = mediaState,
+                audioMeterStyle = audioMeterStyle,
+                wideBars = false,
+                modifier = Modifier.width(48.dp).height(24.dp),
+            )
+        }
+    }
+}
+
+@Composable
+private fun MinimizedPlaybackMeter(
+    mediaState: MediaPlaybackState,
+    audioMeterStyle: AudioMeterStyle,
+    wideBars: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    when (audioMeterStyle) {
+        AudioMeterStyle.PROGRESS_LINE -> PlaybackProgressLine(
+            isPlaying = mediaState.isPlaying,
+            playbackPositionMs = mediaState.playbackPositionMs,
+            durationMs = mediaState.durationMs,
+            strokeWidth = 2.dp,
+            modifier = modifier,
+        )
+        AudioMeterStyle.BARS -> DockMiniVisualizer(
             isPlaying = mediaState.isPlaying,
             playbackPositionMs = mediaState.playbackPositionMs,
             barCount = 5,
-            modifier = Modifier.width(48.dp).height(24.dp),
+            wide = wideBars,
+            modifier = modifier,
         )
     }
 }

@@ -41,6 +41,15 @@ class MediaSessionRepository(context: Context) {
     private var lastToggleLikeMs = 0L
     private var preferredPackage: String? = null
     private val likedTrackCache = mutableMapOf<String, Boolean>()
+
+    init {
+        scope.launch {
+            while (true) {
+                delay(PLAYBACK_CLOCK_INTERVAL_MS)
+                refreshPlaybackClock()
+            }
+        }
+    }
     private val controllerCallback = object : MediaController.Callback() {
         override fun onMetadataChanged(metadata: MediaMetadata?) {
             publishControllerState(activeController)
@@ -301,6 +310,30 @@ class MediaSessionRepository(context: Context) {
         cachedShuffleOn = false
     }
 
+    /** Resync position and duration between sparse session callbacks. */
+    private fun refreshPlaybackClock() {
+        val controller = activeController ?: return
+        val playbackState = controller.playbackState ?: return
+        val position = MediaSessionParsers.readPlaybackPositionMs(playbackState)
+        val duration = MediaSessionParsers.readDurationMs(controller.metadata)
+        val playing = playbackState.state == PlaybackState.STATE_PLAYING
+        _state.update { current ->
+            if (
+                current.playbackPositionMs == position &&
+                current.durationMs == duration &&
+                current.isPlaying == playing
+            ) {
+                current
+            } else {
+                current.copy(
+                    playbackPositionMs = position,
+                    durationMs = duration,
+                    isPlaying = playing,
+                )
+            }
+        }
+    }
+
     private fun publishControllerState(controller: MediaController?) {
         if (controller == null) {
             _state.update {
@@ -353,6 +386,7 @@ class MediaSessionRepository(context: Context) {
                 albumArt = MediaSessionParsers.readAlbumArt(metadata),
                 isPlaying = isPlaying,
                 playbackPositionMs = MediaSessionParsers.readPlaybackPositionMs(playbackState),
+                durationMs = MediaSessionParsers.readDurationMs(metadata),
                 hasActiveSession = metadata != null || playbackState != null,
                 needsNotificationAccess = false,
                 sourcePackage = controller.packageName,
@@ -394,6 +428,7 @@ class MediaSessionRepository(context: Context) {
         private const val FALLBACK_LAUNCH_DELAY_MS = 12_000L
         private val MANUAL_RESUME_REFRESH_DELAYS_MS = listOf(1_500L, 3_500L)
         private const val MANUAL_FALLBACK_LAUNCH_DELAY_MS = 5_000L
+        private const val PLAYBACK_CLOCK_INTERVAL_MS = 1_000L
 
         @Volatile
         private var instance: MediaSessionRepository? = null

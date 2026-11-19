@@ -51,6 +51,30 @@ class LauncherPreferences(context: Context) {
             prefs.edit().putBoolean(KEY_LAUNCHER_MODE, value).apply()
         }
 
+    var appDrawerColumnCount: Int
+        get() {
+            val raw = if (prefs.contains(KEY_APP_DRAWER_COLUMN_COUNT)) {
+                prefs.getInt(KEY_APP_DRAWER_COLUMN_COUNT, DEFAULT_APP_DRAWER_COLUMNS)
+            } else {
+                prefs.getInt(KEY_APP_DRAWER_ROW_COUNT, DEFAULT_APP_DRAWER_COLUMNS)
+            }
+            return raw.coerceIn(MIN_APP_DRAWER_COLUMNS, MAX_APP_DRAWER_COLUMNS)
+        }
+        set(value) {
+            prefs.edit()
+                .putInt(
+                    KEY_APP_DRAWER_COLUMN_COUNT,
+                    value.coerceIn(MIN_APP_DRAWER_COLUMNS, MAX_APP_DRAWER_COLUMNS),
+                )
+                .apply()
+        }
+
+    var appDrawerPagingMode: AppDrawerPagingMode
+        get() = AppDrawerPagingMode.fromStored(prefs.getString(KEY_APP_DRAWER_PAGING_MODE, null))
+        set(value) {
+            prefs.edit().putString(KEY_APP_DRAWER_PAGING_MODE, value.name).apply()
+        }
+
     var dockShortcutIconSize: DockShortcutIconSize
         get() {
             if (prefs.contains(KEY_SHORTCUT_ICON_SIZE)) {
@@ -234,6 +258,13 @@ class LauncherPreferences(context: Context) {
             prefs.edit().putString(KEY_ALBUM_ART_MODE, value).apply()
         }
 
+    /** Bottom player meter. Missing key uses the zigzag progress line. */
+    var audioMeterStyle: String
+        get() = prefs.getString(KEY_AUDIO_METER_STYLE, DEFAULT_AUDIO_METER_STYLE) ?: DEFAULT_AUDIO_METER_STYLE
+        set(value) {
+            prefs.edit().putString(KEY_AUDIO_METER_STYLE, value).apply()
+        }
+
     var showStatusStrip: Boolean
         get() = prefs.getBoolean(KEY_SHOW_STATUS_STRIP, true)
         set(value) {
@@ -320,7 +351,7 @@ class LauncherPreferences(context: Context) {
 
     /**
      * Shows a Mix Auto glance card (time, weather, traffic, now-playing) as a system overlay
-     * when the configured navigation app is launched from the shortcut dock. Requires
+     * whenever Mix Auto leaves the foreground while it is the default launcher. Requires
      * SYSTEM_ALERT_WINDOW; the overlay is only started when the user grants that permission.
      */
     var floatingWindowEnabled: Boolean
@@ -329,17 +360,14 @@ class LauncherPreferences(context: Context) {
             prefs.edit().putBoolean(KEY_FLOATING_WINDOW_ENABLED, value).apply()
         }
 
-    /** Package launched from the dock that should raise the Mix Auto glance card. */
-    var floatingWindowNavPackage: String
-        get() = prefs.getString(KEY_FLOATING_WINDOW_NAV_PACKAGE, DEFAULT_FLOATING_WINDOW_NAV_PACKAGE)
-            ?.ifBlank { DEFAULT_FLOATING_WINDOW_NAV_PACKAGE }
-            ?: DEFAULT_FLOATING_WINDOW_NAV_PACKAGE
+    /** Overlay width as a percent of the screen width, stored in 10% steps from 20 to 80. */
+    var floatingWindowWidthPercent: Int
+        get() = quantizeFloatingWindowWidthPercent(
+            prefs.getInt(KEY_FLOATING_WINDOW_WIDTH_PERCENT, DEFAULT_FLOATING_WINDOW_WIDTH_PERCENT),
+        )
         set(value) {
             prefs.edit()
-                .putString(
-                    KEY_FLOATING_WINDOW_NAV_PACKAGE,
-                    value.ifBlank { DEFAULT_FLOATING_WINDOW_NAV_PACKAGE },
-                )
+                .putInt(KEY_FLOATING_WINDOW_WIDTH_PERCENT, quantizeFloatingWindowWidthPercent(value))
                 .apply()
         }
 
@@ -376,6 +404,9 @@ class LauncherPreferences(context: Context) {
         private const val KEY_LAUNCHER_MODE = "launcher_mode"
         private const val KEY_LARGE_SHORTCUT_ICONS = "large_shortcut_icons"
         private const val KEY_SHORTCUT_ICON_SIZE = "shortcut_icon_size"
+        private const val KEY_APP_DRAWER_COLUMN_COUNT = "app_drawer_column_count"
+        private const val KEY_APP_DRAWER_ROW_COUNT = "app_drawer_row_count"
+        private const val KEY_APP_DRAWER_PAGING_MODE = "app_drawer_paging_mode"
         private const val KEY_DRIVING_ZOOM = "driving_zoom"
         private const val KEY_DRIVING_TILT = "driving_tilt"
         private const val KEY_PUCK_H_OFFSET = "puck_h_offset"
@@ -398,6 +429,7 @@ class LauncherPreferences(context: Context) {
         private const val KEY_RESUME_AUDIO_ON_STARTUP = "resume_audio_on_startup"
         private const val KEY_DOCK_PINNED_PACKAGES = "dock_pinned_packages"
         private const val KEY_ALBUM_ART_MODE = "album_art_mode"
+        private const val KEY_AUDIO_METER_STYLE = "audio_meter_style"
         private const val KEY_SHOW_STATUS_STRIP = "show_status_strip"
         private const val KEY_SHOW_SYSTEM_STATUS_BAR = "show_system_status_bar"
         private const val KEY_MUSIC_PANE_ENABLED = "music_pane_enabled"
@@ -411,17 +443,23 @@ class LauncherPreferences(context: Context) {
         private const val KEY_REMINDER_CHECKLIST_LARGE_CARD_STYLE = "reminder_checklist_large_card_style"
         private const val KEY_REMINDER_CHECKLIST_LAST_SHOWN_DAY = "reminder_checklist_last_shown_day"
         private const val KEY_FLOATING_WINDOW_ENABLED = "floating_window_enabled"
-        private const val KEY_FLOATING_WINDOW_NAV_PACKAGE = "floating_window_nav_package"
+        private const val KEY_FLOATING_WINDOW_WIDTH_PERCENT = "floating_window_width_percent"
         private const val KEY_FLOATING_WINDOW_H_PERCENT = "floating_window_h_percent"
         private const val KEY_FLOATING_WINDOW_V_PERCENT = "floating_window_v_percent"
-        const val DEFAULT_FLOATING_WINDOW_NAV_PACKAGE = "com.google.android.apps.maps"
+        const val DEFAULT_FLOATING_WINDOW_WIDTH_PERCENT = 40
+        const val MIN_FLOATING_WINDOW_WIDTH_PERCENT = 20
+        const val MAX_FLOATING_WINDOW_WIDTH_PERCENT = 80
         const val DEFAULT_FLOATING_WINDOW_H_PERCENT = 100
         const val DEFAULT_FLOATING_WINDOW_V_PERCENT = 0
         const val MAX_REMINDER_CHECKLIST_ITEMS = 20
         const val DEFAULT_ALBUM_ART_MODE = "PLAIN"
+        const val DEFAULT_AUDIO_METER_STYLE = "PROGRESS_LINE"
         const val MAX_RECENT_DESTINATIONS = 10
         const val MAX_SAVED_PLACES = 50
         const val MAX_DOCK_PINNED_APPS = 5
+        const val MIN_APP_DRAWER_COLUMNS = 2
+        const val MAX_APP_DRAWER_COLUMNS = 5
+        const val DEFAULT_APP_DRAWER_COLUMNS = 4
         const val DEFAULT_MAP_MEDIA_RATIO = 0.6f
         const val DEFAULT_DRIVING_ZOOM = 17.5f
         const val DEFAULT_DRIVING_TILT = 40f
@@ -436,6 +474,14 @@ class LauncherPreferences(context: Context) {
 
         fun quantizeFloatingWindowPercent(raw: Int): Int =
             ((raw.coerceIn(0, 100) + 5) / 10) * 10
+
+        fun quantizeFloatingWindowWidthPercent(raw: Int): Int {
+            val clamped = raw.coerceIn(
+                MIN_FLOATING_WINDOW_WIDTH_PERCENT,
+                MAX_FLOATING_WINDOW_WIDTH_PERCENT,
+            )
+            return ((clamped + 5) / 10) * 10
+        }
 
         private fun placeToJson(place: SearchResultPlace): JSONObject =
             JSONObject().apply {

@@ -33,11 +33,9 @@ import androidx.compose.ui.unit.dp
 import com.kyuusanq3.mixauto.BuildConfig
 import com.kyuusanq3.mixauto.data.map.EmbeddedMapDisplay
 import com.kyuusanq3.mixauto.data.map.EmbeddedMapHost
-import com.kyuusanq3.mixauto.service.FloatingWindowService
 import com.kyuusanq3.mixauto.ui.components.AppContextDropdownMenu
 import com.kyuusanq3.mixauto.ui.components.launchAppByPackage
 import com.kyuusanq3.mixauto.ui.components.rememberAppIcon
-import com.kyuusanq3.mixauto.ui.settings.LauncherPreferences
 import com.kyuusanq3.mixauto.ui.theme.CarDimensions
 import com.kyuusanq3.mixauto.ui.theme.ElectricCyan
 
@@ -119,8 +117,6 @@ internal fun CenterDockCluster(
     iconSize: Dp,
     itemSpacing: Dp,
     isLeftHandDrive: Boolean,
-    floatingWindowEnabled: Boolean,
-    floatingWindowNavPackage: String,
     useEmbeddedGoogleMaps: Boolean = false,
     onToggleDockPin: (String) -> Unit,
 ) {
@@ -139,8 +135,6 @@ internal fun CenterDockCluster(
                         iconSize = iconSize,
                         isPinnedToDock = true,
                         canAddToDock = true,
-                        floatingWindowEnabled = floatingWindowEnabled,
-                        floatingWindowNavPackage = floatingWindowNavPackage,
                         useEmbeddedGoogleMaps = useEmbeddedGoogleMaps,
                         onToggleDockPin = { onToggleDockPin(packageName) },
                     )
@@ -162,8 +156,6 @@ internal fun CenterDockCluster(
                         iconSize = iconSize,
                         isPinnedToDock = true,
                         canAddToDock = true,
-                        floatingWindowEnabled = floatingWindowEnabled,
-                        floatingWindowNavPackage = floatingWindowNavPackage,
                         useEmbeddedGoogleMaps = useEmbeddedGoogleMaps,
                         onToggleDockPin = { onToggleDockPin(packageName) },
                     )
@@ -183,8 +175,6 @@ private fun PinnedDockAppItem(
     iconSize: Dp,
     isPinnedToDock: Boolean,
     canAddToDock: Boolean,
-    floatingWindowEnabled: Boolean,
-    floatingWindowNavPackage: String,
     useEmbeddedGoogleMaps: Boolean = false,
     onToggleDockPin: () -> Unit,
 ) {
@@ -218,20 +208,10 @@ private fun PinnedDockAppItem(
                                 useEmbeddedGoogleMaps &&
                                 packageName == embedTarget
                         if (embedActive && EmbeddedMapHost.relaunchTarget()) {
-                            // Keep Maps on the map-pane virtual display; do not raise
-                            // Floating Window over an already-embedded Maps session.
+                            // Keep Maps on the map-pane virtual display.
                             return@combinedClickable
                         }
                         launchAppByPackage(context, packageName)
-                        val triggerPackage = floatingWindowNavPackage.ifBlank {
-                            LauncherPreferences.DEFAULT_FLOATING_WINDOW_NAV_PACKAGE
-                        }
-                        if (floatingWindowEnabled &&
-                            packageName == triggerPackage &&
-                            FloatingWindowService.canShowOverlay(context)
-                        ) {
-                            FloatingWindowService.start(context)
-                        }
                     },
                     onLongClick = { showMenu = true },
                 ),

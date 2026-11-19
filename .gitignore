@@ -26,6 +26,7 @@ render.experimental.xml
 # Keystore files
 *.jks
 *.keystore
+headunit-signing.properties
 
 # Headunit flavor platform signing (AOSP test key material / converted keystore config)
 *.pk8

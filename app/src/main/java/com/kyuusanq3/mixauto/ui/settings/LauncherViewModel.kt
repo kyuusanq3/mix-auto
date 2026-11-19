@@ -1,7 +1,13 @@
 package com.kyuusanq3.mixauto.ui.settings
 
 import android.app.Application
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.location.Location
+import android.os.Build
+import android.util.Log
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -14,6 +20,7 @@ import com.kyuusanq3.mixauto.domain.map.SearchResultPlace
 import com.kyuusanq3.mixauto.ui.components.canLaunchApp
 import com.kyuusanq3.mixauto.ui.dashboard.ActivePanel
 import com.kyuusanq3.mixauto.ui.dashboard.AlbumArtMode
+import com.kyuusanq3.mixauto.ui.dashboard.AudioMeterStyle
 import com.kyuusanq3.mixauto.ui.dashboard.DockShortcutIconSize
 import com.kyuusanq3.mixauto.ui.firstparty.FirstPartyAppId
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -32,6 +39,7 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     val showAlbumArtControls: Boolean get() = audioPrefs.showAlbumArtControls
     val resumeAudioOnStartup: Boolean get() = audioPrefs.resumeAudioOnStartup
     val albumArtMode: AlbumArtMode get() = audioPrefs.albumArtMode
+    val audioMeterStyle: AudioMeterStyle get() = audioPrefs.audioMeterStyle
 
     val limitSearchDistance: Boolean get() = mapPrefs.limitSearchDistance
     val useVectorTiles: Boolean get() = mapPrefs.useVectorTiles
@@ -96,6 +104,12 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     var dockShortcutIconSize by mutableStateOf(preferences.dockShortcutIconSize)
         private set
 
+    var appDrawerColumnCount by mutableStateOf(preferences.appDrawerColumnCount)
+        private set
+
+    var appDrawerPagingMode by mutableStateOf(preferences.appDrawerPagingMode)
+        private set
+
     var recentDestinations by mutableStateOf(preferences.recentDestinations)
         private set
 
@@ -114,7 +128,7 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     var floatingWindowEnabled by mutableStateOf(preferences.floatingWindowEnabled)
         private set
 
-    var floatingWindowNavPackage by mutableStateOf(preferences.floatingWindowNavPackage)
+    var floatingWindowWidthPercent by mutableStateOf(preferences.floatingWindowWidthPercent)
         private set
 
     var floatingWindowHorizontalPercent by mutableStateOf(preferences.floatingWindowHorizontalPercent)
@@ -128,10 +142,10 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         preferences.floatingWindowEnabled = enabled
     }
 
-    fun updateFloatingWindowNavPackage(packageName: String) {
-        val resolved = packageName.ifBlank { LauncherPreferences.DEFAULT_FLOATING_WINDOW_NAV_PACKAGE }
-        floatingWindowNavPackage = resolved
-        preferences.floatingWindowNavPackage = resolved
+    fun updateFloatingWindowWidthPercent(percent: Int) {
+        val stepped = LauncherPreferences.quantizeFloatingWindowWidthPercent(percent)
+        floatingWindowWidthPercent = stepped
+        preferences.floatingWindowWidthPercent = stepped
     }
 
     fun updateFloatingWindowHorizontalPercent(percent: Int) {
@@ -262,17 +276,74 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         return true
     }
 
+    private var launchableAppsRefreshGeneration = 0
+    private var packageWatcherRegistered = false
+
+    private val packageChangedReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            ensureLaunchableAppsLoaded()
+        }
+    }
+
     fun ensureLaunchableAppsLoaded() {
-        if (launchableApps.isNotEmpty() || isAppDrawerLoading) return
+        val generation = ++launchableAppsRefreshGeneration
         viewModelScope.launch {
-            isAppDrawerLoading = true
-            launchableApps = launchableAppsRepository.getLaunchableApps()
+            val showLoading = launchableApps.isEmpty()
+            if (showLoading) {
+                isAppDrawerLoading = true
+            }
+            val apps = launchableAppsRepository.getLaunchableApps()
+            if (generation != launchableAppsRefreshGeneration) return@launch
+            launchableApps = apps
             isAppDrawerLoading = false
         }
     }
 
+    fun updateAppDrawerColumnCount(count: Int) {
+        val clamped = count.coerceIn(
+            LauncherPreferences.MIN_APP_DRAWER_COLUMNS,
+            LauncherPreferences.MAX_APP_DRAWER_COLUMNS,
+        )
+        appDrawerColumnCount = clamped
+        preferences.appDrawerColumnCount = clamped
+    }
+
+    fun updateAppDrawerPagingMode(mode: AppDrawerPagingMode) {
+        appDrawerPagingMode = mode
+        preferences.appDrawerPagingMode = mode
+    }
+
     init {
+        registerPackageWatcher()
         ensureLaunchableAppsLoaded()
+    }
+
+    override fun onCleared() {
+        if (packageWatcherRegistered) {
+            runCatching { getApplication<Application>().unregisterReceiver(packageChangedReceiver) }
+            packageWatcherRegistered = false
+        }
+        super.onCleared()
+    }
+
+    private fun registerPackageWatcher() {
+        val filter = IntentFilter().apply {
+            addAction(Intent.ACTION_PACKAGE_ADDED)
+            addAction(Intent.ACTION_PACKAGE_REMOVED)
+            addAction(Intent.ACTION_PACKAGE_REPLACED)
+            addDataScheme("package")
+        }
+        val app = getApplication<Application>()
+        runCatching {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                app.registerReceiver(packageChangedReceiver, filter, Context.RECEIVER_EXPORTED)
+            } else {
+                app.registerReceiver(packageChangedReceiver, filter)
+            }
+            packageWatcherRegistered = true
+        }.onFailure { error ->
+            Log.w(TAG, "Package install watcher was not registered", error)
+        }
     }
 
     fun toggleLeftHandDrive() {
@@ -337,6 +408,8 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     fun updatePuckScale(value: Float) = mapPrefs.updatePuckScale(value)
 
     fun updateAlbumArtMode(mode: AlbumArtMode) = audioPrefs.updateAlbumArtMode(mode)
+
+    fun updateAudioMeterStyle(style: AudioMeterStyle) = audioPrefs.updateAudioMeterStyle(style)
 
     fun toggleTraffic() = mapPrefs.toggleTraffic()
 
@@ -459,6 +532,7 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     }
 
     companion object {
+        private const val TAG = "LauncherViewModel"
         private const val DEDUP_THRESHOLD_M = 50f
     }
 }

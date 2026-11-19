@@ -6,69 +6,49 @@ import android.provider.Settings
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.Image
-import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBarsPadding
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Android
-import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.remember
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.unit.dp
-import com.kyuusanq3.mixauto.data.apps.LaunchableAppEntry
+import androidx.compose.ui.res.stringResource
+import com.kyuusanq3.mixauto.R
 import com.kyuusanq3.mixauto.service.FloatingWindowService
 import com.kyuusanq3.mixauto.ui.components.PanelHeaderRow
 import com.kyuusanq3.mixauto.ui.components.SettingsSwitchRow
-import com.kyuusanq3.mixauto.ui.components.carLazyScrollbar
-import com.kyuusanq3.mixauto.ui.components.rememberAppIcon
 import com.kyuusanq3.mixauto.ui.settings.LauncherPreferences
-import com.kyuusanq3.mixauto.ui.theme.CarBodyText
 import com.kyuusanq3.mixauto.ui.theme.CarDimensions
 import com.kyuusanq3.mixauto.ui.theme.CarLabelText
-import com.kyuusanq3.mixauto.ui.theme.ElectricCyan
 import com.kyuusanq3.mixauto.ui.theme.OledBlack
 import kotlin.math.roundToInt
 
 /**
- * First-party settings for the Mix Auto glance overlay: enable, which docked navigation
- * app raises it, and the horizontal position (0% left to 100% right, in 10% steps).
+ * Glance-card settings: enable, width, and position. The card shows whenever Mix Auto
+ * leaves the foreground while it is the default launcher.
  */
 @Composable
 fun FloatingWindowScreen(
     enabled: Boolean,
-    navPackage: String,
+    isLauncherMode: Boolean,
+    widthPercent: Int,
     horizontalPercent: Int,
     verticalPercent: Int,
-    launchableApps: List<LaunchableAppEntry>,
     onSetEnabled: (Boolean) -> Unit,
-    onNavPackageChange: (String) -> Unit,
+    onWidthPercentChange: (Int) -> Unit,
     onHorizontalPercentChange: (Int) -> Unit,
     onVerticalPercentChange: (Int) -> Unit,
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
-    val listState = rememberLazyListState()
+    val appName = stringResource(R.string.app_name)
     val overlayPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.StartActivityForResult(),
     ) {
@@ -81,14 +61,6 @@ fun FloatingWindowScreen(
                 Toast.LENGTH_LONG,
             ).show()
         }
-    }
-    val selectedLabel = remember(navPackage, launchableApps) {
-        launchableApps.firstOrNull { it.packageName == navPackage }?.label
-            ?: if (navPackage == LauncherPreferences.DEFAULT_FLOATING_WINDOW_NAV_PACKAGE) {
-                "Google Maps"
-            } else {
-                navPackage
-            }
     }
 
     Surface(
@@ -109,7 +81,7 @@ fun FloatingWindowScreen(
             )
 
             SettingsSwitchRow(
-                label = "Show glance card over the navigation app",
+                label = "Show glance card when " + appName + " is in the background",
                 checked = enabled,
                 onCheckedChange = { checked ->
                     if (checked == enabled) return@SettingsSwitchRow
@@ -137,48 +109,29 @@ fun FloatingWindowScreen(
             )
 
             CarLabelText(
-                text = "When you open the selected app from the shortcut bar, Mix Auto shows time, weather, traffic, and now-playing. Tap the card to come back.",
+                text = if (isLauncherMode) {
+                    "While " + appName + " is the default launcher, leaving the app shows time, weather, traffic, and now-playing. Tap the card to come back."
+                } else {
+                    "Turn on Launcher Mode and set " + appName + " as the default home app. The card only appears then."
+                },
                 modifier = Modifier.padding(bottom = CarDimensions.PaneGap),
             )
 
-            CarLabelText(
-                text = "Navigation app",
-                modifier = Modifier.padding(bottom = CarDimensions.PaneGap / 2),
-            )
-            CarBodyText(
-                text = selectedLabel,
-                style = MaterialTheme.typography.bodyLarge,
-                modifier = Modifier.padding(bottom = CarDimensions.PaneGap / 2),
-            )
-
-            Column(
+            CarLabelText(text = "Width")
+            Slider(
+                value = widthPercent.toFloat(),
+                onValueChange = { raw -> onWidthPercentChange(raw.roundToInt()) },
+                valueRange = LauncherPreferences.MIN_FLOATING_WINDOW_WIDTH_PERCENT.toFloat()..
+                    LauncherPreferences.MAX_FLOATING_WINDOW_WIDTH_PERCENT.toFloat(),
+                steps = 5,
                 modifier = Modifier
-                    .weight(1f)
-                    .fillMaxWidth(),
-            ) {
-                if (launchableApps.isEmpty()) {
-                    CarBodyText(
-                        text = "No installed apps found.",
-                        modifier = Modifier.padding(vertical = CarDimensions.PaneGap),
-                    )
-                } else {
-                    LazyColumn(
-                        state = listState,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .carLazyScrollbar(listState),
-                        verticalArrangement = Arrangement.spacedBy(CarDimensions.PaneGap / 2),
-                    ) {
-                        items(launchableApps, key = { it.packageName }) { app ->
-                            NavigationAppRow(
-                                app = app,
-                                selected = app.packageName == navPackage,
-                                onClick = { onNavPackageChange(app.packageName) },
-                            )
-                        }
-                    }
-                }
-            }
+                    .fillMaxWidth()
+                    .height(CarDimensions.MinTapTarget),
+            )
+            CarLabelText(
+                text = widthPercent.toString() + "% of the screen width",
+                style = MaterialTheme.typography.labelMedium,
+            )
 
             CarLabelText(
                 text = "Horizontal position",
@@ -216,52 +169,5 @@ fun FloatingWindowScreen(
                 modifier = Modifier.padding(bottom = CarDimensions.PaneGap),
             )
         }
-    }
-}
-
-@Composable
-private fun NavigationAppRow(
-    app: LaunchableAppEntry,
-    selected: Boolean,
-    onClick: () -> Unit,
-) {
-    val icon = rememberAppIcon(app.packageName)
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(CarDimensions.MinTapTarget)
-            .then(
-                if (selected) {
-                    Modifier.background(ElectricCyan.copy(alpha = 0.18f))
-                } else {
-                    Modifier
-                },
-            )
-            .clickable(onClick = onClick)
-            .padding(horizontal = CarDimensions.PaneGap),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(CarDimensions.PaneGap),
-    ) {
-        if (icon != null) {
-            Image(
-                bitmap = icon,
-                contentDescription = app.label,
-                modifier = Modifier
-                    .size(CarDimensions.AppIconSize)
-                    .clip(CircleShape),
-            )
-        } else {
-            Icon(
-                imageVector = Icons.Filled.Android,
-                contentDescription = app.label,
-                modifier = Modifier.size(CarDimensions.AppIconSize),
-                tint = MaterialTheme.colorScheme.primary,
-            )
-        }
-        CarBodyText(
-            text = app.label,
-            modifier = Modifier.weight(1f),
-            style = MaterialTheme.typography.bodyLarge,
-        )
     }
 }

@@ -132,7 +132,8 @@ fun DashboardScreen(
             activePanel == ActivePanel.ADD_PLACE ||
             activePanel == ActivePanel.POI_DETAIL ||
             activePanel == ActivePanel.MAP_DATA ||
-            activePanel == ActivePanel.AUDIO_SETTINGS
+            activePanel == ActivePanel.AUDIO_SETTINGS ||
+            activePanel == ActivePanel.SETTINGS
     val audioPlayerMinimized =
         launcherViewModel.isAudioPlayerMinimized && activePanel == ActivePanel.MEDIA
     val effectiveMapMediaRatio = when {
@@ -182,6 +183,7 @@ fun DashboardScreen(
             nightModeEnabled = nightModeEnabled,
             nightModeAuto = nightModeAuto,
             useEmbeddedGoogleMaps = launcherViewModel.useEmbeddedGoogleMaps,
+            activePanel = activePanel,
         ),
         secondaryPane = DashboardSecondaryPaneProps(
             activePanel = activePanel,
@@ -266,8 +268,6 @@ fun DashboardScreen(
             mediaState = mediaState,
             voiceSearchAvailable = voiceSearchAvailable,
             dockPinnedPackages = dockPinnedPackages,
-            floatingWindowEnabled = launcherViewModel.floatingWindowEnabled,
-            floatingWindowNavPackage = launcherViewModel.floatingWindowNavPackage,
             useEmbeddedGoogleMaps = launcherViewModel.useEmbeddedGoogleMaps,
             onToggleDockPin = onToggleDockPin,
             onTogglePanel = panel.onTogglePanel,

@@ -39,12 +39,22 @@ internal object MediaSessionParsers {
             ?: metadata?.getBitmap(MediaMetadata.METADATA_KEY_DISPLAY_ICON)
     }
 
+    fun readDurationMs(metadata: MediaMetadata?): Long {
+        if (metadata == null) return 0L
+        return metadata.getLong(MediaMetadata.METADATA_KEY_DURATION).coerceAtLeast(0L)
+    }
+
     fun readPlaybackPositionMs(playbackState: PlaybackState?): Long {
         if (playbackState == null) return 0L
         val position = playbackState.position.coerceAtLeast(0L)
         if (playbackState.state != PlaybackState.STATE_PLAYING) return position
-        val elapsed = SystemClock.elapsedRealtime() - playbackState.lastPositionUpdateTime
-        return (position + elapsed * playbackState.playbackSpeed).toLong().coerceAtLeast(0L)
+        val updatedAt = playbackState.lastPositionUpdateTime
+        if (updatedAt <= 0L) return position
+        val elapsed = (SystemClock.elapsedRealtime() - updatedAt).coerceAtLeast(0L)
+        val speed = playbackState.playbackSpeed.toDouble().let { raw ->
+            if (raw > 0.0) raw else 1.0
+        }
+        return (position + elapsed * speed).toLong().coerceAtLeast(0L)
     }
 
     fun readTrackKey(metadata: MediaMetadata?): String? {

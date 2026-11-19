@@ -18,6 +18,7 @@ import com.kyuusanq3.mixauto.BuildConfig
 import com.kyuusanq3.mixauto.ui.components.CarMapViewContainer
 import com.kyuusanq3.mixauto.ui.components.EmbeddedMapFrame
 import com.kyuusanq3.mixauto.ui.components.MapMediaDividerHandle
+import com.kyuusanq3.mixauto.ui.settings.HeadUnitInfoPane
 import com.kyuusanq3.mixauto.ui.settings.LauncherPreferences
 import com.kyuusanq3.mixauto.ui.theme.CarDimensions
 
@@ -137,8 +138,6 @@ private fun DashboardHorizontalDock(
         mediaState = dock.mediaState,
         voiceSearchAvailable = dock.voiceSearchAvailable,
         dockPinnedPackages = dock.dockPinnedPackages,
-        floatingWindowEnabled = dock.floatingWindowEnabled,
-        floatingWindowNavPackage = dock.floatingWindowNavPackage,
         useEmbeddedGoogleMaps = dock.useEmbeddedGoogleMaps,
         onToggleDockPin = dock.onToggleDockPin,
         onTogglePanel = dock.onTogglePanel,
@@ -161,8 +160,6 @@ private fun DashboardVerticalDock(
         mediaState = dock.mediaState,
         voiceSearchAvailable = dock.voiceSearchAvailable,
         dockPinnedPackages = dock.dockPinnedPackages,
-        floatingWindowEnabled = dock.floatingWindowEnabled,
-        floatingWindowNavPackage = dock.floatingWindowNavPackage,
         useEmbeddedGoogleMaps = dock.useEmbeddedGoogleMaps,
         onToggleDockPin = dock.onToggleDockPin,
         onTogglePanel = dock.onTogglePanel,
@@ -176,6 +173,10 @@ private fun DashboardMapView(
     map: DashboardMapPaneProps,
     modifier: Modifier,
 ) {
+    if (map.activePanel == ActivePanel.SETTINGS) {
+        HeadUnitInfoPane(modifier = modifier)
+        return
+    }
     val showEmbedded =
         BuildConfig.HEADUNIT_SYSTEM && map.useEmbeddedGoogleMaps
     if (showEmbedded) {

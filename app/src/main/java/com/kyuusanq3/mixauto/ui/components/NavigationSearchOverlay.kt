@@ -233,6 +233,7 @@ fun NavigationSearchContent(
                 onClose = onDismiss,
                 closeContentDescription = "Close search",
                 compact = true,
+                largeActions = true,
                 trailingContent = {
                     NavigationSearchHeaderActions(
                         savedFilterActive = savedFilterActive,

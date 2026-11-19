@@ -46,8 +46,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
- * Foreground service that paints the Mix Auto glance card as a system overlay while another
- * app (currently Google Maps, launched from the shortcut dock) is in the foreground.
+ * Foreground service that paints the Mix Auto glance card as a system overlay while Mix Auto
+ * is in the background and is the default launcher.
  *
  * The overlay shows the current time, outside weather, nearby traffic, and the now-playing
  * track. Tapping the overlay brings [MainActivity] back to the foreground and stops the service.
@@ -175,7 +175,7 @@ class FloatingWindowService : Service() {
             WindowManager.LayoutParams.TYPE_PHONE
         }
         val params = WindowManager.LayoutParams(
-            WindowManager.LayoutParams.WRAP_CONTENT,
+            overlayWidthPx(),
             WindowManager.LayoutParams.WRAP_CONTENT,
             layoutType,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
@@ -204,6 +204,15 @@ class FloatingWindowService : Service() {
             Log.w(TAG, "addView failed: ${e.message}")
             stopSelf()
         }
+    }
+
+    private fun overlayWidthPx(): Int {
+        val percent = preferences.floatingWindowWidthPercent.coerceIn(
+            LauncherPreferences.MIN_FLOATING_WINDOW_WIDTH_PERCENT,
+            LauncherPreferences.MAX_FLOATING_WINDOW_WIDTH_PERCENT,
+        )
+        val screenWidth = resources.displayMetrics.widthPixels
+        return (screenWidth * (percent / 100f)).toInt().coerceAtLeast(1)
     }
 
     private fun applySavedPosition(

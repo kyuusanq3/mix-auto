@@ -25,9 +25,12 @@ fun PanelHeaderRow(
     modifier: Modifier = Modifier,
     titleStyle: TextStyle = MaterialTheme.typography.headlineSmall,
     compact: Boolean = false,
+    largeActions: Boolean = false,
     trailingContent: @Composable RowScope.() -> Unit = {},
 ) {
-    val tapTarget = if (compact) {
+    val tapTarget = if (largeActions) {
+        CarDimensions.SettingsHeaderTapTarget
+    } else if (compact) {
         CarDimensions.PanelCompactHeaderTapTarget
     } else {
         CarDimensions.PanelHeaderTapTarget
@@ -54,6 +57,7 @@ fun PanelHeaderRow(
             onClick = onClose,
             contentDescription = closeContentDescription,
             compact = compact,
+            large = largeActions,
         )
     }
 }
@@ -64,15 +68,26 @@ fun PanelHeaderIconButton(
     contentDescription: String,
     icon: ImageVector,
     modifier: Modifier = Modifier,
+    large: Boolean = false,
 ) {
+    val tapTarget = if (large) {
+        CarDimensions.SettingsHeaderTapTarget
+    } else {
+        CarDimensions.PanelHeaderTapTarget
+    }
+    val iconSize = if (large) {
+        CarDimensions.SettingsHeaderIconSize
+    } else {
+        CarDimensions.PanelHeaderIconSize
+    }
     IconButton(
         onClick = onClick,
-        modifier = modifier.size(CarDimensions.PanelHeaderTapTarget),
+        modifier = modifier.size(tapTarget),
     ) {
         Icon(
             imageVector = icon,
             contentDescription = contentDescription,
-            modifier = Modifier.size(CarDimensions.PanelHeaderIconSize),
+            modifier = Modifier.size(iconSize),
             tint = MaterialTheme.colorScheme.primary,
         )
     }

@@ -87,8 +87,6 @@ fun ShortcutDock(
     mediaState: MediaPlaybackState,
     voiceSearchAvailable: Boolean = true,
     dockPinnedPackages: List<String> = emptyList(),
-    floatingWindowEnabled: Boolean = false,
-    floatingWindowNavPackage: String = "",
     useEmbeddedGoogleMaps: Boolean = false,
     onToggleDockPin: (String) -> Unit = {},
     onTogglePanel: (ActivePanel) -> Unit,
@@ -143,8 +141,6 @@ fun ShortcutDock(
                         iconSize = iconSize,
                         itemSpacing = itemSpacing,
                         isLeftHandDrive = isLeftHandDrive,
-                        floatingWindowEnabled = floatingWindowEnabled,
-                        floatingWindowNavPackage = floatingWindowNavPackage,
                         useEmbeddedGoogleMaps = useEmbeddedGoogleMaps,
                         onToggleDockPin = onToggleDockPin,
                     )
@@ -246,8 +242,6 @@ fun ShortcutDock(
                             iconSize = iconSize,
                             itemSpacing = itemSpacing,
                             isLeftHandDrive = isLeftHandDrive,
-                            floatingWindowEnabled = floatingWindowEnabled,
-                            floatingWindowNavPackage = floatingWindowNavPackage,
                             useEmbeddedGoogleMaps = useEmbeddedGoogleMaps,
                             onToggleDockPin = onToggleDockPin,
                         )

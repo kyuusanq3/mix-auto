@@ -50,6 +50,7 @@ fun GestureHintDialog(
         },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                CarBodyText(text = "Tap album art \u2192 Open the playing app", style = MaterialTheme.typography.bodyMedium)
                 CarBodyText(text = "Double-tap album art \u2192 Play / Pause", style = MaterialTheme.typography.bodyMedium)
                 CarBodyText(text = "Swipe left \u2192 Previous track", style = MaterialTheme.typography.bodyMedium)
                 CarBodyText(text = "Swipe right \u2192 Next track", style = MaterialTheme.typography.bodyMedium)

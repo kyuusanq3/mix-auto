@@ -8,17 +8,14 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.lazy.grid.GridCells
-import androidx.compose.foundation.lazy.grid.GridItemSpan
-import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
-import androidx.compose.foundation.lazy.grid.items
+import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Android
 import androidx.compose.material.icons.filled.Search
@@ -50,6 +47,8 @@ import com.kyuusanq3.mixauto.ui.components.rememberAppIcon
 import com.kyuusanq3.mixauto.ui.firstparty.FIRST_PARTY_APPS
 import com.kyuusanq3.mixauto.ui.firstparty.FirstPartyAppEntry
 import com.kyuusanq3.mixauto.ui.firstparty.FirstPartyAppId
+import com.kyuusanq3.mixauto.ui.settings.LauncherPreferences
+import com.kyuusanq3.mixauto.ui.settings.LauncherViewModel
 import com.kyuusanq3.mixauto.ui.theme.CarBodyText
 import com.kyuusanq3.mixauto.ui.theme.CarDimensions
 import com.kyuusanq3.mixauto.ui.theme.CarLabelText
@@ -71,6 +70,7 @@ fun AppDrawerOverlay(
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
+    val launcherViewModel: LauncherViewModel = viewModel()
     var query by remember { mutableStateOf("") }
 
     val filteredApps = remember(launchableApps, query) {
@@ -119,11 +119,13 @@ fun AppDrawerOverlay(
                 title = "Apps",
                 onClose = onDismiss,
                 closeContentDescription = "Close app drawer",
+                largeActions = true,
             ) {
                 PanelHeaderIconButton(
                     onClick = onOpenLauncherSettings,
                     contentDescription = "Launcher settings",
                     icon = Icons.Filled.Settings,
+                    large = true,
                 )
             }
 
@@ -155,7 +157,8 @@ fun AppDrawerOverlay(
                 isLoading && filteredApps.isEmpty() && filteredFirstPartyApps.isEmpty() -> {
                     Box(
                         modifier = Modifier
-                            .fillMaxSize()
+                            .weight(1f)
+                            .fillMaxWidth()
                             .padding(CarDimensions.PaneGap),
                         contentAlignment = Alignment.Center,
                     ) {
@@ -165,7 +168,8 @@ fun AppDrawerOverlay(
                 filteredApps.isEmpty() && filteredFirstPartyApps.isEmpty() -> {
                     Box(
                         modifier = Modifier
-                            .fillMaxSize()
+                            .weight(1f)
+                            .fillMaxWidth()
                             .padding(CarDimensions.PaneGap),
                         contentAlignment = Alignment.Center,
                     ) {
@@ -173,45 +177,30 @@ fun AppDrawerOverlay(
                     }
                 }
                 else -> {
-                    LazyVerticalGrid(
-                        columns = GridCells.Fixed(2),
-                        modifier = Modifier.fillMaxSize(),
-                        contentPadding = PaddingValues(bottom = CarDimensions.PaneGap),
-                        horizontalArrangement = Arrangement.spacedBy(CarDimensions.PaneGap),
-                        verticalArrangement = Arrangement.spacedBy(CarDimensions.PaneGap),
-                    ) {
-                        if (filteredFirstPartyApps.isNotEmpty()) {
-                            item(span = { GridItemSpan(maxLineSpan) }) {
-                                CarLabelText(
-                                    text = stringResource(R.string.app_name),
-                                    modifier = Modifier.padding(
-                                        top = CarDimensions.PaneGap / 2,
-                                        bottom = CarDimensions.PaneGap / 2,
-                                    ),
+                    AppDrawerAppGrid(
+                        apps = filteredApps,
+                        columnCount = launcherViewModel.appDrawerColumnCount,
+                        pagingMode = launcherViewModel.appDrawerPagingMode,
+                        dockPinnedPackages = dockPinnedPackages,
+                        maxDockPinnedApps = maxDockPinnedApps,
+                        onToggleDockPin = onToggleDockPin,
+                        onLaunch = { app -> launchApp(context, app) },
+                        mixAutoAppCount = filteredFirstPartyApps.size,
+                        mixAutoHeader = if (filteredFirstPartyApps.isNotEmpty()) {
+                            {
+                                MixAutoDrawerHeader(
+                                    apps = filteredFirstPartyApps,
+                                    columnCount = launcherViewModel.appDrawerColumnCount,
+                                    onLaunch = { app -> onOpenFirstPartyApp(app.id) },
                                 )
                             }
-                            items(
-                                filteredFirstPartyApps,
-                                key = { it.id.name },
-                                span = { GridItemSpan(maxLineSpan) },
-                            ) { app ->
-                                FirstPartyAppRow(
-                                    app = app,
-                                    onLaunch = { onOpenFirstPartyApp(app.id) },
-                                )
-                            }
-                        }
-                        items(filteredApps, key = { it.packageName }) { app ->
-                            AppDrawerItem(
-                                app = app,
-                                isPinnedToDock = app.packageName in dockPinnedPackages,
-                                canAddToDock = app.packageName in dockPinnedPackages ||
-                                    dockPinnedPackages.size < maxDockPinnedApps,
-                                onToggleDockPin = { onToggleDockPin(app.packageName) },
-                                onLaunch = { launchApp(context, app) },
-                            )
-                        }
-                    }
+                        } else {
+                            null
+                        },
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxWidth(),
+                    )
                 }
             }
         }
@@ -219,14 +208,71 @@ fun AppDrawerOverlay(
 }
 
 @Composable
-private fun FirstPartyAppRow(
+private fun MixAutoDrawerHeader(
+    apps: List<FirstPartyAppEntry>,
+    columnCount: Int,
+    onLaunch: (FirstPartyAppEntry) -> Unit,
+) {
+    Column {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(MixAutoLabelBlockHeight),
+            contentAlignment = Alignment.CenterStart,
+        ) {
+            CarLabelText(text = stringResource(R.string.app_name))
+        }
+        FirstPartyColumnGroup(
+            apps = apps,
+            columnCount = columnCount,
+            onLaunch = onLaunch,
+        )
+    }
+}
+
+@Composable
+private fun FirstPartyColumnGroup(
+    apps: List<FirstPartyAppEntry>,
+    columnCount: Int,
+    onLaunch: (FirstPartyAppEntry) -> Unit,
+) {
+    val columns = columnCount.coerceIn(
+        LauncherPreferences.MIN_APP_DRAWER_COLUMNS,
+        LauncherPreferences.MAX_APP_DRAWER_COLUMNS,
+    )
+    Column(verticalArrangement = Arrangement.spacedBy(CarDimensions.PaneGap)) {
+        apps.chunked(columns).forEach { rowApps ->
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(AppDrawerCellHeight),
+                horizontalArrangement = Arrangement.spacedBy(CarDimensions.PaneGap),
+            ) {
+                rowApps.forEach { app ->
+                    FirstPartyAppCell(
+                        app = app,
+                        onLaunch = { onLaunch(app) },
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+                repeat(columns - rowApps.size) {
+                    Spacer(modifier = Modifier.weight(1f))
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun FirstPartyAppCell(
     app: FirstPartyAppEntry,
     onLaunch: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     ElevatedCard(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
-            .heightIn(min = CarDimensions.MinTapTarget)
+            .height(AppDrawerCellHeight)
             .clickable(onClick = onLaunch),
         elevation = CardDefaults.elevatedCardElevation(defaultElevation = CarDimensions.CardElevation),
         colors = CardDefaults.elevatedCardColors(
@@ -256,21 +302,21 @@ private fun FirstPartyAppRow(
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun AppDrawerItem(
+internal fun AppDrawerItem(
     app: LaunchableAppEntry,
     isPinnedToDock: Boolean,
     canAddToDock: Boolean,
     onToggleDockPin: () -> Unit,
     onLaunch: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     val icon = rememberAppIcon(app.packageName)
     var showMenu by remember { mutableStateOf(false) }
 
-    Box(modifier = Modifier.fillMaxWidth()) {
+    Box(modifier = modifier.fillMaxWidth()) {
         ElevatedCard(
             modifier = Modifier
-                .fillMaxWidth()
-                .heightIn(min = CarDimensions.MinTapTarget)
+                .fillMaxSize()
                 .combinedClickable(
                     onClick = onLaunch,
                     onLongClick = { showMenu = true },
@@ -319,7 +365,7 @@ private fun AppDrawerItem(
     }
 }
 
-private fun launchApp(context: android.content.Context, app: LaunchableAppEntry) {
+internal fun launchApp(context: android.content.Context, app: LaunchableAppEntry) {
     try {
         app.launchIntent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
         context.startActivity(app.launchIntent)
