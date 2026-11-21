@@ -69,10 +69,34 @@ class LauncherPreferences(context: Context) {
                 .apply()
         }
 
+    var appDrawerRowCount: Int
+        get() = prefs.getInt(KEY_APP_DRAWER_PAGE_ROW_COUNT, DEFAULT_APP_DRAWER_ROWS)
+            .coerceIn(MIN_APP_DRAWER_ROWS, MAX_APP_DRAWER_ROWS)
+        set(value) {
+            prefs.edit()
+                .putInt(
+                    KEY_APP_DRAWER_PAGE_ROW_COUNT,
+                    value.coerceIn(MIN_APP_DRAWER_ROWS, MAX_APP_DRAWER_ROWS),
+                )
+                .apply()
+        }
+
     var appDrawerPagingMode: AppDrawerPagingMode
         get() = AppDrawerPagingMode.fromStored(prefs.getString(KEY_APP_DRAWER_PAGING_MODE, null))
         set(value) {
             prefs.edit().putString(KEY_APP_DRAWER_PAGING_MODE, value.name).apply()
+        }
+
+    var appDrawerLabelSp: Int
+        get() = prefs.getInt(KEY_APP_DRAWER_LABEL_SP, DEFAULT_APP_DRAWER_LABEL_SP)
+            .coerceIn(MIN_APP_DRAWER_LABEL_SP, MAX_APP_DRAWER_LABEL_SP)
+        set(value) {
+            prefs.edit()
+                .putInt(
+                    KEY_APP_DRAWER_LABEL_SP,
+                    value.coerceIn(MIN_APP_DRAWER_LABEL_SP, MAX_APP_DRAWER_LABEL_SP),
+                )
+                .apply()
         }
 
     var dockShortcutIconSize: DockShortcutIconSize
@@ -399,7 +423,9 @@ class LauncherPreferences(context: Context) {
         private const val KEY_SHORTCUT_ICON_SIZE = "shortcut_icon_size"
         private const val KEY_APP_DRAWER_COLUMN_COUNT = "app_drawer_column_count"
         private const val KEY_APP_DRAWER_ROW_COUNT = "app_drawer_row_count"
+        private const val KEY_APP_DRAWER_PAGE_ROW_COUNT = "app_drawer_page_row_count"
         private const val KEY_APP_DRAWER_PAGING_MODE = "app_drawer_paging_mode"
+        private const val KEY_APP_DRAWER_LABEL_SP = "app_drawer_label_sp"
         private const val KEY_DRIVING_ZOOM = "driving_zoom"
         private const val KEY_DRIVING_TILT = "driving_tilt"
         private const val KEY_PUCK_H_OFFSET = "puck_h_offset"
@@ -450,8 +476,14 @@ class LauncherPreferences(context: Context) {
         const val MAX_SAVED_PLACES = 50
         const val MAX_DOCK_PINNED_APPS = 5
         const val MIN_APP_DRAWER_COLUMNS = 2
-        const val MAX_APP_DRAWER_COLUMNS = 5
+        const val MAX_APP_DRAWER_COLUMNS = 8
         const val DEFAULT_APP_DRAWER_COLUMNS = 4
+        const val MIN_APP_DRAWER_ROWS = 2
+        const val MAX_APP_DRAWER_ROWS = 6
+        const val DEFAULT_APP_DRAWER_ROWS = 4
+        const val MIN_APP_DRAWER_LABEL_SP = 0
+        const val MAX_APP_DRAWER_LABEL_SP = 24
+        const val DEFAULT_APP_DRAWER_LABEL_SP = 12
         const val DEFAULT_MAP_MEDIA_RATIO = 0.6f
         const val DEFAULT_DRIVING_ZOOM = 17.5f
         const val DEFAULT_DRIVING_TILT = 40f

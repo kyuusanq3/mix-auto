@@ -7,6 +7,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -35,7 +36,11 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.sp
 import com.kyuusanq3.mixauto.data.apps.LaunchableAppEntry
 import com.kyuusanq3.mixauto.ui.components.AppContextDropdownMenu
 import com.kyuusanq3.mixauto.ui.components.PanelHeaderIconButton
@@ -44,7 +49,6 @@ import com.kyuusanq3.mixauto.ui.components.rememberAppIcon
 import com.kyuusanq3.mixauto.ui.firstparty.FIRST_PARTY_APPS
 import com.kyuusanq3.mixauto.ui.firstparty.FirstPartyAppEntry
 import com.kyuusanq3.mixauto.ui.firstparty.FirstPartyAppId
-import com.kyuusanq3.mixauto.ui.settings.LauncherPreferences
 import com.kyuusanq3.mixauto.ui.settings.LauncherViewModel
 import com.kyuusanq3.mixauto.ui.theme.CarBodyText
 import com.kyuusanq3.mixauto.ui.theme.CarDimensions
@@ -179,23 +183,15 @@ fun AppDrawerOverlay(
                         AppDrawerAppGrid(
                             apps = filteredApps,
                             columnCount = launcherViewModel.appDrawerColumnCount,
+                            rowCount = launcherViewModel.appDrawerRowCount,
                             pagingMode = launcherViewModel.appDrawerPagingMode,
                             dockPinnedPackages = dockPinnedPackages,
                             maxDockPinnedApps = maxDockPinnedApps,
                             onToggleDockPin = onToggleDockPin,
                             onLaunch = { app -> launchApp(context, app) },
-                            mixAutoAppCount = filteredFirstPartyApps.size,
-                            mixAutoHeader = if (filteredFirstPartyApps.isNotEmpty()) {
-                                {
-                                    MixAutoDrawerHeader(
-                                        apps = filteredFirstPartyApps,
-                                        columnCount = launcherViewModel.appDrawerColumnCount,
-                                        onLaunch = { app -> onOpenFirstPartyApp(app.id) },
-                                    )
-                                }
-                            } else {
-                                null
-                            },
+                            mixAutoApps = filteredFirstPartyApps,
+                            onLaunchMixAuto = { app -> onOpenFirstPartyApp(app.id) },
+                            labelSizeSp = launcherViewModel.appDrawerLabelSp,
                             modifier = Modifier
                                 .weight(1f)
                                 .fillMaxWidth(),
@@ -208,99 +204,31 @@ fun AppDrawerOverlay(
 }
 
 @Composable
-private fun MixAutoDrawerHeader(
-    apps: List<FirstPartyAppEntry>,
-    columnCount: Int,
-    onLaunch: (FirstPartyAppEntry) -> Unit,
+internal fun MixAutoDrawerItem(
+    app: FirstPartyAppEntry,
+    labelSizeSp: Int,
+    onLaunch: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
-    Column {
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(MixAutoLabelBlockHeight),
-            contentAlignment = Alignment.CenterStart,
-        ) {
-            CarLabelText(text = "Mix Auto")
-        }
-        FirstPartyColumnGroup(
-            apps = apps,
-            columnCount = columnCount,
-            onLaunch = onLaunch,
+    AppDrawerSquareCard(
+        modifier = modifier,
+        onClick = onLaunch,
+    ) {
+        AppDrawerSquareFace(
+            label = app.label,
+            labelSizeSp = labelSizeSp,
+            icon = { iconSize ->
+                Icon(
+                    imageVector = app.icon,
+                    contentDescription = app.label,
+                    modifier = Modifier.size(iconSize),
+                    tint = MaterialTheme.colorScheme.primary,
+                )
+            },
         )
     }
 }
 
-@Composable
-private fun FirstPartyColumnGroup(
-    apps: List<FirstPartyAppEntry>,
-    columnCount: Int,
-    onLaunch: (FirstPartyAppEntry) -> Unit,
-) {
-    val columns = columnCount.coerceIn(
-        LauncherPreferences.MIN_APP_DRAWER_COLUMNS,
-        LauncherPreferences.MAX_APP_DRAWER_COLUMNS,
-    )
-    Column(verticalArrangement = Arrangement.spacedBy(CarDimensions.PaneGap)) {
-        apps.chunked(columns).forEach { rowApps ->
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(AppDrawerCellHeight),
-                horizontalArrangement = Arrangement.spacedBy(CarDimensions.PaneGap),
-            ) {
-                rowApps.forEach { app ->
-                    FirstPartyAppCell(
-                        app = app,
-                        onLaunch = { onLaunch(app) },
-                        modifier = Modifier.weight(1f),
-                    )
-                }
-                repeat(columns - rowApps.size) {
-                    Spacer(modifier = Modifier.weight(1f))
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun FirstPartyAppCell(
-    app: FirstPartyAppEntry,
-    onLaunch: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    ElevatedCard(
-        modifier = modifier
-            .fillMaxWidth()
-            .height(AppDrawerCellHeight)
-            .clickable(onClick = onLaunch),
-        elevation = CardDefaults.elevatedCardElevation(defaultElevation = CarDimensions.CardElevation),
-        colors = CardDefaults.elevatedCardColors(
-            containerColor = MaterialTheme.colorScheme.surface,
-        ),
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(CarDimensions.PaneGap),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(CarDimensions.PaneGap),
-        ) {
-            Icon(
-                imageVector = app.icon,
-                contentDescription = app.label,
-                modifier = Modifier.size(CarDimensions.AppIconSize),
-                tint = MaterialTheme.colorScheme.primary,
-            )
-            CarLabelText(
-                text = app.label,
-                modifier = Modifier.weight(1f),
-            )
-        }
-    }
-}
-
-@OptIn(ExperimentalFoundationApi::class)
 @Composable
 internal fun AppDrawerItem(
     app: LaunchableAppEntry,
@@ -308,60 +236,115 @@ internal fun AppDrawerItem(
     canAddToDock: Boolean,
     onToggleDockPin: () -> Unit,
     onLaunch: () -> Unit,
+    labelSizeSp: Int,
     modifier: Modifier = Modifier,
 ) {
     val icon = rememberAppIcon(app.packageName)
     var showMenu by remember { mutableStateOf(false) }
 
-    Box(modifier = modifier.fillMaxWidth()) {
-        ElevatedCard(
-            modifier = Modifier
-                .fillMaxSize()
-                .combinedClickable(
-                    onClick = onLaunch,
-                    onLongClick = { showMenu = true },
-                ),
-            elevation = CardDefaults.elevatedCardElevation(defaultElevation = CarDimensions.CardElevation),
-            colors = CardDefaults.elevatedCardColors(
-                containerColor = MaterialTheme.colorScheme.surface,
-            ),
-        ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(CarDimensions.PaneGap),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(CarDimensions.PaneGap),
-            ) {
+    AppDrawerSquareCard(
+        modifier = modifier,
+        onClick = onLaunch,
+        onLongClick = { showMenu = true },
+        overlay = {
+            AppContextDropdownMenu(
+                expanded = showMenu,
+                onDismissRequest = { showMenu = false },
+                packageName = app.packageName,
+                isPinnedToDock = isPinnedToDock,
+                canAddToDock = canAddToDock,
+                onToggleDockPin = onToggleDockPin,
+            )
+        },
+    ) {
+        AppDrawerSquareFace(
+            label = app.label,
+            labelSizeSp = labelSizeSp,
+            icon = { iconSize ->
                 if (icon != null) {
                     Image(
                         bitmap = icon,
                         contentDescription = app.label,
-                        modifier = Modifier.size(CarDimensions.AppIconSize),
+                        contentScale = ContentScale.Fit,
+                        modifier = Modifier.size(iconSize),
                     )
                 } else {
                     Icon(
                         imageVector = Icons.Filled.Android,
                         contentDescription = app.label,
-                        modifier = Modifier.size(CarDimensions.AppIconSize),
+                        modifier = Modifier.size(iconSize),
                         tint = MaterialTheme.colorScheme.primary,
                     )
                 }
-                CarLabelText(
-                    text = app.label,
-                    modifier = Modifier.weight(1f),
-                )
-            }
-        }
-
-        AppContextDropdownMenu(
-            expanded = showMenu,
-            onDismissRequest = { showMenu = false },
-            packageName = app.packageName,
-            isPinnedToDock = isPinnedToDock,
-            canAddToDock = canAddToDock,
-            onToggleDockPin = onToggleDockPin,
+            },
         )
+    }
+}
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun AppDrawerSquareCard(
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit,
+    onLongClick: (() -> Unit)? = null,
+    overlay: (@Composable () -> Unit)? = null,
+    content: @Composable () -> Unit,
+) {
+    Box(modifier = modifier.fillMaxSize()) {
+        val tapModifier = if (onLongClick != null) {
+            Modifier.combinedClickable(
+                onClick = onClick,
+                onLongClick = onLongClick,
+            )
+        } else {
+            Modifier.clickable(onClick = onClick)
+        }
+        ElevatedCard(
+            modifier = Modifier
+                .fillMaxSize()
+                .then(tapModifier),
+            elevation = CardDefaults.elevatedCardElevation(
+                defaultElevation = CarDimensions.CardElevation,
+            ),
+            colors = CardDefaults.elevatedCardColors(
+                containerColor = MaterialTheme.colorScheme.surface,
+            ),
+        ) {
+            content()
+        }
+        overlay?.invoke()
+    }
+}
+
+@Composable
+private fun AppDrawerSquareFace(
+    label: String,
+    labelSizeSp: Int,
+    icon: @Composable (iconSize: Dp) -> Unit,
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(CarDimensions.PaneGap),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        BoxWithConstraints(
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxWidth(),
+            contentAlignment = Alignment.Center,
+        ) {
+            val iconSize = if (maxWidth < maxHeight) maxWidth else maxHeight
+            icon(iconSize)
+        }
+        if (labelSizeSp > 0) {
+            CarLabelText(
+                text = label,
+                style = MaterialTheme.typography.labelMedium.copy(fontSize = labelSizeSp.sp),
+                textAlign = TextAlign.Center,
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
     }
 }
 

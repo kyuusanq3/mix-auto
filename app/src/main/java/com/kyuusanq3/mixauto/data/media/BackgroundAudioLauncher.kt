@@ -8,7 +8,6 @@ import android.net.Uri
 import android.support.v4.media.MediaBrowserCompat
 import android.support.v4.media.session.MediaControllerCompat
 import android.util.Log
-import com.kyuusanq3.mixauto.ui.components.launchAppByPackage
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -104,13 +103,8 @@ object BackgroundAudioLauncher {
         wakeInBackground(appContext, packageName) { success ->
             if (success) {
                 Log.i(TAG, "Background wake succeeded for $packageName")
-                return@wakeInBackground
-            }
-            Log.i(TAG, "Background wake failed, using foreground launch + refocus for $packageName")
-            launchAppByPackage(appContext, packageName)
-            scope.launch {
-                delay(REFOCUS_DELAY_MS)
-                refocusOwnApp(appContext)
+            } else {
+                Log.i(TAG, "Background wake failed for $packageName; not opening the player")
             }
         }
     }

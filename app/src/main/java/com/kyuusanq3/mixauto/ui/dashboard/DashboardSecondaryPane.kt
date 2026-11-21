@@ -407,6 +407,8 @@ private fun MediaOrSettingsPane(
                         mediaState = mediaState,
                         albumArtMode = albumArtMode,
                         isPortrait = isPortrait,
+                        isLeftHandDrive = isLeftHandDrive,
+                        isShortcutsHorizontal = isShortcutsHorizontal,
                         modifier = Modifier.fillMaxSize(),
                     )
                 } else {

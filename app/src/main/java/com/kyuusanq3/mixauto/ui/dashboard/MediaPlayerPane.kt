@@ -10,9 +10,6 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.awaitEachGesture
-import androidx.compose.foundation.gestures.awaitFirstDown
-import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -56,7 +53,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
@@ -76,9 +72,6 @@ import com.kyuusanq3.mixauto.ui.theme.CarLabelText
 import com.kyuusanq3.mixauto.ui.theme.DarkSurface
 import com.kyuusanq3.mixauto.ui.theme.ElectricCyan
 import com.kyuusanq3.mixauto.ui.theme.OledBlack
-import kotlin.math.abs
-import kotlinx.coroutines.coroutineScope
-import kotlinx.coroutines.launch
 
 private val AlbumArtSwipeThreshold = 40.dp
 
@@ -228,59 +221,22 @@ fun MediaPlayerPane(
                                     mediaState.supportsLike,
                                     swipeThresholdPx,
                                 ) {
-                                    coroutineScope {
-                                        launch {
-                                            detectTapGestures(
-                                                onTap = {
-                                                    val sourcePackage = sourcePackageState.value
-                                                    if (hasActiveSessionState.value && sourcePackage.isNotBlank()) {
-                                                        launchAppByPackage(context, sourcePackage)
-                                                    }
-                                                },
-                                                onDoubleTap = {
-                                                    if (hasActiveSessionState.value) {
-                                                        onPlayPauseState.value()
-                                                    }
-                                                },
-                                                onLongPress = openAlbumArtModePicker,
-                                            )
-                                        }
-                                        launch {
-                                            awaitEachGesture {
-                                                if (!hasActiveSessionState.value) return@awaitEachGesture
-                                                val down = awaitFirstDown(requireUnconsumed = false)
-                                                var drag = Offset.Zero
-                                                var isDrag = false
-                                                while (true) {
-                                                    val event = awaitPointerEvent()
-                                                    val change = event.changes.firstOrNull { it.id == down.id }
-                                                        ?: break
-                                                    drag += change.positionChange()
-                                                    if (!change.pressed) break
-                                                    if (drag.getDistance() > swipeThresholdPx) {
-                                                        isDrag = true
-                                                    }
-                                                    if (isDrag) {
-                                                        change.consume()
-                                                    }
-                                                }
-                                                if (!isDrag) return@awaitEachGesture
-                                                val absX = abs(drag.x)
-                                                val absY = abs(drag.y)
-                                                when {
-                                                    absY > absX && drag.y < 0f && supportsLikeState.value -> {
-                                                        onToggleLikeState.value()
-                                                    }
-                                                    absX > absY && drag.x < 0f -> {
-                                                        onSkipPreviousState.value()
-                                                    }
-                                                    absX > absY && drag.x > 0f -> {
-                                                        onSkipNextState.value()
-                                                    }
-                                                }
+                                    detectPlaybackArtGestures(
+                                        swipeThresholdPx = swipeThresholdPx,
+                                        hasActiveSession = { hasActiveSessionState.value },
+                                        supportsLike = { supportsLikeState.value },
+                                        onOpenApp = {
+                                            val sourcePackage = sourcePackageState.value
+                                            if (sourcePackage.isNotBlank()) {
+                                                launchAppByPackage(context, sourcePackage)
                                             }
-                                        }
-                                    }
+                                        },
+                                        onPlayPause = { onPlayPauseState.value() },
+                                        onSkipPrevious = { onSkipPreviousState.value() },
+                                        onSkipNext = { onSkipNextState.value() },
+                                        onToggleLike = { onToggleLikeState.value() },
+                                        onLongPress = openAlbumArtModePicker,
+                                    )
                                 }
                             } else {
                                 Modifier

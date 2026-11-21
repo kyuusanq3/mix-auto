@@ -99,36 +99,23 @@ class MediaSessionRepository(context: Context) {
 
     fun ensureDefaultPlayerIfNeeded(
         defaultPackage: String?,
-        fallbackResumeLink: String? = null,
+        @Suppress("UNUSED_PARAMETER") fallbackResumeLink: String? = null,
         resumeOnStartupEnabled: Boolean = true,
     ) {
         if (!resumeOnStartupEnabled) return
         if (hasAttemptedBootLaunch) return
         if (_state.value.hasActiveSession) return
 
-        val trimmedDefault = defaultPackage?.takeIf { it.isNotBlank() }
-        val trimmedFallback = fallbackResumeLink?.takeIf { it.isNotBlank() }
-        if (trimmedDefault == null && trimmedFallback == null) return
+        val trimmedDefault = defaultPackage?.takeIf { it.isNotBlank() } ?: return
         hasAttemptedBootLaunch = true
 
-        trimmedDefault?.let { packageName ->
-            Log.i(TAG, "Waking default audio app on boot: $packageName")
-            BackgroundAudioLauncher.wakeWithForegroundFallback(appContext, packageName)
-        }
+        Log.i(TAG, "Waking default audio app on boot: $trimmedDefault")
+        BackgroundAudioLauncher.wakeWithForegroundFallback(appContext, trimmedDefault)
         for (delayMs in BOOT_REFRESH_DELAYS_MS) {
             scope.launch {
                 delay(delayMs)
                 if (!_state.value.hasActiveSession) {
                     refreshSessions()
-                }
-            }
-        }
-
-        trimmedFallback?.let { link ->
-            scope.launch {
-                delay(FALLBACK_LAUNCH_DELAY_MS)
-                if (!_state.value.hasActiveSession || _state.value.title.isBlank()) {
-                    BackgroundAudioLauncher.launchFallbackResumeLink(appContext, link, trimmedDefault)
                 }
             }
         }
@@ -425,7 +412,6 @@ class MediaSessionRepository(context: Context) {
     companion object {
         private const val TAG = "MediaSessionRepository"
         private val BOOT_REFRESH_DELAYS_MS = listOf(2_000L, 5_000L, 10_000L)
-        private const val FALLBACK_LAUNCH_DELAY_MS = 12_000L
         private val MANUAL_RESUME_REFRESH_DELAYS_MS = listOf(1_500L, 3_500L)
         private const val MANUAL_FALLBACK_LAUNCH_DELAY_MS = 5_000L
         private const val PLAYBACK_CLOCK_INTERVAL_MS = 1_000L

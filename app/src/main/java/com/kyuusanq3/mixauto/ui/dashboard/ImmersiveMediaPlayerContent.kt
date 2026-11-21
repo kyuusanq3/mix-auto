@@ -6,14 +6,10 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
-import androidx.compose.foundation.gestures.awaitEachGesture
-import androidx.compose.foundation.gestures.awaitFirstDown
-import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -35,12 +31,10 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -56,9 +50,6 @@ import com.kyuusanq3.mixauto.ui.theme.CarDimensions
 import com.kyuusanq3.mixauto.ui.theme.CarHeadlineText
 import com.kyuusanq3.mixauto.ui.theme.CarLabelText
 import com.kyuusanq3.mixauto.ui.theme.DarkSurface
-import kotlin.math.abs
-import kotlinx.coroutines.coroutineScope
-import kotlinx.coroutines.launch
 
 private val ImmersiveSwipeThreshold = 40.dp
 private val ImmersiveVisualizerHeight = 112.dp
@@ -172,59 +163,22 @@ fun ImmersiveMediaPlayerContent(
                     mediaState.supportsLike,
                     swipeThresholdPx,
                 ) {
-                    coroutineScope {
-                        launch {
-                            detectTapGestures(
-                                onTap = {
-                                    val sourcePackage = sourcePackageState.value
-                                    if (hasActiveSessionState.value && sourcePackage.isNotBlank()) {
-                                        launchAppByPackage(context, sourcePackage)
-                                    }
-                                },
-                                onDoubleTap = {
-                                    if (hasActiveSessionState.value) {
-                                        onPlayPauseState.value()
-                                    }
-                                },
-                                onLongPress = { onOpenAudioSettingsState.value() },
-                            )
-                        }
-                        launch {
-                            awaitEachGesture {
-                                if (!hasActiveSessionState.value) return@awaitEachGesture
-                                val down = awaitFirstDown(requireUnconsumed = false)
-                                var drag = Offset.Zero
-                                var isDrag = false
-                                while (true) {
-                                    val event = awaitPointerEvent()
-                                    val change = event.changes.firstOrNull { it.id == down.id }
-                                        ?: break
-                                    drag += change.positionChange()
-                                    if (!change.pressed) break
-                                    if (drag.getDistance() > swipeThresholdPx) {
-                                        isDrag = true
-                                    }
-                                    if (isDrag) {
-                                        change.consume()
-                                    }
-                                }
-                                if (!isDrag) return@awaitEachGesture
-                                val absX = abs(drag.x)
-                                val absY = abs(drag.y)
-                                when {
-                                    absY > absX && drag.y < 0f && supportsLikeState.value -> {
-                                        onToggleLikeState.value()
-                                    }
-                                    absX > absY && drag.x < 0f -> {
-                                        onSkipPreviousState.value()
-                                    }
-                                    absX > absY && drag.x > 0f -> {
-                                        onSkipNextState.value()
-                                    }
-                                }
+                    detectPlaybackArtGestures(
+                        swipeThresholdPx = swipeThresholdPx,
+                        hasActiveSession = { hasActiveSessionState.value },
+                        supportsLike = { supportsLikeState.value },
+                        onOpenApp = {
+                            val sourcePackage = sourcePackageState.value
+                            if (sourcePackage.isNotBlank()) {
+                                launchAppByPackage(context, sourcePackage)
                             }
-                        }
-                    }
+                        },
+                        onPlayPause = { onPlayPauseState.value() },
+                        onSkipPrevious = { onSkipPreviousState.value() },
+                        onSkipNext = { onSkipNextState.value() },
+                        onToggleLike = { onToggleLikeState.value() },
+                        onLongPress = { onOpenAudioSettingsState.value() },
+                    )
                 }
                 val artInteractionModifier = when {
                     showIdleLinkFallback -> Modifier.combinedClickable(
@@ -283,46 +237,54 @@ fun ImmersiveMediaPlayerContent(
                             .fillMaxSize()
                             .padding(CarDimensions.PaneGap),
                     ) {
-                        Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(end = CarDimensions.PanelHeaderTapTarget),
-                        ) {
-                            when {
-                                mediaState.hasActiveSession -> {
-                                    CarHeadlineText(
-                                        text = mediaState.displayTitle,
-                                        style = MaterialTheme.typography.headlineMedium,
-                                    )
-                                    if (mediaState.displayArtist.isNotBlank()) {
+                        if (!showIdleLinkFallback) {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(end = CarDimensions.PanelHeaderTapTarget),
+                            ) {
+                                when {
+                                    mediaState.hasActiveSession -> {
+                                        CarHeadlineText(
+                                            text = mediaState.displayTitle,
+                                            style = MaterialTheme.typography.headlineMedium,
+                                        )
+                                        if (mediaState.displayArtist.isNotBlank()) {
+                                            CarBodyText(
+                                                text = mediaState.displayArtist,
+                                                modifier = Modifier.padding(top = 4.dp),
+                                                style = MaterialTheme.typography.bodyLarge,
+                                                maxLines = 1,
+                                            )
+                                        }
+                                    }
+                                    showIdleDefaultPlayerFallback -> {
                                         CarBodyText(
-                                            text = mediaState.displayArtist,
-                                            modifier = Modifier.padding(top = 4.dp),
+                                            text = "Start music on the player manually",
                                             style = MaterialTheme.typography.bodyLarge,
-                                            maxLines = 1,
+                                            maxLines = 2,
                                         )
                                     }
-                                }
-                                showIdleLinkFallback -> {
-                                    IdleManualLinkArt(modifier = Modifier.fillMaxWidth())
-                                }
-                                showIdleDefaultPlayerFallback -> {
-                                    CarBodyText(
-                                        text = "Start music on the player manually",
-                                        style = MaterialTheme.typography.bodyLarge,
-                                        maxLines = 2,
-                                    )
-                                }
-                                else -> {
-                                    CarHeadlineText(
-                                        text = mediaState.displayTitle,
-                                        style = MaterialTheme.typography.headlineMedium,
-                                    )
+                                    else -> {
+                                        CarHeadlineText(
+                                            text = mediaState.displayTitle,
+                                            style = MaterialTheme.typography.headlineMedium,
+                                        )
+                                    }
                                 }
                             }
                         }
 
-                        Spacer(modifier = Modifier.weight(1f))
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .fillMaxWidth(),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            if (showIdleLinkFallback) {
+                                IdleManualLinkArt(modifier = Modifier.fillMaxWidth())
+                            }
+                        }
 
                         val meterModifier = Modifier
                             .fillMaxWidth()

@@ -2,8 +2,10 @@ package com.kyuusanq3.mixauto.ui.components
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -17,6 +19,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
@@ -56,7 +59,7 @@ fun CarMapViewContainer(
         }
     }
 
-    Box(
+    BoxWithConstraints(
         modifier = modifier
             .padding(
                 start = CarDimensions.PaneGap,
@@ -93,11 +96,15 @@ fun CarMapViewContainer(
             )
         }
 
+        val hudGap = CarDimensions.PaneGap
+        val searchSize = CarDimensions.PrimaryTapTarget
+        val navHudWidth = ((maxWidth - searchSize) / 2 - hudGap * 2).coerceAtLeast(0.dp)
         NavHudOverlay(
             engine = engine,
             modifier = Modifier
                 .align(Alignment.TopStart)
-                .padding(CarDimensions.PaneGap),
+                .padding(start = hudGap, top = hudGap)
+                .width(navHudWidth),
         )
 
         DestinationSearchFab(
