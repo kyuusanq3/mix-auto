@@ -87,7 +87,8 @@ fun ShortcutDock(
     mediaState: MediaPlaybackState,
     voiceSearchAvailable: Boolean = true,
     dockPinnedPackages: List<String> = emptyList(),
-    useEmbeddedGoogleMaps: Boolean = false,
+    embeddedPanePackage: String? = null,
+    onTogglePaneApp: (String) -> Unit = {},
     onToggleDockPin: (String) -> Unit = {},
     onTogglePanel: (ActivePanel) -> Unit,
     onVoiceSearch: () -> Unit = {},
@@ -141,7 +142,9 @@ fun ShortcutDock(
                         iconSize = iconSize,
                         itemSpacing = itemSpacing,
                         isLeftHandDrive = isLeftHandDrive,
-                        useEmbeddedGoogleMaps = useEmbeddedGoogleMaps,
+                        embeddedPanePackage = embeddedPanePackage,
+                        activeIndicatorPlacement = activeIndicatorPlacement,
+                        onTogglePaneApp = onTogglePaneApp,
                         onToggleDockPin = onToggleDockPin,
                     )
                     if (isLeftHandDrive) {
@@ -242,7 +245,9 @@ fun ShortcutDock(
                             iconSize = iconSize,
                             itemSpacing = itemSpacing,
                             isLeftHandDrive = isLeftHandDrive,
-                            useEmbeddedGoogleMaps = useEmbeddedGoogleMaps,
+                            embeddedPanePackage = embeddedPanePackage,
+                            activeIndicatorPlacement = activeIndicatorPlacement,
+                            onTogglePaneApp = onTogglePaneApp,
                             onToggleDockPin = onToggleDockPin,
                         )
                     }

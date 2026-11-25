@@ -17,8 +17,8 @@ import com.kyuusanq3.mixauto.ui.components.canLaunchApp
 import com.kyuusanq3.mixauto.ui.settings.DeveloperSettings
 
 /**
- * Owns a trusted virtual display that paints onto the map-pane [Surface], launches the
- * configured Maps (or probe) package onto that display, and forwards touch events into it.
+ * Owns a trusted virtual display that paints onto the map-pane [Surface], launches a
+ * shortcut-bar app onto that display, and forwards touch events into it.
  *
  * Requires the headunit flavor (platform-signed + sharedUserId=android.uid.system) so the
  * signature permissions ADD_TRUSTED_DISPLAY / INJECT_EVENTS / … are granted. Without those,
@@ -37,6 +37,7 @@ class EmbeddedMapDisplay(
     private var widthPx: Int = 0
     private var heightPx: Int = 0
     private var densityDpi: Int = 0
+    private var launchedPackage: String? = null
 
     val displayId: Int
         get() = virtualDisplay?.display?.displayId ?: android.view.Display.INVALID_DISPLAY
@@ -106,28 +107,36 @@ class EmbeddedMapDisplay(
     }
 
     /**
-     * Launch the target package on this virtual display. When [destinationUri] is set
-     * (e.g. `google.navigation:q=lat,lng`), that intent is used instead of the launcher activity.
+     * Launch [packageName] on this virtual display. When [destinationUri] is set
+     * (e.g. `google.navigation:q=lat,lng` for Google Maps), that intent is used instead
+     * of the launcher activity.
      */
-    fun launchTarget(destinationUri: String? = null): Boolean {
+    fun launchPackage(packageName: String, destinationUri: String? = null): Boolean {
         val vd = virtualDisplay ?: run {
-            Log.w(TAG, "launchTarget: no virtual display")
+            Log.w(TAG, "launchPackage: no virtual display")
             return false
         }
-        val packageName = resolveTargetPackage()
-        if (!canLaunchApp(appContext, packageName) && destinationUri == null) {
-            Log.w(TAG, "launchTarget: $packageName not installed")
+        val target = resolveEmbeddedPackage(packageName)
+        if (target.isBlank()) return false
+        if (!canLaunchApp(appContext, target) && destinationUri == null) {
+            Log.w(TAG, "launchPackage: $target not installed")
             return false
+        }
+
+        val previous = launchedPackage
+        val switchingPackage = previous != null && previous != target
+        if (switchingPackage) {
+            finishEscapedTasks(previous!!)
         }
 
         val intent = if (destinationUri != null) {
             Intent(Intent.ACTION_VIEW, Uri.parse(destinationUri)).apply {
-                setPackage(packageName)
+                setPackage(target)
             }
         } else {
-            appContext.packageManager.getLaunchIntentForPackage(packageName)
+            appContext.packageManager.getLaunchIntentForPackage(target)
                 ?: Intent(Intent.ACTION_MAIN).apply {
-                    setPackage(packageName)
+                    setPackage(target)
                     addCategory(Intent.CATEGORY_LAUNCHER)
                 }
         }
@@ -141,23 +150,27 @@ class EmbeddedMapDisplay(
         try {
             options.launchDisplayId = vd.display.displayId
         } catch (t: Throwable) {
-            Log.e(TAG, "launchTarget: setLaunchDisplayId failed", t)
+            Log.e(TAG, "launchPackage: setLaunchDisplayId failed", t)
+            if (switchingPackage) launchedPackage = null
             return false
         }
 
         return try {
             appContext.startActivity(intent, options.toBundle())
-            Log.i(TAG, "launchTarget: $packageName on display ${vd.display.displayId}")
+            launchedPackage = target
+            Log.i(TAG, "launchPackage: $target on display ${vd.display.displayId}")
             true
         } catch (t: Throwable) {
-            Log.e(TAG, "launchTarget: startActivity failed", t)
+            Log.e(TAG, "launchPackage: startActivity failed", t)
+            if (switchingPackage) launchedPackage = null
             false
         }
     }
 
     fun navigateTo(lat: Double, lng: Double): Boolean {
-        val uri = "google.navigation:q=$lat,$lng"
-        return launchTarget(destinationUri = uri)
+        val pkg = launchedPackage ?: return false
+        if (pkg != GOOGLE_MAPS_PACKAGE) return false
+        return launchPackage(pkg, destinationUri = "google.navigation:q=$lat,$lng")
     }
 
     /** Forward a pane-local [MotionEvent] into the virtual display. */
@@ -189,7 +202,8 @@ class EmbeddedMapDisplay(
      * the default display (MANAGE_ACTIVITY_TASKS / removeTask via reflection).
      */
     fun release() {
-        val packageName = resolveTargetPackage()
+        val packageName = launchedPackage
+        launchedPackage = null
         val vd = virtualDisplay
         virtualDisplay = null
         surface = null
@@ -201,7 +215,9 @@ class EmbeddedMapDisplay(
                 Log.w(TAG, "release: VirtualDisplay.release failed", t)
             }
         }
-        finishEscapedTasks(packageName)
+        if (!packageName.isNullOrBlank()) {
+            finishEscapedTasks(packageName)
+        }
     }
 
     private fun finishEscapedTasks(packageName: String) {
@@ -249,13 +265,11 @@ class EmbeddedMapDisplay(
                 FLAG_DESTROY_CONTENT_ON_REMOVAL or
                 FLAG_TRUSTED
 
-        fun resolveTargetPackage(): String {
+        /** Blank override keeps [requested]. A non-blank override is the embed-probe package. */
+        fun resolveEmbeddedPackage(requested: String): String {
             val override = DeveloperSettings.EMBEDDED_MAP_PACKAGE_OVERRIDE.trim()
-            return override.ifEmpty { GOOGLE_MAPS_PACKAGE }
+            return override.ifEmpty { requested }
         }
-
-        fun isTargetInstalled(context: Context): Boolean =
-            canLaunchApp(context, resolveTargetPackage())
     }
 }
 
@@ -281,6 +295,6 @@ object EmbeddedMapHost {
     fun navigateTo(lat: Double, lng: Double): Boolean =
         active?.navigateTo(lat, lng) ?: false
 
-    fun relaunchTarget(): Boolean =
-        active?.launchTarget() ?: false
+    fun launchPackage(packageName: String): Boolean =
+        active?.launchPackage(packageName) ?: false
 }

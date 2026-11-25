@@ -30,16 +30,17 @@ import com.kyuusanq3.mixauto.ui.theme.OledBlack
 import kotlinx.coroutines.delay
 
 /**
- * Map-pane host that paints an embedded Maps (or probe) app via [EmbeddedMapDisplay] onto a
- * [SurfaceView]. Replaces [CarMapViewContainer] when the Map Source first-party switch is on.
+ * Map-pane host that paints a shortcut-bar app via [EmbeddedMapDisplay] onto a [SurfaceView].
+ * Replaces [CarMapViewContainer] while [targetPackage] is set for this session.
  *
  * Pauses the MapLibre [engine] while composed so its GL thread stops; resumes on dispose.
- * Night-mode dim is drawn above the surface and must stay non-clickable so Maps still gets
- * touch events forwarded by the SurfaceView.
+ * Night-mode dim is drawn above the surface and must stay non-clickable so the embedded app
+ * still gets touch events forwarded by the SurfaceView.
  */
 @Composable
 fun EmbeddedMapFrame(
     engine: CarMapEngine,
+    targetPackage: String,
     nightModeEnabled: Boolean = false,
     nightModeAuto: Boolean = false,
     reduceTopInset: Boolean = false,
@@ -57,6 +58,15 @@ fun EmbeddedMapFrame(
             display.release()
             EmbeddedMapHost.unregister(display)
             engine.onResume()
+        }
+    }
+
+    LaunchedEffect(targetPackage, surfaceReady) {
+        if (!surfaceReady) return@LaunchedEffect
+        statusMessage = if (display.launchPackage(targetPackage)) {
+            null
+        } else {
+            "Could not open this app in the map pane."
         }
     }
 
@@ -92,17 +102,7 @@ fun EmbeddedMapFrame(
                             surfaceReady = ok
                             if (!ok) {
                                 statusMessage =
-                                    "Embedded map unavailable (platform permissions or SELinux)."
-                                return
-                            }
-                            if (!EmbeddedMapDisplay.isTargetInstalled(ctx)) {
-                                statusMessage =
-                                    "Google Maps is not installed. Install it, then toggle again."
-                                return
-                            }
-                            statusMessage = null
-                            if (!display.launchTarget()) {
-                                statusMessage = "Could not launch Google Maps on the map pane."
+                                    "Embedded app unavailable (platform permissions or SELinux)."
                             }
                         }
 

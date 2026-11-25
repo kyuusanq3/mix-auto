@@ -52,7 +52,6 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     val showTraffic: Boolean get() = mapPrefs.showTraffic
     val nightModeEnabled: Boolean get() = mapPrefs.nightModeEnabled
     val nightModeAuto: Boolean get() = mapPrefs.nightModeAuto
-    val useEmbeddedGoogleMaps: Boolean get() = mapPrefs.useEmbeddedGoogleMaps
     val navigationVoiceEnabled: Boolean get() = mapPrefs.navigationVoiceEnabled
     val navigationVoiceVolume: Float get() = mapPrefs.navigationVoiceVolume
     val navigationVoiceBoost: Boolean get() = mapPrefs.navigationVoiceBoost
@@ -88,6 +87,21 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
 
     var dockPinnedPackages by mutableStateOf(loadValidatedDockPinnedPackages())
         private set
+
+    /**
+     * Shortcut package painted in the map pane for this process. Not saved.
+     * Null means the built-in map. A second tap on the same shortcut clears it.
+     */
+    var embeddedPanePackage by mutableStateOf<String?>(null)
+        private set
+
+    fun toggleShortcutPaneApp(packageName: String) {
+        if (packageName.isBlank() || packageName !in dockPinnedPackages) {
+            embeddedPanePackage = null
+            return
+        }
+        embeddedPanePackage = if (embeddedPanePackage == packageName) null else packageName
+    }
 
     var isLeftHandDrive by mutableStateOf(preferences.isLeftHandDrive)
         private set
@@ -441,9 +455,6 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
 
     fun toggleNightModeAuto() = mapPrefs.toggleNightModeAuto()
 
-    fun updateUseEmbeddedGoogleMaps(enabled: Boolean) =
-        mapPrefs.updateUseEmbeddedGoogleMaps(enabled)
-
     fun toggleNavigationVoice() = mapPrefs.toggleNavigationVoice()
 
     fun updateNavigationVoiceVolume(value: Float) = mapPrefs.updateNavigationVoiceVolume(value)
@@ -495,6 +506,10 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
             return
         }
         preferences.dockPinnedPackages = dockPinnedPackages
+        val panePackage = embeddedPanePackage
+        if (panePackage != null && panePackage !in dockPinnedPackages) {
+            embeddedPanePackage = null
+        }
     }
 
     fun addRecentDestination(place: SearchResultPlace) {

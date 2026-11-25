@@ -73,9 +73,9 @@ object DeveloperSettings {
     const val NAV_TTS_PREPARE_CUES: Boolean = false
 
     /**
-     * Headunit Map Source embed target override. Blank = `com.google.android.apps.maps`.
-     * Set to the probe package (e.g. `com.kyuusanq3.embedprobe`) when testing on an AOSP
-     * emulator that has no Google Maps. See tools/embed-probe/.
+     * Forces the map-pane embed onto this package instead of the shortcut that was tapped.
+     * Blank uses the tapped shortcut. Set to the probe package (e.g. `com.kyuusanq3.embedprobe`)
+     * when testing on an AOSP emulator. See tools/embed-probe/.
      */
     const val EMBEDDED_MAP_PACKAGE_OVERRIDE: String = ""
 }

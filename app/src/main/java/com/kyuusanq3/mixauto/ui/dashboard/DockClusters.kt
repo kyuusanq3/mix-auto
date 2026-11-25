@@ -31,8 +31,6 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.dp
 import com.kyuusanq3.mixauto.BuildConfig
-import com.kyuusanq3.mixauto.data.map.EmbeddedMapDisplay
-import com.kyuusanq3.mixauto.data.map.EmbeddedMapHost
 import com.kyuusanq3.mixauto.ui.components.AppContextDropdownMenu
 import com.kyuusanq3.mixauto.ui.components.launchAppByPackage
 import com.kyuusanq3.mixauto.ui.components.rememberAppIcon
@@ -117,7 +115,9 @@ internal fun CenterDockCluster(
     iconSize: Dp,
     itemSpacing: Dp,
     isLeftHandDrive: Boolean,
-    useEmbeddedGoogleMaps: Boolean = false,
+    embeddedPanePackage: String?,
+    activeIndicatorPlacement: DockActiveIndicatorPlacement,
+    onTogglePaneApp: (String) -> Unit,
     onToggleDockPin: (String) -> Unit,
 ) {
     if (isHorizontal) {
@@ -135,7 +135,9 @@ internal fun CenterDockCluster(
                         iconSize = iconSize,
                         isPinnedToDock = true,
                         canAddToDock = true,
-                        useEmbeddedGoogleMaps = useEmbeddedGoogleMaps,
+                        isPaneActive = embeddedPanePackage == packageName,
+                        activeIndicatorPlacement = activeIndicatorPlacement,
+                        onTogglePaneApp = { onTogglePaneApp(packageName) },
                         onToggleDockPin = { onToggleDockPin(packageName) },
                     )
                 }
@@ -156,7 +158,9 @@ internal fun CenterDockCluster(
                         iconSize = iconSize,
                         isPinnedToDock = true,
                         canAddToDock = true,
-                        useEmbeddedGoogleMaps = useEmbeddedGoogleMaps,
+                        isPaneActive = embeddedPanePackage == packageName,
+                        activeIndicatorPlacement = activeIndicatorPlacement,
+                        onTogglePaneApp = { onTogglePaneApp(packageName) },
                         onToggleDockPin = { onToggleDockPin(packageName) },
                     )
                 }
@@ -175,7 +179,9 @@ private fun PinnedDockAppItem(
     iconSize: Dp,
     isPinnedToDock: Boolean,
     canAddToDock: Boolean,
-    useEmbeddedGoogleMaps: Boolean = false,
+    isPaneActive: Boolean,
+    activeIndicatorPlacement: DockActiveIndicatorPlacement,
+    onTogglePaneApp: () -> Unit,
     onToggleDockPin: () -> Unit,
 ) {
     val context = LocalContext.current
@@ -202,16 +208,11 @@ private fun PinnedDockAppItem(
                 .size(tapTarget)
                 .combinedClickable(
                     onClick = {
-                        val embedTarget = EmbeddedMapDisplay.resolveTargetPackage()
-                        val embedActive =
-                            BuildConfig.HEADUNIT_SYSTEM &&
-                                useEmbeddedGoogleMaps &&
-                                packageName == embedTarget
-                        if (embedActive && EmbeddedMapHost.relaunchTarget()) {
-                            // Keep Maps on the map-pane virtual display.
-                            return@combinedClickable
+                        if (BuildConfig.HEADUNIT_SYSTEM) {
+                            onTogglePaneApp()
+                        } else {
+                            launchAppByPackage(context, packageName)
                         }
-                        launchAppByPackage(context, packageName)
                     },
                     onLongClick = { showMenu = true },
                 ),
@@ -233,6 +234,7 @@ private fun PinnedDockAppItem(
                     tint = MaterialTheme.colorScheme.primary,
                 )
             }
+            DockActiveIndicator(isPaneActive, activeIndicatorPlacement)
         }
         AppContextDropdownMenu(
             expanded = showMenu,

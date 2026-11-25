@@ -58,10 +58,6 @@ internal class LauncherMapPrefs(
     var nightModeAuto by mutableStateOf(preferences.nightModeAuto)
         private set
 
-    /** Headunit flavor only — Map Source first-party app switch. */
-    var useEmbeddedGoogleMaps by mutableStateOf(preferences.useEmbeddedGoogleMaps)
-        private set
-
     var navigationVoiceEnabled by mutableStateOf(preferences.navigationVoiceEnabled)
         private set
 
@@ -116,12 +112,6 @@ internal class LauncherMapPrefs(
     fun toggleNightModeAuto() {
         nightModeAuto = !nightModeAuto
         preferences.nightModeAuto = nightModeAuto
-    }
-
-    /** Named update* to avoid JVM clash with the `useEmbeddedGoogleMaps` property setter. */
-    fun updateUseEmbeddedGoogleMaps(enabled: Boolean) {
-        useEmbeddedGoogleMaps = enabled
-        preferences.useEmbeddedGoogleMaps = enabled
     }
 
     fun toggleNavigationVoice() {

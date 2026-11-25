@@ -61,7 +61,6 @@ internal fun DashboardSecondaryPaneSlot(
         showTraffic = props.showTraffic,
         nightModeEnabled = props.nightModeEnabled,
         nightModeAuto = props.nightModeAuto,
-        useEmbeddedGoogleMaps = props.useEmbeddedGoogleMaps,
         navigationVoiceEnabled = props.navigationVoiceEnabled,
         navigationVoiceVolume = props.navigationVoiceVolume,
         tomTomApiKey = props.tomTomApiKey,
@@ -138,7 +137,8 @@ private fun DashboardHorizontalDock(
         mediaState = dock.mediaState,
         voiceSearchAvailable = dock.voiceSearchAvailable,
         dockPinnedPackages = dock.dockPinnedPackages,
-        useEmbeddedGoogleMaps = dock.useEmbeddedGoogleMaps,
+        embeddedPanePackage = dock.embeddedPanePackage,
+        onTogglePaneApp = dock.onTogglePaneApp,
         onToggleDockPin = dock.onToggleDockPin,
         onTogglePanel = dock.onTogglePanel,
         onVoiceSearch = dock.onVoiceSearch,
@@ -160,7 +160,8 @@ private fun DashboardVerticalDock(
         mediaState = dock.mediaState,
         voiceSearchAvailable = dock.voiceSearchAvailable,
         dockPinnedPackages = dock.dockPinnedPackages,
-        useEmbeddedGoogleMaps = dock.useEmbeddedGoogleMaps,
+        embeddedPanePackage = dock.embeddedPanePackage,
+        onTogglePaneApp = dock.onTogglePaneApp,
         onToggleDockPin = dock.onToggleDockPin,
         onTogglePanel = dock.onTogglePanel,
         onVoiceSearch = dock.onVoiceSearch,
@@ -177,11 +178,11 @@ private fun DashboardMapView(
         HeadUnitInfoPane(modifier = modifier)
         return
     }
-    val showEmbedded =
-        BuildConfig.HEADUNIT_SYSTEM && map.useEmbeddedGoogleMaps
-    if (showEmbedded) {
+    val panePackage = map.embeddedPanePackage
+    if (BuildConfig.HEADUNIT_SYSTEM && !panePackage.isNullOrBlank()) {
         EmbeddedMapFrame(
             engine = map.mapEngine,
+            targetPackage = panePackage,
             nightModeEnabled = map.nightModeEnabled,
             nightModeAuto = map.nightModeAuto,
             reduceTopInset = map.reduceTopInsetBelowStatusStrip,
