@@ -4,14 +4,14 @@ import android.content.Intent
 import android.net.Uri
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.PlayArrow
@@ -62,117 +62,113 @@ fun AudioSettingsPanelContent(
         }
     }
 
+    val scrollState = rememberScrollState()
     Surface(
-        modifier = modifier,
+        modifier = modifier.carScrollbar(scrollState),
         color = OledBlack,
     ) {
-        Box(modifier = Modifier.fillMaxSize()) {
-            Column(
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .verticalScroll(scrollState)
+                .padding(
+                    horizontal = CarDimensions.PaneGap * 2,
+                    vertical = CarDimensions.PaneGap / 2,
+                ),
+        ) {
+            PanelHeaderRow(
+                title = "Audio Settings",
+                onClose = onDismiss,
+                closeContentDescription = "Close audio settings",
+                compact = true,
+                largeActions = true,
+                trailingContent = {
+                    PanelHeaderIconButton(
+                        onClick = { showGestureHint = true },
+                        contentDescription = "Playback gesture help",
+                        icon = Icons.Filled.Info,
+                        large = true,
+                    )
+                },
+            )
+
+            AudioPlayerListContent(
+                defaultAudioPackage = launcherViewModel.defaultAudioPackage,
+                headerTitle = null,
+                headerMessage = "Default audio source",
+                showCloseButton = false,
+                showLongPressHint = true,
+                onDismiss = {},
+                onAppClick = { app -> launchAppByPackage(context, app.packageName) },
+                onRequestSetDefault = { app -> pendingDefaultApp = app },
                 modifier = Modifier
-                    .fillMaxSize()
-                    .padding(
-                        horizontal = CarDimensions.PaneGap * 2,
-                        vertical = CarDimensions.PaneGap / 2,
-                    ),
-            ) {
-                PanelHeaderRow(
-                    title = "Audio Settings",
-                    onClose = onDismiss,
-                    closeContentDescription = "Close audio settings",
-                    compact = true,
-                    largeActions = true,
-                    trailingContent = {
-                        PanelHeaderIconButton(
-                            onClick = { showGestureHint = true },
-                            contentDescription = "Playback gesture help",
-                            icon = Icons.Filled.Info,
-                            large = true,
-                        )
-                    },
-                )
+                    .fillMaxWidth()
+                    .padding(top = CarDimensions.PaneGap),
+                fillAvailableHeight = false,
+            )
 
-                Box(
-                    modifier = Modifier
-                        .weight(1f)
-                        .fillMaxWidth()
-                        .padding(top = CarDimensions.PaneGap),
-                ) {
-                    AudioPlayerListContent(
-                        defaultAudioPackage = launcherViewModel.defaultAudioPackage,
-                        headerTitle = null,
-                        headerMessage = "Default audio source",
-                        showCloseButton = false,
-                        showLongPressHint = true,
-                        onDismiss = {},
-                        onAppClick = { app -> launchAppByPackage(context, app.packageName) },
-                        onRequestSetDefault = { app -> pendingDefaultApp = app },
-                        modifier = Modifier.fillMaxSize(),
-                    )
-                }
+            AudioFallbackLinkSection(
+                value = launcherViewModel.audioFallbackResumeLink,
+                onValueChange = launcherViewModel::updateAudioFallbackResumeLink,
+            )
 
-                AudioFallbackLinkSection(
-                    value = launcherViewModel.audioFallbackResumeLink,
-                    onValueChange = launcherViewModel::updateAudioFallbackResumeLink,
-                )
+            SettingsSwitchRow(
+                label = "Resume playback on startup",
+                checked = launcherViewModel.resumeAudioOnStartup,
+                onCheckedChange = launcherViewModel::updateResumeAudioOnStartup,
+            )
+            CarLabelText(
+                text = "Wakes your default source (or fallback link) if nothing resumes automatically.",
+                style = MaterialTheme.typography.labelMedium,
+                modifier = Modifier.padding(bottom = CarDimensions.PaneGap / 2),
+            )
 
-                SettingsSwitchRow(
-                    label = "Resume playback on startup",
-                    checked = launcherViewModel.resumeAudioOnStartup,
-                    onCheckedChange = launcherViewModel::updateResumeAudioOnStartup,
-                )
-                CarLabelText(
-                    text = "Wakes your default source (or fallback link) if nothing resumes automatically.",
-                    style = MaterialTheme.typography.labelMedium,
-                    modifier = Modifier.padding(bottom = CarDimensions.PaneGap / 2),
-                )
-
-                CarBodyText(
-                    text = "Now playing display",
-                    style = MaterialTheme.typography.bodyLarge,
-                    modifier = Modifier.padding(top = CarDimensions.PaneGap / 2),
-                )
-                AudioMeterStyle.entries.forEach { style ->
-                    AudioMeterStyleOption(
-                        label = style.label,
-                        selected = launcherViewModel.audioMeterStyle == style,
-                        onSelect = { launcherViewModel.updateAudioMeterStyle(style) },
-                    )
-                }
-                CarLabelText(
-                    text = "The progress line shows how far the track has played. Bars are the animated spectrum.",
-                    style = MaterialTheme.typography.labelMedium,
-                    modifier = Modifier.padding(bottom = CarDimensions.PaneGap / 2),
-                )
-
-                SettingsSwitchRow(
-                    label = "Show playback buttons on album art",
-                    checked = launcherViewModel.showAlbumArtControls,
-                    onCheckedChange = launcherViewModel::updateShowAlbumArtControls,
-                )
-                CarLabelText(
-                    text = "Off by default. Tap album art to open the player, double-tap to play or pause, swipe to skip or like.",
-                    style = MaterialTheme.typography.labelMedium,
+            CarBodyText(
+                text = "Now playing display",
+                style = MaterialTheme.typography.bodyLarge,
+                modifier = Modifier.padding(top = CarDimensions.PaneGap / 2),
+            )
+            AudioMeterStyle.entries.forEach { style ->
+                AudioMeterStyleOption(
+                    label = style.label,
+                    selected = launcherViewModel.audioMeterStyle == style,
+                    onSelect = { launcherViewModel.updateAudioMeterStyle(style) },
                 )
             }
+            CarLabelText(
+                text = "The progress line shows how far the track has played. Bars are the animated spectrum.",
+                style = MaterialTheme.typography.labelMedium,
+                modifier = Modifier.padding(bottom = CarDimensions.PaneGap / 2),
+            )
 
-            pendingDefaultApp?.let { app ->
-                SetDefaultAudioConfirmDialog(
-                    app = app,
-                    onConfirm = {
-                        launcherViewModel.updateDefaultAudioPackage(app.packageName)
-                        pendingDefaultApp = null
-                    },
-                    onDismiss = { pendingDefaultApp = null },
-                )
-            }
-
-            if (showGestureHint) {
-                GestureHintDialog(
-                    supportsLike = true,
-                    onDismiss = { showGestureHint = false },
-                )
-            }
+            SettingsSwitchRow(
+                label = "Show playback buttons on album art",
+                checked = launcherViewModel.showAlbumArtControls,
+                onCheckedChange = launcherViewModel::updateShowAlbumArtControls,
+            )
+            CarLabelText(
+                text = "Off by default. Tap album art to open the player, double-tap to play or pause, swipe to skip or like.",
+                style = MaterialTheme.typography.labelMedium,
+            )
         }
+    }
+
+    pendingDefaultApp?.let { app ->
+        SetDefaultAudioConfirmDialog(
+            app = app,
+            onConfirm = {
+                launcherViewModel.updateDefaultAudioPackage(app.packageName)
+                pendingDefaultApp = null
+            },
+            onDismiss = { pendingDefaultApp = null },
+        )
+    }
+
+    if (showGestureHint) {
+        GestureHintDialog(
+            supportsLike = true,
+            onDismiss = { showGestureHint = false },
+        )
     }
 }
 

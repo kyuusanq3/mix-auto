@@ -107,7 +107,13 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     var appDrawerColumnCount by mutableStateOf(preferences.appDrawerColumnCount)
         private set
 
+    var appDrawerRowCount by mutableStateOf(preferences.appDrawerRowCount)
+        private set
+
     var appDrawerPagingMode by mutableStateOf(preferences.appDrawerPagingMode)
+        private set
+
+    var appDrawerLabelSp by mutableStateOf(preferences.appDrawerLabelSp)
         private set
 
     var recentDestinations by mutableStateOf(preferences.recentDestinations)
@@ -308,9 +314,27 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         preferences.appDrawerColumnCount = clamped
     }
 
+    fun updateAppDrawerRowCount(count: Int) {
+        val clamped = count.coerceIn(
+            LauncherPreferences.MIN_APP_DRAWER_ROWS,
+            LauncherPreferences.MAX_APP_DRAWER_ROWS,
+        )
+        appDrawerRowCount = clamped
+        preferences.appDrawerRowCount = clamped
+    }
+
     fun updateAppDrawerPagingMode(mode: AppDrawerPagingMode) {
         appDrawerPagingMode = mode
         preferences.appDrawerPagingMode = mode
+    }
+
+    fun updateAppDrawerLabelSp(sizeSp: Int) {
+        val clamped = sizeSp.coerceIn(
+            LauncherPreferences.MIN_APP_DRAWER_LABEL_SP,
+            LauncherPreferences.MAX_APP_DRAWER_LABEL_SP,
+        )
+        appDrawerLabelSp = clamped
+        preferences.appDrawerLabelSp = clamped
     }
 
     init {

@@ -2,24 +2,46 @@ package com.kyuusanq3.mixauto.ui.components
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.CropFree
+import androidx.compose.material.icons.filled.Flag
+import androidx.compose.material.icons.filled.ForkLeft
+import androidx.compose.material.icons.filled.ForkRight
 import androidx.compose.material.icons.filled.GpsFixed
 import androidx.compose.material.icons.filled.Layers
+import androidx.compose.material.icons.filled.Merge
+import androidx.compose.material.icons.filled.Navigation
+import androidx.compose.material.icons.filled.RampLeft
+import androidx.compose.material.icons.filled.RampRight
+import androidx.compose.material.icons.filled.RoundaboutLeft
+import androidx.compose.material.icons.filled.RoundaboutRight
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Straight
+import androidx.compose.material.icons.filled.TurnLeft
+import androidx.compose.material.icons.filled.TurnRight
+import androidx.compose.material.icons.filled.TurnSharpLeft
+import androidx.compose.material.icons.filled.TurnSharpRight
+import androidx.compose.material.icons.filled.TurnSlightLeft
+import androidx.compose.material.icons.filled.TurnSlightRight
+import androidx.compose.material.icons.filled.UTurnLeft
+import androidx.compose.material.icons.filled.UTurnRight
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -28,6 +50,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -35,19 +58,24 @@ import androidx.compose.ui.unit.sp
 import com.kyuusanq3.mixauto.domain.map.CarMapEngine
 import com.kyuusanq3.mixauto.ui.theme.CarBodyText
 import com.kyuusanq3.mixauto.ui.theme.CarDimensions
+import com.kyuusanq3.mixauto.ui.theme.CarHeadlineText
 import com.kyuusanq3.mixauto.ui.theme.CarLabelText
+import com.kyuusanq3.mixauto.ui.theme.DarkSurface
 import com.kyuusanq3.mixauto.ui.theme.ElectricCyan
 import com.kyuusanq3.mixauto.ui.theme.OledBlack
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 
-/** Top-down and recenter controls are 1.5x [CarDimensions.MinTapTarget] (64 dp -> 96 dp). */
+/** End-nav, top-down, and recenter controls are 1.5x [CarDimensions.MinTapTarget] (64 dp -> 96 dp). */
 private val MapCameraActionSize = CarDimensions.MinTapTarget * 1.5f
 private val MapCameraActionIconSize = 36.dp
 
 internal val MapLibreAttributionReserveDp = 40.dp
 internal val SpeedCircleSize = 54.dp
 internal val SpeedCircleBottomInset = 4.dp
+private val NavHudManeuverIconSize = 48.dp
+private val NavHudCornerRadius = CarDimensions.CardCornerRadius * 1.5f
+private val NavHudTextWhite = Color.White
 
 @Composable
 internal fun OfflineMapLabelOverlay(
@@ -100,29 +128,75 @@ internal fun NavHudOverlay(
         .distinctUntilChanged()
         .collectAsState(initial = null)
 
-    Column(
-        modifier = modifier
-            .background(OledBlack.copy(alpha = 0.72f))
-            .padding(CarDimensions.PaneGap),
+    Surface(
+        modifier = modifier,
+        shape = RoundedCornerShape(NavHudCornerRadius),
+        color = DarkSurface.copy(alpha = 0.92f),
+        contentColor = NavHudTextWhite,
+        shadowElevation = CarDimensions.CardElevation,
     ) {
-        CarBodyText(
-            text = streetName,
-            style = MaterialTheme.typography.bodyLarge,
-        )
-        turnInstruction?.let { instruction ->
-            CarLabelText(
-                text = instruction,
-                modifier = Modifier.padding(top = CarDimensions.PaneGap / 2),
-                style = MaterialTheme.typography.labelLarge,
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(CarDimensions.PaneGap),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(CarDimensions.PaneGap),
+        ) {
+            Icon(
+                imageVector = maneuverIcon(turnInstruction),
+                contentDescription = turnInstruction ?: "On route",
+                modifier = Modifier.size(NavHudManeuverIconSize),
+                tint = ElectricCyan,
             )
+            Column(modifier = Modifier.weight(1f)) {
+                CarHeadlineText(
+                    text = streetName,
+                    style = MaterialTheme.typography.headlineLarge.copy(color = NavHudTextWhite),
+                )
+                turnInstruction?.let { instruction ->
+                    CarBodyText(
+                        text = instruction,
+                        modifier = Modifier.padding(top = 2.dp),
+                        style = MaterialTheme.typography.titleLarge.copy(color = NavHudTextWhite),
+                        maxLines = 1,
+                    )
+                }
+                distanceToNextTurn?.let { distance ->
+                    CarLabelText(
+                        text = distance,
+                        modifier = Modifier.padding(top = 2.dp),
+                        style = MaterialTheme.typography.titleMedium.copy(color = NavHudTextWhite),
+                    )
+                }
+            }
         }
-        distanceToNextTurn?.let { distance ->
-            CarLabelText(
-                text = distance,
-                modifier = Modifier.padding(top = CarDimensions.PaneGap / 4),
-                style = MaterialTheme.typography.labelMedium,
-            )
+    }
+}
+
+private fun maneuverIcon(instruction: String?): ImageVector {
+    val lower = instruction.orEmpty().trim().lowercase()
+    return when {
+        lower.contains("u-turn") || lower.contains("uturn") -> {
+            if (lower.contains("right")) Icons.Filled.UTurnRight else Icons.Filled.UTurnLeft
         }
+        lower.startsWith("depart") -> Icons.Filled.Navigation
+        lower.contains("arrive") -> Icons.Filled.Flag
+        lower.contains("roundabout") -> {
+            if (lower.contains("left")) Icons.Filled.RoundaboutLeft else Icons.Filled.RoundaboutRight
+        }
+        lower.contains("ramp") || lower.contains("exit") -> {
+            if (lower.contains("left")) Icons.Filled.RampLeft else Icons.Filled.RampRight
+        }
+        lower.contains("merge") -> Icons.Filled.Merge
+        lower.contains("keep left") || lower.contains("fork left") -> Icons.Filled.ForkLeft
+        lower.contains("keep right") || lower.contains("fork right") -> Icons.Filled.ForkRight
+        lower.contains("sharp left") -> Icons.Filled.TurnSharpLeft
+        lower.contains("sharp right") -> Icons.Filled.TurnSharpRight
+        lower.contains("slight left") -> Icons.Filled.TurnSlightLeft
+        lower.contains("slight right") -> Icons.Filled.TurnSlightRight
+        lower.contains("left") -> Icons.Filled.TurnLeft
+        lower.contains("right") -> Icons.Filled.TurnRight
+        else -> Icons.Filled.Straight
     }
 }
 
@@ -189,12 +263,13 @@ internal fun MapToolbarOverlay(
             IconButton(
                 onClick = { engine.startFreeDrive() },
                 modifier = Modifier
-                    .size(CarDimensions.MinTapTarget)
+                    .size(MapCameraActionSize)
                     .background(Color(0xBBCC2200), MaterialTheme.shapes.small),
             ) {
                 Icon(
                     imageVector = Icons.Filled.Close,
                     contentDescription = "End navigation",
+                    modifier = Modifier.size(MapCameraActionIconSize),
                     tint = Color.White,
                 )
             }

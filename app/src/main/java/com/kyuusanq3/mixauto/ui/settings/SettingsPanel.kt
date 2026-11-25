@@ -222,29 +222,87 @@ private fun AppDrawerSettingsSection(
     launcherViewModel: LauncherViewModel = viewModel(),
 ) {
     val columnCount = launcherViewModel.appDrawerColumnCount
+    val rowCount = launcherViewModel.appDrawerRowCount
     val pagingMode = launcherViewModel.appDrawerPagingMode
     Column(
         modifier = Modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
         CarBodyText(
-            text = "App drawer columns",
+            text = "App drawer grid",
             style = MaterialTheme.typography.bodyLarge,
         )
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(CarDimensions.PaneGap),
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                CarLabelText(
+                    text = "Columns",
+                    style = MaterialTheme.typography.labelMedium,
+                )
+                Slider(
+                    value = columnCount.toFloat(),
+                    onValueChange = { raw ->
+                        launcherViewModel.updateAppDrawerColumnCount(raw.roundToInt())
+                    },
+                    valueRange = LauncherPreferences.MIN_APP_DRAWER_COLUMNS.toFloat()..
+                        LauncherPreferences.MAX_APP_DRAWER_COLUMNS.toFloat(),
+                    steps = LauncherPreferences.MAX_APP_DRAWER_COLUMNS -
+                        LauncherPreferences.MIN_APP_DRAWER_COLUMNS - 1,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(CarDimensions.MinTapTarget),
+                )
+                CarLabelText(
+                    text = "$columnCount columns",
+                    style = MaterialTheme.typography.labelMedium,
+                )
+            }
+            Column(modifier = Modifier.weight(1f)) {
+                CarLabelText(
+                    text = "Rows per page",
+                    style = MaterialTheme.typography.labelMedium,
+                )
+                Slider(
+                    value = rowCount.toFloat(),
+                    onValueChange = { raw ->
+                        launcherViewModel.updateAppDrawerRowCount(raw.roundToInt())
+                    },
+                    valueRange = LauncherPreferences.MIN_APP_DRAWER_ROWS.toFloat()..
+                        LauncherPreferences.MAX_APP_DRAWER_ROWS.toFloat(),
+                    steps = LauncherPreferences.MAX_APP_DRAWER_ROWS -
+                        LauncherPreferences.MIN_APP_DRAWER_ROWS - 1,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(CarDimensions.MinTapTarget),
+                )
+                CarLabelText(
+                    text = "$rowCount rows",
+                    style = MaterialTheme.typography.labelMedium,
+                )
+            }
+        }
+        val labelSp = launcherViewModel.appDrawerLabelSp
+        CarLabelText(
+            text = "App name size",
+            style = MaterialTheme.typography.labelMedium,
+        )
         Slider(
-            value = columnCount.toFloat(),
+            value = labelSp.toFloat(),
             onValueChange = { raw ->
-                launcherViewModel.updateAppDrawerColumnCount(raw.roundToInt())
+                launcherViewModel.updateAppDrawerLabelSp(raw.roundToInt())
             },
-            valueRange = LauncherPreferences.MIN_APP_DRAWER_COLUMNS.toFloat()..
-                LauncherPreferences.MAX_APP_DRAWER_COLUMNS.toFloat(),
-            steps = 2,
+            valueRange = LauncherPreferences.MIN_APP_DRAWER_LABEL_SP.toFloat()..
+                LauncherPreferences.MAX_APP_DRAWER_LABEL_SP.toFloat(),
+            steps = LauncherPreferences.MAX_APP_DRAWER_LABEL_SP -
+                LauncherPreferences.MIN_APP_DRAWER_LABEL_SP - 1,
             modifier = Modifier
                 .fillMaxWidth()
                 .height(CarDimensions.MinTapTarget),
         )
         CarLabelText(
-            text = "$columnCount columns",
+            text = if (labelSp == 0) "Hidden" else "$labelSp sp",
             style = MaterialTheme.typography.labelMedium,
         )
         CarBodyText(
@@ -259,7 +317,7 @@ private fun AppDrawerSettingsSection(
             )
         }
         CarLabelText(
-            text = "Scroll is continuous. Swipe horizontal and swipe vertical move one page at a time.",
+            text = "Scroll is continuous in that direction. Swipe pages snap using the column and row counts.",
             style = MaterialTheme.typography.labelMedium,
         )
     }

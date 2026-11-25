@@ -1,7 +1,8 @@
 package com.kyuusanq3.mixauto.ui.dashboard
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -24,9 +25,15 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.composed
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.positionChange
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.PlatformTextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -51,6 +58,7 @@ import com.kyuusanq3.mixauto.ui.theme.TrafficFlowModerate
 import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
 import java.util.Locale
+import kotlin.math.abs
 import kotlinx.coroutines.delay
 
 private const val TRAFFIC_REFRESH_MS = 3 * 60 * 1000L
@@ -66,6 +74,8 @@ internal fun AudioPlayerMinimizedSidebar(
     mediaState: MediaPlaybackState,
     albumArtMode: AlbumArtMode,
     isPortrait: Boolean,
+    isLeftHandDrive: Boolean,
+    isShortcutsHorizontal: Boolean,
     modifier: Modifier = Modifier,
 ) {
     val statusBarViewModel: StatusBarViewModel = viewModel()
@@ -149,9 +159,16 @@ internal fun AudioPlayerMinimizedSidebar(
         platformStyle = PlatformTextStyle(includeFontPadding = false),
     )
 
+    val mediaOnRight = isLeftHandDrive || !isShortcutsHorizontal
+    val expandGestures = Modifier.minimizedAudioExpandGestures(
+        isPortrait = isPortrait,
+        mediaOnRight = mediaOnRight,
+        onExpand = onToggleMinimized,
+    )
+
     if (isPortrait) {
         PortraitMinimizedBar(
-            onToggleMinimized = onToggleMinimized,
+            expandGestures = expandGestures,
             hourText = hourText,
             minuteText = minuteText,
             amPmText = amPmText,
@@ -173,7 +190,7 @@ internal fun AudioPlayerMinimizedSidebar(
         modifier = modifier
             .fillMaxSize()
             .background(DeepCharcoal)
-            .clickable(onClick = onToggleMinimized)
+            .then(expandGestures)
             .padding(CarDimensions.PaneGap),
         verticalArrangement = Arrangement.spacedBy(SECTION_GAP, Alignment.Top),
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -267,7 +284,7 @@ internal fun AudioPlayerMinimizedSidebar(
 /** Compact horizontal bar for the minimized audio player in portrait: drag-down collapses to this strip. */
 @Composable
 private fun PortraitMinimizedBar(
-    onToggleMinimized: () -> Unit,
+    expandGestures: Modifier,
     hourText: String,
     minuteText: String,
     amPmText: String,
@@ -287,7 +304,7 @@ private fun PortraitMinimizedBar(
         modifier = modifier
             .fillMaxSize()
             .background(DeepCharcoal)
-            .clickable(onClick = onToggleMinimized)
+            .then(expandGestures)
             .padding(horizontal = CarDimensions.PaneGap, vertical = 4.dp),
         horizontalArrangement = Arrangement.spacedBy(12.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -368,6 +385,51 @@ private fun MinimizedPlaybackMeter(
 
 private val SECTION_GAP = 16.dp
 private val ITEM_GAP = 2.dp
+private val MINIMIZED_EXPAND_SWIPE_THRESHOLD = 40.dp
+
+private fun Modifier.minimizedAudioExpandGestures(
+    isPortrait: Boolean,
+    mediaOnRight: Boolean,
+    onExpand: () -> Unit,
+): Modifier = composed {
+    val onExpandState = rememberUpdatedState(onExpand)
+    val swipeThresholdPx = with(LocalDensity.current) { MINIMIZED_EXPAND_SWIPE_THRESHOLD.toPx() }
+    pointerInput(isPortrait, mediaOnRight, swipeThresholdPx) {
+        awaitEachGesture {
+            val down = awaitFirstDown()
+            var drag = Offset.Zero
+            var isDrag = false
+            while (true) {
+                val event = awaitPointerEvent()
+                val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                drag += change.positionChange()
+                if (drag.getDistance() > swipeThresholdPx) {
+                    isDrag = true
+                    change.consume()
+                }
+                if (!change.pressed) break
+            }
+            val shouldExpand = if (isDrag) {
+                isExpandTowardMap(drag, isPortrait, mediaOnRight)
+            } else {
+                true
+            }
+            if (shouldExpand) {
+                onExpandState.value()
+            }
+        }
+    }
+}
+
+private fun isExpandTowardMap(drag: Offset, isPortrait: Boolean, mediaOnRight: Boolean): Boolean {
+    val absX = abs(drag.x)
+    val absY = abs(drag.y)
+    return when {
+        isPortrait -> absY > absX && drag.y < 0f
+        mediaOnRight -> absX > absY && drag.x < 0f
+        else -> absX > absY && drag.x > 0f
+    }
+}
 
 private fun overallTrafficLevel(
     showTraffic: Boolean,

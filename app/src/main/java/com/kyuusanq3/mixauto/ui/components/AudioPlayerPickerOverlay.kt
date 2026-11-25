@@ -87,6 +87,7 @@ fun AudioPlayerListContent(
     onAppClick: (AudioPlayerApp) -> Unit,
     onRequestSetDefault: (AudioPlayerApp) -> Unit,
     modifier: Modifier = Modifier,
+    fillAvailableHeight: Boolean = true,
 ) {
     val context = LocalContext.current
     val audioApps = remember(context) { loadAudioPlayerApps(context) }
@@ -97,9 +98,13 @@ fun AudioPlayerListContent(
         color = OledBlack,
     ) {
         Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(CarDimensions.PaneGap),
+            modifier = if (fillAvailableHeight) {
+                Modifier
+                    .fillMaxSize()
+                    .padding(CarDimensions.PaneGap)
+            } else {
+                Modifier.fillMaxWidth()
+            },
         ) {
             if (headerTitle != null && showCloseButton) {
                 PanelHeaderRow(
@@ -143,10 +148,17 @@ fun AudioPlayerListContent(
             }
 
             if (audioApps.isEmpty()) {
-                Box(
-                    modifier = Modifier
+                val emptyModifier = if (fillAvailableHeight) {
+                    Modifier
                         .weight(1f)
-                        .fillMaxWidth(),
+                        .fillMaxWidth()
+                } else {
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = CarDimensions.PaneGap)
+                }
+                Box(
+                    modifier = emptyModifier,
                     contentAlignment = Alignment.Center,
                 ) {
                     CarBodyText(
@@ -155,7 +167,7 @@ fun AudioPlayerListContent(
                         maxLines = 3,
                     )
                 }
-            } else {
+            } else if (fillAvailableHeight) {
                 Box(
                     modifier = Modifier
                         .weight(1f)
@@ -177,6 +189,17 @@ fun AudioPlayerListContent(
                                 onLongClick = { onRequestSetDefault(app) },
                             )
                         }
+                    }
+                }
+            } else {
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    audioApps.forEach { app ->
+                        AudioPlayerRow(
+                            app = app,
+                            isDefault = app.packageName == defaultAudioPackage,
+                            onClick = { onAppClick(app) },
+                            onLongClick = { onRequestSetDefault(app) },
+                        )
                     }
                 }
             }
