@@ -75,7 +75,21 @@ fun CarMapViewContainer(
             .onSizeChanged { engine.onMapHostLayoutChanged() },
     ) {
         AndroidView(
-            factory = { context -> engine.createMapView(context) },
+            factory = { context ->
+                engine.createMapView(context).also {
+                    // createMapView resumes a brand-new MapView. Re-entry after the pane
+                    // embed called onStop needs an explicit start, and the extra call is a
+                    // no-op when the view is already started.
+                    engine.onStart()
+                    engine.onResume()
+                }
+            },
+            onRelease = {
+                // Stop GL before Compose detaches the MapView. Detach-without-onStop leaves
+                // the render thread drawing into a dead surface and aborts the process.
+                engine.onPause()
+                engine.onStop()
+            },
             modifier = Modifier.fillMaxSize(),
         )
 

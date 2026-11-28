@@ -8,11 +8,13 @@ import android.hardware.display.DisplayManager
 import android.hardware.display.VirtualDisplay
 import android.hardware.input.InputManager
 import android.net.Uri
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
 import android.view.MotionEvent
 import android.view.Surface
+import java.lang.reflect.Method
 import com.kyuusanq3.mixauto.ui.components.canLaunchApp
 import com.kyuusanq3.mixauto.ui.settings.DeveloperSettings
 
@@ -26,7 +28,13 @@ import com.kyuusanq3.mixauto.ui.settings.DeveloperSettings
  *
  * Flag values for @hide [DisplayManager] constants (AOSP DisplayManager.java):
  *   PRESENTATION=1<<1, OWN_CONTENT_ONLY=1<<3, SUPPORTS_TOUCH=1<<6,
- *   DESTROY_CONTENT_ON_REMOVAL=1<<8, TRUSTED=1<<10.
+ *   DESTROY_CONTENT_ON_REMOVAL=1<<8, TRUSTED=1<<10,
+ *   OWN_DISPLAY_GROUP=1<<11, ALWAYS_UNLOCKED=1<<12.
+ *
+ * OWN_DISPLAY_GROUP puts this display in its own focus group so the embedded app does not
+ * steal the default-display focus. Without it, ActivityManager treats the launch as an app
+ * switch and stops the launcher about 5 seconds later (APP_SWITCH_DELAY_TIME), which destroys
+ * the [Surface] and takes the embedded task down with it.
  */
 class EmbeddedMapDisplay(
     private val appContext: Context,
@@ -38,6 +46,23 @@ class EmbeddedMapDisplay(
     private var heightPx: Int = 0
     private var densityDpi: Int = 0
     private var launchedPackage: String? = null
+    private var pendingWidth: Int = 0
+    private var pendingHeight: Int = 0
+    private val resizeRunnable = Runnable { applyPendingResize() }
+    private val inputManager: InputManager? by lazy {
+        appContext.getSystemService(InputManager::class.java)
+    }
+    private val setDisplayIdMethod: Method? by lazy {
+        reflectedMethod(MotionEvent::class.java, "setDisplayId", Int::class.javaPrimitiveType)
+    }
+    private val injectInputEventMethod: Method? by lazy {
+        reflectedMethod(
+            InputManager::class.java,
+            "injectInputEvent",
+            android.view.InputEvent::class.java,
+            Int::class.javaPrimitiveType,
+        )
+    }
 
     val displayId: Int
         get() = virtualDisplay?.display?.displayId ?: android.view.Display.INVALID_DISPLAY
@@ -45,15 +70,19 @@ class EmbeddedMapDisplay(
     val isActive: Boolean
         get() = virtualDisplay != null
 
-    fun create(
+    /**
+     * Bind [surface] to the virtual display, creating it on the first call.
+     * A later call (surface recreated after a transient detach) reattaches and keeps the
+     * embedded task — it does not [release].
+     */
+    fun attachSurface(
         surface: Surface,
         widthPx: Int,
         heightPx: Int,
         densityDpi: Int,
     ): Boolean {
-        release()
         if (widthPx <= 0 || heightPx <= 0) {
-            Log.w(TAG, "create: invalid size ${widthPx}x$heightPx")
+            Log.w(TAG, "attachSurface: invalid size ${widthPx}x$heightPx")
             return false
         }
         this.surface = surface
@@ -61,46 +90,128 @@ class EmbeddedMapDisplay(
         this.heightPx = heightPx
         this.densityDpi = densityDpi.coerceAtLeast(1)
 
+        val existing = virtualDisplay
+        if (existing != null) {
+            return try {
+                existing.setSurface(surface)
+                existing.resize(this.widthPx, this.heightPx, this.densityDpi)
+                Log.i(TAG, "attachSurface: reattached ${this.widthPx}x${this.heightPx}")
+                true
+            } catch (t: Throwable) {
+                Log.w(TAG, "attachSurface: reattach failed, recreating", t)
+                launchedPackage = null
+                releaseDisplay()
+                createVirtualDisplay(surface)
+            }
+        }
+        return createVirtualDisplay(surface)
+    }
+
+    /**
+     * Drop the current [Surface] without destroying the display or the embedded task.
+     * [SurfaceView] fires this when the window surface blinks; [release] is only for teardown.
+     */
+    fun detachSurface() {
+        surface = null
+        val vd = virtualDisplay ?: return
+        try {
+            vd.setSurface(null)
+            Log.i(TAG, "detachSurface: surface cleared, display kept")
+        } catch (t: Throwable) {
+            Log.w(TAG, "detachSurface failed", t)
+        }
+    }
+
+    fun isShowing(packageName: String): Boolean =
+        launchedPackage == packageName && virtualDisplay != null
+
+    private fun createVirtualDisplay(surface: Surface): Boolean {
         val displayManager = appContext.getSystemService(DisplayManager::class.java)
             ?: run {
                 Log.e(TAG, "create: DisplayManager missing")
                 return false
             }
+        val vd = createWithFallback(displayManager, surface)
+        if (vd == null) {
+            Log.e(TAG, "create: createVirtualDisplay returned null — missing ADD_TRUSTED_DISPLAY?")
+            virtualDisplay = null
+            return false
+        }
+        virtualDisplay = vd
+        return true
+    }
 
+    private fun createWithFallback(displayManager: DisplayManager, surface: Surface): VirtualDisplay? {
+        val extended = virtualDisplayFlags()
+        val attempts = LinkedHashSet<Int>()
+        attempts.add(extended)
+        if (extended != BASE_VIRTUAL_DISPLAY_FLAGS) {
+            attempts.add(BASE_VIRTUAL_DISPLAY_FLAGS or FLAG_OWN_DISPLAY_GROUP)
+            attempts.add(BASE_VIRTUAL_DISPLAY_FLAGS)
+        }
+        for (flags in attempts) {
+            val vd = tryCreate(displayManager, surface, flags)
+            if (vd != null) {
+                Log.i(
+                    TAG,
+                    "create: displayId=${vd.display.displayId} flags=$flags ${widthPx}x$heightPx",
+                )
+                return vd
+            }
+        }
+        return null
+    }
+
+    private fun tryCreate(
+        displayManager: DisplayManager,
+        surface: Surface,
+        flags: Int,
+    ): VirtualDisplay? {
         return try {
-            val vd = displayManager.createVirtualDisplay(
+            displayManager.createVirtualDisplay(
                 DISPLAY_NAME,
-                this.widthPx,
-                this.heightPx,
-                this.densityDpi,
+                widthPx,
+                heightPx,
+                densityDpi,
                 surface,
-                VIRTUAL_DISPLAY_FLAGS,
+                flags,
                 null,
                 mainHandler,
             )
-            if (vd == null) {
-                Log.e(TAG, "create: createVirtualDisplay returned null")
-                return false
-            }
-            virtualDisplay = vd
-            Log.i(TAG, "create: displayId=${vd.display.displayId} ${this.widthPx}x${this.heightPx}")
-            true
         } catch (t: Throwable) {
-            Log.e(TAG, "create: failed — missing ADD_TRUSTED_DISPLAY / SELinux?", t)
-            virtualDisplay = null
-            false
+            Log.e(TAG, "create: flags=$flags failed — ADD_TRUSTED_DISPLAY / SELinux / unknown flag?", t)
+            null
         }
     }
 
     fun resize(widthPx: Int, heightPx: Int) {
         if (widthPx <= 0 || heightPx <= 0) return
+        if (virtualDisplay == null) return
+        if (widthPx == this.widthPx && heightPx == this.heightPx) {
+            pendingWidth = widthPx
+            pendingHeight = heightPx
+            mainHandler.removeCallbacks(resizeRunnable)
+            return
+        }
+        if (widthPx == pendingWidth && heightPx == pendingHeight) return
+        pendingWidth = widthPx
+        pendingHeight = heightPx
+        // Divider drags emit a new pane size every frame. One resize after the size
+        // settles avoids forcing the embedded app through a configuration change per pixel.
+        mainHandler.removeCallbacks(resizeRunnable)
+        mainHandler.postDelayed(resizeRunnable, RESIZE_DEBOUNCE_MS)
+    }
+
+    private fun applyPendingResize() {
         val vd = virtualDisplay ?: return
-        if (widthPx == this.widthPx && heightPx == this.heightPx) return
-        this.widthPx = widthPx
-        this.heightPx = heightPx
+        val w = pendingWidth
+        val h = pendingHeight
+        if (w <= 0 || h <= 0 || (w == widthPx && h == heightPx)) return
+        widthPx = w
+        heightPx = h
         try {
-            vd.resize(widthPx, heightPx, densityDpi)
-            Log.d(TAG, "resize: ${widthPx}x$heightPx")
+            vd.resize(w, h, densityDpi)
+            Log.d(TAG, "resize: ${w}x$h")
         } catch (t: Throwable) {
             Log.w(TAG, "resize failed", t)
         }
@@ -176,20 +287,14 @@ class EmbeddedMapDisplay(
     /** Forward a pane-local [MotionEvent] into the virtual display. */
     fun injectMotionEvent(event: MotionEvent): Boolean {
         val vd = virtualDisplay ?: return false
-        val displayId = vd.display.displayId
+        val setDisplayId = setDisplayIdMethod ?: return false
+        val inject = injectInputEventMethod ?: return false
+        val input = inputManager ?: return false
         return try {
-            MotionEvent::class.java
-                .getMethod("setDisplayId", Int::class.javaPrimitiveType)
-                .invoke(event, displayId)
-            val inputManager = appContext.getSystemService(InputManager::class.java)
-                ?: return false
-            val inject = InputManager::class.java.getMethod(
-                "injectInputEvent",
-                android.view.InputEvent::class.java,
-                Int::class.javaPrimitiveType,
-            )
-            // INJECT_INPUT_EVENT_MODE_ASYNC = 0
-            inject.invoke(inputManager, event, 0) as Boolean
+            setDisplayId.invoke(event, vd.display.displayId)
+            // INJECT_INPUT_EVENT_MODE_ASYNC = 0. Move events arrive every frame; the Method
+            // lookups are cached so this stays off the class-lookup path.
+            inject.invoke(input, event, INJECT_INPUT_EVENT_MODE_ASYNC) as Boolean
         } catch (t: Throwable) {
             Log.w(TAG, "injectMotionEvent failed — missing INJECT_EVENTS?", t)
             false
@@ -204,19 +309,23 @@ class EmbeddedMapDisplay(
     fun release() {
         val packageName = launchedPackage
         launchedPackage = null
+        releaseDisplay()
+        if (!packageName.isNullOrBlank()) {
+            finishEscapedTasks(packageName)
+        }
+    }
+
+    private fun releaseDisplay() {
+        mainHandler.removeCallbacks(resizeRunnable)
         val vd = virtualDisplay
         virtualDisplay = null
         surface = null
-        if (vd != null) {
-            try {
-                vd.release()
-                Log.i(TAG, "release: virtual display released")
-            } catch (t: Throwable) {
-                Log.w(TAG, "release: VirtualDisplay.release failed", t)
-            }
-        }
-        if (!packageName.isNullOrBlank()) {
-            finishEscapedTasks(packageName)
+        if (vd == null) return
+        try {
+            vd.release()
+            Log.i(TAG, "release: virtual display released")
+        } catch (t: Throwable) {
+            Log.w(TAG, "release: VirtualDisplay.release failed", t)
         }
     }
 
@@ -249,6 +358,17 @@ class EmbeddedMapDisplay(
     companion object {
         private const val TAG = "EmbeddedMapDisplay"
         private const val DISPLAY_NAME = "mix-auto-embedded-map"
+        private const val RESIZE_DEBOUNCE_MS = 120L
+        private const val INJECT_INPUT_EVENT_MODE_ASYNC = 0
+
+        private fun reflectedMethod(clazz: Class<*>, name: String, vararg params: Class<*>?): Method? {
+            return try {
+                clazz.getMethod(name, *params)
+            } catch (t: Throwable) {
+                Log.w(TAG, "$name unavailable", t)
+                null
+            }
+        }
 
         const val GOOGLE_MAPS_PACKAGE = "com.google.android.apps.maps"
 
@@ -258,12 +378,23 @@ class EmbeddedMapDisplay(
         private const val FLAG_SUPPORTS_TOUCH = 1 shl 6
         private const val FLAG_DESTROY_CONTENT_ON_REMOVAL = 1 shl 8
         private const val FLAG_TRUSTED = 1 shl 10
-        private const val VIRTUAL_DISPLAY_FLAGS =
+        private const val FLAG_OWN_DISPLAY_GROUP = 1 shl 11
+        private const val FLAG_ALWAYS_UNLOCKED = 1 shl 12
+        private const val BASE_VIRTUAL_DISPLAY_FLAGS =
             FLAG_PRESENTATION or
                 FLAG_OWN_CONTENT_ONLY or
                 FLAG_SUPPORTS_TOUCH or
                 FLAG_DESTROY_CONTENT_ON_REMOVAL or
                 FLAG_TRUSTED
+
+        /**
+         * API 31+ display group keeps embedded-app focus off the default display so the
+         * launcher is not stopped ~5s after launch. Older platforms keep the base flags.
+         */
+        private fun virtualDisplayFlags(): Int {
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return BASE_VIRTUAL_DISPLAY_FLAGS
+            return BASE_VIRTUAL_DISPLAY_FLAGS or FLAG_OWN_DISPLAY_GROUP or FLAG_ALWAYS_UNLOCKED
+        }
 
         /** Blank override keeps [requested]. A non-blank override is the embed-probe package. */
         fun resolveEmbeddedPackage(requested: String): String {

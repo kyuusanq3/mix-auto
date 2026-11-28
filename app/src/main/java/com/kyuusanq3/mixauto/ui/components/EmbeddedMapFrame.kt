@@ -1,5 +1,6 @@
 package com.kyuusanq3.mixauto.ui.components
 
+import android.graphics.PixelFormat
 import android.view.MotionEvent
 import android.view.SurfaceHolder
 import android.view.SurfaceView
@@ -7,7 +8,6 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -17,7 +17,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.viewinterop.AndroidView
@@ -33,9 +32,14 @@ import kotlinx.coroutines.delay
  * Map-pane host that paints a shortcut-bar app via [EmbeddedMapDisplay] onto a [SurfaceView].
  * Replaces [CarMapViewContainer] while [targetPackage] is set for this session.
  *
- * Pauses the MapLibre [engine] while composed so its GL thread stops; resumes on dispose.
+ * Stops the MapLibre [engine] (pause + stop) while composed so its GL context is released.
+ * The map pane's [AndroidView] resumes it when this frame leaves the composition.
  * Night-mode dim is drawn above the surface and must stay non-clickable so the embedded app
  * still gets touch events forwarded by the SurfaceView.
+ *
+ * The surface is not clipped. A parent compositing clip fights the [SurfaceView] hole-punch
+ * that [EmbeddedMapDisplay] renders into, and on this head unit that path has taken the
+ * process down shortly after the embedded app starts drawing.
  */
 @Composable
 fun EmbeddedMapFrame(
@@ -53,16 +57,19 @@ fun EmbeddedMapFrame(
 
     DisposableEffect(engine) {
         EmbeddedMapHost.register(display)
+        // onStop releases the MapLibre EGL context. onPause alone leaves the GL thread
+        // running under the embedded app and has crashed the process once tiles arrive.
         engine.onPause()
+        engine.onStop()
         onDispose {
             display.release()
             EmbeddedMapHost.unregister(display)
-            engine.onResume()
         }
     }
 
     LaunchedEffect(targetPackage, surfaceReady) {
         if (!surfaceReady) return@LaunchedEffect
+        if (display.isShowing(targetPackage)) return@LaunchedEffect
         statusMessage = if (display.launchPackage(targetPackage)) {
             null
         } else {
@@ -82,21 +89,23 @@ fun EmbeddedMapFrame(
                     CarDimensions.PaneGap
                 },
             )
-            .clip(MaterialTheme.shapes.medium)
             .background(OledBlack),
     ) {
         AndroidView(
             factory = { ctx ->
                 SurfaceView(ctx).apply {
+                    val view = this
+                    holder.setFormat(PixelFormat.OPAQUE)
+                    setZOrderOnTop(false)
+                    setZOrderMediaOverlay(false)
                     holder.addCallback(object : SurfaceHolder.Callback {
-                        override fun surfaceCreated(holder: SurfaceHolder) {
+                        fun bind(holder: SurfaceHolder, widthPx: Int, heightPx: Int) {
+                            if (widthPx <= 0 || heightPx <= 0) return
                             val metrics = ctx.resources.displayMetrics
-                            val w = width.coerceAtLeast(1)
-                            val h = height.coerceAtLeast(1)
-                            val ok = display.create(
+                            val ok = display.attachSurface(
                                 surface = holder.surface,
-                                widthPx = w,
-                                heightPx = h,
+                                widthPx = widthPx,
+                                heightPx = heightPx,
                                 densityDpi = metrics.densityDpi,
                             )
                             surfaceReady = ok
@@ -106,20 +115,28 @@ fun EmbeddedMapFrame(
                             }
                         }
 
+                        override fun surfaceCreated(holder: SurfaceHolder) {
+                            bind(holder, view.width, view.height)
+                        }
+
                         override fun surfaceChanged(
                             holder: SurfaceHolder,
                             format: Int,
                             width: Int,
                             height: Int,
                         ) {
-                            if (width > 0 && height > 0) {
+                            if (!display.isActive) {
+                                bind(holder, width, height)
+                            } else if (width > 0 && height > 0) {
                                 display.resize(width, height)
                             }
                         }
 
                         override fun surfaceDestroyed(holder: SurfaceHolder) {
+                            // Keep the virtual display. Releasing here finishes the embedded
+                            // task (DESTROY_CONTENT_ON_REMOVAL) on any surface blink.
                             surfaceReady = false
-                            display.release()
+                            display.detachSurface()
                         }
                     })
                     setOnTouchListener { _, event ->
